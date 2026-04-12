@@ -1,12 +1,102 @@
 use crate::app::Message;
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input},
-    Element, Length,
+    widget::{button, canvas, column, container, row, scrollable, stack, text, text_input},
+    Color, Element, Length, Point, Rectangle, Renderer, Theme,
 };
 use powergrid_core::{
     types::{Phase, PlayerColor, PlayerId, Resource},
     GameState,
 };
+
+// ---------------------------------------------------------------------------
+// Resource market overlay — draws colored circles on the map's market board
+// ---------------------------------------------------------------------------
+
+/// Original map image dimensions (germany.jpg is 1536 × 2048).
+const IMG_W: f32 = 1536.0;
+const IMG_H: f32 = 2048.0;
+
+/// Circle radius expressed as a fraction of the displayed image width.
+const SLOT_RADIUS_FRAC: f32 = 0.009;
+
+/// Map a slot column index to an x-fraction of the original image.
+/// The resource market runs from expensive (left) to cheap (right).
+/// x_start/x_end mark the left/right edges of the slot grid on the map image.
+fn slot_x(col: usize, total_cols: usize) -> f32 {
+    let x_start = 0.62_f32;
+    let x_end = 0.97_f32;
+    if total_cols <= 1 {
+        return (x_start + x_end) / 2.0;
+    }
+    x_start + (col as f32 / (total_cols - 1) as f32) * (x_end - x_start)
+}
+
+/// y-center fraction for each resource row on the map image.
+const COAL_Y: f32 = 0.885;
+const OIL_Y: f32 = 0.910;
+const GARBAGE_Y: f32 = 0.935;
+const URANIUM_Y: f32 = 0.960;
+
+struct MarketOverlay {
+    coal: u8,
+    oil: u8,
+    garbage: u8,
+    uranium: u8,
+}
+
+impl canvas::Program<Message> for MarketOverlay {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry<Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        // Replicate ContentFit::Contain scaling: maintain 3:4 aspect ratio.
+        let img_ratio = IMG_W / IMG_H;
+        let bounds_ratio = bounds.width / bounds.height;
+        let (img_w, img_h) = if bounds_ratio < img_ratio {
+            let s = bounds.width / IMG_W;
+            (bounds.width, IMG_H * s)
+        } else {
+            let s = bounds.height / IMG_H;
+            (IMG_W * s, bounds.height)
+        };
+        let offset_x = (bounds.width - img_w) / 2.0;
+        let offset_y = (bounds.height - img_h) / 2.0;
+        let radius = SLOT_RADIUS_FRAC * img_w;
+
+        let mut draw_row = |color: Color, total_slots: usize, current: u8, y_frac: f32| {
+            if current == 0 || total_slots == 0 {
+                return;
+            }
+            let occupied_from = total_slots.saturating_sub(current as usize);
+            for col in occupied_from..total_slots {
+                let cx = offset_x + slot_x(col, total_slots) * img_w;
+                let cy = offset_y + y_frac * img_h;
+                let circle = canvas::Path::circle(Point::new(cx, cy), radius);
+                frame.fill(&circle, color);
+            }
+        };
+
+        draw_row(Color::from_rgb(0.42, 0.27, 0.14), 24, self.coal, COAL_Y);
+        draw_row(Color::from_rgb(0.1, 0.1, 0.1), 18, self.oil, OIL_Y);
+        draw_row(
+            Color::from_rgb(0.95, 0.85, 0.1),
+            10,
+            self.garbage,
+            GARBAGE_Y,
+        );
+        draw_row(Color::from_rgb(0.85, 0.1, 0.1), 10, self.uranium, URANIUM_Y);
+
+        vec![frame.into_geometry()]
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Connect screen
@@ -234,12 +324,19 @@ pub fn game_view<'a>(
             col.push(text(entry.as_str()).size(12))
         });
 
-    let map_panel = container(
+    let overlay = MarketOverlay {
+        coal: state.resources.coal,
+        oil: state.resources.oil,
+        garbage: state.resources.garbage,
+        uranium: state.resources.uranium,
+    };
+    let map_panel = container(stack![
         iced::widget::image(germany_map_handle())
             .width(Length::Fill)
             .height(Length::Fill)
             .content_fit(iced::ContentFit::Contain),
-    )
+        canvas(overlay).width(Length::Fill).height(Length::Fill),
+    ])
     .width(Length::FillPortion(3))
     .height(Length::Fill);
 
@@ -292,9 +389,7 @@ fn owned_plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'st
 }
 
 fn germany_map_handle() -> iced::widget::image::Handle {
-    iced::widget::image::Handle::from_bytes(
-        include_bytes!("../assets/maps/germany.jpg").as_slice(),
-    )
+    iced::widget::image::Handle::from_bytes(include_bytes!("../assets/maps/germany.jpg").as_slice())
 }
 
 fn plant_card_handle(number: u8) -> iced::widget::image::Handle {
