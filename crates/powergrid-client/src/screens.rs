@@ -215,13 +215,64 @@ pub fn game_view(state: &GameState, my_id: uuid::Uuid) -> Element<'_, Message> {
 }
 
 fn plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'static, Message> {
-    plants.iter().fold(row![].spacing(8), |r, p| {
+    plants.iter().fold(row![].spacing(4), |r, p| {
+        let handle = plant_card_handle(p.number);
         r.push(
-            button(text(format!("#{} {:?} {}→{}", p.number, p.kind, p.cost, p.cities)).size(11))
+            button(iced::widget::image(handle).width(54).height(54))
+                .padding(0)
                 .on_press(Message::SelectPlant(p.number))
         )
     })
     .into()
+}
+
+fn plant_card_handle(number: u8) -> iced::widget::image::Handle {
+    let bytes: &'static [u8] = match number {
+        3  => include_bytes!("../assets/cards/card_03.png"),
+        4  => include_bytes!("../assets/cards/card_04.png"),
+        5  => include_bytes!("../assets/cards/card_05.png"),
+        6  => include_bytes!("../assets/cards/card_06.png"),
+        7  => include_bytes!("../assets/cards/card_07.png"),
+        8  => include_bytes!("../assets/cards/card_08.png"),
+        9  => include_bytes!("../assets/cards/card_09.png"),
+        10 => include_bytes!("../assets/cards/card_10.png"),
+        11 => include_bytes!("../assets/cards/card_11.png"),
+        12 => include_bytes!("../assets/cards/card_12.png"),
+        13 => include_bytes!("../assets/cards/card_13.png"),
+        14 => include_bytes!("../assets/cards/card_14.png"),
+        15 => include_bytes!("../assets/cards/card_15.png"),
+        16 => include_bytes!("../assets/cards/card_16.png"),
+        17 => include_bytes!("../assets/cards/card_17.png"),
+        18 => include_bytes!("../assets/cards/card_18.png"),
+        19 => include_bytes!("../assets/cards/card_19.png"),
+        20 => include_bytes!("../assets/cards/card_20.png"),
+        21 => include_bytes!("../assets/cards/card_21.png"),
+        22 => include_bytes!("../assets/cards/card_22.png"),
+        23 => include_bytes!("../assets/cards/card_23.png"),
+        24 => include_bytes!("../assets/cards/card_24.png"),
+        25 => include_bytes!("../assets/cards/card_25.png"),
+        26 => include_bytes!("../assets/cards/card_26.png"),
+        27 => include_bytes!("../assets/cards/card_27.png"),
+        28 => include_bytes!("../assets/cards/card_28.png"),
+        29 => include_bytes!("../assets/cards/card_29.png"),
+        30 => include_bytes!("../assets/cards/card_30.png"),
+        31 => include_bytes!("../assets/cards/card_31.png"),
+        32 => include_bytes!("../assets/cards/card_32.png"),
+        33 => include_bytes!("../assets/cards/card_33.png"),
+        34 => include_bytes!("../assets/cards/card_34.png"),
+        35 => include_bytes!("../assets/cards/card_35.png"),
+        36 => include_bytes!("../assets/cards/card_36.png"),
+        37 => include_bytes!("../assets/cards/card_37.png"),
+        38 => include_bytes!("../assets/cards/card_38.png"),
+        39 => include_bytes!("../assets/cards/card_39.png"),
+        40 => include_bytes!("../assets/cards/card_40.png"),
+        42 => include_bytes!("../assets/cards/card_42.png"),
+        44 => include_bytes!("../assets/cards/card_44.png"),
+        46 => include_bytes!("../assets/cards/card_46.png"),
+        50 => include_bytes!("../assets/cards/card_50.png"),
+        _  => include_bytes!("../assets/cards/card_step3.png"),
+    };
+    iced::widget::image::Handle::from_bytes(bytes)
 }
 
 fn action_panel(state: &GameState, my_id: uuid::Uuid) -> Element<'_, Message> {
