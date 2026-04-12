@@ -234,20 +234,31 @@ pub fn game_view<'a>(
             col.push(text(entry.as_str()).size(12))
         });
 
-    let left = column![
-        text(format!("Round {} — {}", state.round, phase_label)).size(20),
-        player_panel,
-        market,
-        resources,
-    ]
-    .spacing(16)
-    .width(Length::FillPortion(3));
+    let map_panel = container(
+        iced::widget::image(germany_map_handle())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .content_fit(iced::ContentFit::Contain),
+    )
+    .width(Length::FillPortion(3))
+    .height(Length::Fill);
 
-    let right = column![my_panel, scrollable(log)]
+    let info_panel = scrollable(
+        column![
+            text(format!("Round {} — {}", state.round, phase_label)).size(20),
+            player_panel,
+            market,
+            resources,
+            my_panel,
+            log,
+        ]
         .spacing(16)
-        .width(Length::FillPortion(2));
+        .padding(8),
+    )
+    .width(Length::FillPortion(2))
+    .height(Length::Fill);
 
-    container(row![left, right].spacing(24).padding(24))
+    container(row![map_panel, info_panel].spacing(16).padding(16))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -278,6 +289,12 @@ fn owned_plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'st
             r.push(iced::widget::image(handle).width(54).height(54))
         })
         .into()
+}
+
+fn germany_map_handle() -> iced::widget::image::Handle {
+    iced::widget::image::Handle::from_bytes(
+        include_bytes!("../assets/maps/germany.jpg").as_slice(),
+    )
 }
 
 fn plant_card_handle(number: u8) -> iced::widget::image::Handle {

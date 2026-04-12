@@ -32,11 +32,16 @@ impl ServerState {
 async fn main() {
     tracing_subscriber::fmt::init();
 
-    let map_path = std::env::var("MAP_FILE").unwrap_or_else(|_| "maps/germany.toml".to_string());
+    const DEFAULT_MAP: &str = include_str!("../maps/germany.toml");
+
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
 
-    let map_str = std::fs::read_to_string(&map_path)
-        .unwrap_or_else(|e| panic!("Failed to read map file {map_path}: {e}"));
+    let map_str = if let Ok(path) = std::env::var("MAP_FILE") {
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read map file {path}: {e}"))
+    } else {
+        DEFAULT_MAP.to_string()
+    };
     let map = Map::load(&map_str).unwrap_or_else(|e| panic!("Failed to parse map: {e}"));
 
     info!("Loaded map: {}", map.name);

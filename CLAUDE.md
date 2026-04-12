@@ -12,7 +12,7 @@ cargo build
 cargo test -p powergrid-core
 
 # Check types/lints
-cargo cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 
 # Format code
 cargo fmt
@@ -24,7 +24,7 @@ cargo check
 cargo test -p powergrid-core test_join_and_start
 
 # Run the server (from repo root)
-MAP_FILE=maps/germany.toml cargo run -p powergrid-server
+cargo run -p powergrid-server
 
 # Run the client
 cargo run -p powergrid-client
@@ -44,10 +44,8 @@ Three-crate Cargo workspace:
 ```
 crates/
   powergrid-core/    # pure game logic, no I/O
-  powergrid-server/  # axum WebSocket server
-  powergrid-client/  # iced native GUI client
-maps/
-  germany.toml       # data-driven map graph
+  powergrid-server/  # axum WebSocket server, maps/germany.toml embedded at compile time
+  powergrid-client/  # iced native GUI client, assets/ contains card images and board maps
 ```
 
 ### powergrid-core
@@ -66,7 +64,7 @@ All game state and rules. The key entry point is `rules::apply_action(state, pla
 
 - `main.rs` — axum router: `GET /health`, `GET /ws`. Shared state is `Arc<Mutex<ServerState>>`.
 - `ws.rs` — per-connection WebSocket handler. On each valid action: mutate state, broadcast full `GameState` JSON to all clients. On error: send `ActionError` only to the acting client.
-- Configured via env vars: `PORT` (default 3000), `MAP_FILE` (default `maps/germany.toml`), `RUST_LOG`.
+- Configured via env vars: `PORT` (default 3000), `MAP_FILE` (optional override; germany map is embedded by default), `RUST_LOG`.
 
 ### powergrid-client
 
@@ -81,4 +79,4 @@ JSON over WebSocket. `Action` (tagged by `"type"` field) client→server, `Serve
 
 ### Map format
 
-`maps/*.toml` — list of `[[cities]]` (id, name, region) and `[[connections]]` (from, to, cost). Adding a new map requires only a new TOML file; no code changes.
+`crates/powergrid-server/maps/*.toml` — list of `[[cities]]` (id, name, region) and `[[connections]]` (from, to, cost). The germany map is embedded at compile time. To use a custom map, set `MAP_FILE=/path/to/map.toml`.
