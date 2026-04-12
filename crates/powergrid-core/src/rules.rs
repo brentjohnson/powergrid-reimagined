@@ -403,9 +403,7 @@ fn handle_buy_resources(
         return Err(ActionError::CannotAfford);
     }
 
-    let capacity = player.resource_capacity(resource);
-    let current = player.resources.get(resource);
-    if current + amount > capacity {
+    if !player.can_add_resource(resource, amount) {
         return Err(ActionError::OverCapacity);
     }
 
@@ -1156,5 +1154,33 @@ mod tests {
         // With full coal supply (24 units), the cheapest slots are occupied.
         let price = market.price(Resource::Coal, 1);
         assert!(price.is_some());
+    }
+
+    #[test]
+    fn test_hybrid_plant_shared_capacity() {
+        use crate::types::{PlantKind, PlayerColor, PlayerResources, PowerPlant};
+
+        // A CoalOrOil plant with cost=2 holds 4 total resources (coal + oil combined).
+        let mut player = crate::types::Player::new("Test".into(), PlayerColor::Red);
+        player.plants.push(PowerPlant {
+            number: 5,
+            kind: PlantKind::CoalOrOil,
+            cost: 2,
+            cities: 1,
+        });
+
+        // Can buy up to 4 coal with 0 oil stored.
+        assert!(player.can_add_resource(Resource::Coal, 4));
+        // Cannot buy 5 coal — exceeds total slots.
+        assert!(!player.can_add_resource(Resource::Coal, 5));
+
+        // After storing 4 coal, cannot buy any oil.
+        player.resources.coal = 4;
+        assert!(!player.can_add_resource(Resource::Oil, 1));
+
+        // After storing 2 coal, can only buy 2 more oil.
+        player.resources.coal = 2;
+        assert!(player.can_add_resource(Resource::Oil, 2));
+        assert!(!player.can_add_resource(Resource::Oil, 3));
     }
 }

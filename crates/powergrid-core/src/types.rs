@@ -253,6 +253,50 @@ impl Player {
             .sum()
     }
 
+    /// Whether the player can store `amount` more of `resource`, respecting
+    /// the shared-slot constraint on CoalOrOil hybrid plants.
+    pub fn can_add_resource(&self, resource: Resource, amount: u8) -> bool {
+        match resource {
+            Resource::Coal | Resource::Oil => {
+                let coal_only: u8 = self
+                    .plants
+                    .iter()
+                    .filter(|p| p.kind == PlantKind::Coal)
+                    .map(|p| p.cost * 2)
+                    .sum();
+                let oil_only: u8 = self
+                    .plants
+                    .iter()
+                    .filter(|p| p.kind == PlantKind::Oil)
+                    .map(|p| p.cost * 2)
+                    .sum();
+                let hybrid: u8 = self
+                    .plants
+                    .iter()
+                    .filter(|p| p.kind == PlantKind::CoalOrOil)
+                    .map(|p| p.cost * 2)
+                    .sum();
+
+                let (new_coal, new_oil) = if resource == Resource::Coal {
+                    (self.resources.coal + amount, self.resources.oil)
+                } else {
+                    (self.resources.coal, self.resources.oil + amount)
+                };
+
+                // Each resource must fit in its dedicated + hybrid slots.
+                if new_coal > coal_only + hybrid {
+                    return false;
+                }
+                if new_oil > oil_only + hybrid {
+                    return false;
+                }
+                // Coal and oil together cannot exceed the shared hybrid slots.
+                new_coal.saturating_sub(coal_only) + new_oil.saturating_sub(oil_only) <= hybrid
+            }
+            _ => self.resources.get(resource) + amount <= self.resource_capacity(resource),
+        }
+    }
+
     /// Number of cities this player can power given their plants and stored resources.
     pub fn cities_powerable(&self) -> u8 {
         let mut coal = self.resources.coal;
