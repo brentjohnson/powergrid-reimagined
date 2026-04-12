@@ -93,7 +93,20 @@ pub enum ServerMessage {
     /// Full game state broadcast after every valid action.
     StateUpdate(crate::state::GameState),
     /// Sent only to the client whose action was rejected.
-    ActionError(String),
+    ActionError { message: String },
     /// Informational event (e.g. "Hamburg was built by Red").
-    Event(String),
+    Event { message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_action_error_serde_roundtrip() {
+        let msg = ServerMessage::ActionError { message: "it is not your turn".to_string() };
+        let json = serde_json::to_string(&msg).expect("serialization should succeed");
+        let parsed: ServerMessage = serde_json::from_str(&json).expect("deserialization should succeed");
+        assert!(matches!(parsed, ServerMessage::ActionError { message } if message == "it is not your turn"));
+    }
 }

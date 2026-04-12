@@ -97,7 +97,7 @@ fn color_button(color: PlayerColor, selected: PlayerColor) -> Element<'static, M
 // Lobby screen
 // ---------------------------------------------------------------------------
 
-pub fn lobby_view(state: &GameState, is_host: bool) -> Element<'_, Message> {
+pub fn lobby_view<'a>(state: &'a GameState, is_host: bool, error: Option<&'a str>) -> Element<'a, Message> {
     let players_list = state.players.iter().fold(
         column![text("Players:").size(18)].spacing(4),
         |col, p| col.push(text(format!("  {} ({:?})", p.name, p.color))),
@@ -121,6 +121,10 @@ pub fn lobby_view(state: &GameState, is_host: bool) -> Element<'_, Message> {
         col = col.push(text("Waiting for host to start..."));
     }
 
+    if let Some(err) = error {
+        col = col.push(text(format!("Error: {err}")).color([0.8, 0.1, 0.1]));
+    }
+
     container(col)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -133,7 +137,7 @@ pub fn lobby_view(state: &GameState, is_host: bool) -> Element<'_, Message> {
 // Game screen
 // ---------------------------------------------------------------------------
 
-pub fn game_view<'a>(state: &'a GameState, my_id: uuid::Uuid, bid_amount: &'a str) -> Element<'a, Message> {
+pub fn game_view<'a>(state: &'a GameState, my_id: uuid::Uuid, bid_amount: &'a str, error: Option<&'a str>) -> Element<'a, Message> {
     let phase_label = phase_description(&state.phase);
 
     let me = state.player(my_id);
@@ -175,16 +179,18 @@ pub fn game_view<'a>(state: &'a GameState, my_id: uuid::Uuid, bid_amount: &'a st
     // My resources + actions.
     let my_panel: Element<Message> = if let Some(me) = me {
         let res = &me.resources;
-        column![
+        let mut col = column![
             text(format!("You: {} | ${}", me.name, me.money)).size(16),
             text(format!(
                 "Resources — Coal: {}  Oil: {}  Garbage: {}  Uranium: {}",
                 res.coal, res.oil, res.garbage, res.uranium
             )),
-            action_panel(state, my_id, bid_amount),
         ]
-        .spacing(8)
-        .into()
+        .spacing(8);
+        if let Some(err) = error {
+            col = col.push(text(format!("Error: {err}")).color([0.8, 0.1, 0.1]));
+        }
+        col.push(action_panel(state, my_id, bid_amount)).into()
     } else {
         text("Spectating").into()
     };

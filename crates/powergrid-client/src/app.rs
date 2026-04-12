@@ -58,6 +58,8 @@ pub struct App {
     pending_join: Option<(String, PlayerColor)>,
     /// Current text in the bid amount input field.
     bid_amount: String,
+    /// Last action error received from the server; cleared on next successful state update.
+    error_message: Option<String>,
 }
 
 impl App {
@@ -71,6 +73,7 @@ impl App {
                 connect_url: None,
                 pending_join: None,
                 bid_amount: String::new(),
+                error_message: None,
             },
             iced::Task::none(),
         )
@@ -122,12 +125,12 @@ impl App {
                         }
                         ServerMessage::StateUpdate(state) => {
                             self.game_state = Some(state);
+                            self.error_message = None;
                         }
-                        ServerMessage::ActionError(e) => {
-                            // Show error as a simple log entry for now.
-                            tracing::warn!("Action error: {e}");
+                        ServerMessage::ActionError { message } => {
+                            self.error_message = Some(message);
                         }
-                        ServerMessage::Event(_) => {}
+                        ServerMessage::Event { .. } => {}
                     }
                 }
                 WsEvent::Disconnected => {
@@ -191,9 +194,9 @@ impl App {
                     let my_id = self.my_id.unwrap_or(Uuid::nil());
                     let is_host = state.host_id() == Some(my_id);
                     if matches!(state.phase, powergrid_core::types::Phase::Lobby) {
-                        screens::lobby_view(state, is_host)
+                        screens::lobby_view(state, is_host, self.error_message.as_deref())
                     } else {
-                        screens::game_view(state, my_id, &self.bid_amount)
+                        screens::game_view(state, my_id, &self.bid_amount, self.error_message.as_deref())
                     }
                 } else {
                     iced::widget::text("Connecting...").into()
