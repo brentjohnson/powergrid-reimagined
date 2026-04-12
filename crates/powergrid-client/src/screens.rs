@@ -185,6 +185,8 @@ pub fn game_view<'a>(state: &'a GameState, my_id: uuid::Uuid, bid_amount: &'a st
                 "Resources — Coal: {}  Oil: {}  Garbage: {}  Uranium: {}",
                 res.coal, res.oil, res.garbage, res.uranium
             )),
+            text("Your Plants:").size(14),
+            owned_plants_row(&me.plants),
         ]
         .spacing(8);
         if let Some(err) = error {
@@ -228,6 +230,17 @@ fn plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'static, 
                 .padding(0)
                 .on_press(Message::SelectPlant(p.number))
         )
+    })
+    .into()
+}
+
+fn owned_plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'static, Message> {
+    if plants.is_empty() {
+        return text("(none)").size(12).into();
+    }
+    plants.iter().fold(row![].spacing(4), |r, p| {
+        let handle = plant_card_handle(p.number);
+        r.push(iced::widget::image(handle).width(54).height(54))
     })
     .into()
 }
