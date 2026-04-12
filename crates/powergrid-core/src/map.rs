@@ -10,12 +10,25 @@ pub struct MapData {
     pub connections: Vec<ConnectionData>,
     #[serde(default)]
     pub resource_slots: Vec<ResourceSlotData>,
+    #[serde(default)]
+    pub turn_order_slots: Vec<TurnOrderSlotData>,
 }
 
 /// Raw TOML entry for a single resource market slot position.
 #[derive(Debug, Deserialize)]
 pub struct ResourceSlotData {
     pub resource: String,
+    pub index: usize,
+    /// x-position as a fraction of the map image width (0.0–1.0).
+    pub x: f32,
+    /// y-position as a fraction of the map image height (0.0–1.0).
+    pub y: f32,
+}
+
+/// Raw TOML entry for a turn order position space on the board.
+#[derive(Debug, Deserialize)]
+pub struct TurnOrderSlotData {
+    /// 0-based position index (0 = first place, 5 = last place).
     pub index: usize,
     /// x-position as a fraction of the map image width (0.0–1.0).
     pub x: f32,
@@ -47,12 +60,23 @@ pub struct Map {
     pub edges: HashMap<String, Vec<(String, u32)>>,
     /// Positions of resource market slots, ordered by resource and index.
     pub resource_slots: Vec<ResourceSlot>,
+    /// Positions of the turn order spaces on the board (up to 6).
+    pub turn_order_slots: Vec<TurnOrderSlot>,
 }
 
 /// A single resource market slot with its fractional position on the map image.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceSlot {
     pub resource: String,
+    pub index: usize,
+    pub x: f32,
+    pub y: f32,
+}
+
+/// A single turn order space on the board with its fractional position on the map image.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnOrderSlot {
+    /// 0-based position index (0 = first place, 5 = last place).
     pub index: usize,
     pub x: f32,
     pub y: f32,
@@ -105,12 +129,23 @@ impl Map {
             })
             .collect();
 
+        let turn_order_slots = data
+            .turn_order_slots
+            .into_iter()
+            .map(|s| TurnOrderSlot {
+                index: s.index,
+                x: s.x,
+                y: s.y,
+            })
+            .collect();
+
         Self {
             name: data.name,
             regions: data.regions,
             cities,
             edges,
             resource_slots,
+            turn_order_slots,
         }
     }
 

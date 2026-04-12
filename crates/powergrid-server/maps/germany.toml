@@ -1001,3 +1001,33 @@ resource = "uranium"
 index = 11
 x = 0.9438
 y = 0.9767
+
+[[turn_order_slots]]
+index = 0
+x = 0.1059
+y = 0.0332
+
+[[turn_order_slots]]
+index = 1
+x = 0.1405
+y = 0.0313
+
+[[turn_order_slots]]
+index = 2
+x = 0.1773
+y = 0.0319
+
+[[turn_order_slots]]
+index = 3
+x = 0.2110
+y = 0.0285
+
+[[turn_order_slots]]
+index = 4
+x = 0.2487
+y = 0.0320
+
+[[turn_order_slots]]
+index = 5
+x = 0.2823
+y = 0.0316

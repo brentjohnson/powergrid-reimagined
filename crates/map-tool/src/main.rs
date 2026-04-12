@@ -6,7 +6,7 @@ use powergrid_core::map::MapData;
 use std::{env, fs, path::PathBuf};
 
 // ---------------------------------------------------------------------------
-// A positioned resource slot (in-memory working state)
+// A positioned slot (in-memory working state)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -33,8 +33,10 @@ enum Message {
     CursorMoved(Point),
     /// Left-click on image: set position of selected slot.
     Clicked(Point),
-    /// User selected a slot in the sidebar list.
-    SelectSlot(usize),
+    /// User selected a resource slot in the sidebar list.
+    SelectResourceSlot(usize),
+    /// User selected a turn order slot in the sidebar list.
+    SelectTurnOrderSlot(usize),
     /// Save coordinates back to the TOML file.
     Save,
 }
@@ -44,11 +46,14 @@ struct App {
     img_w: f32,
     img_h: f32,
     toml_path: PathBuf,
-    /// Original file content up to (but not including) the first [[resource_slots]] block.
+    /// Original file content up to (but not including) the first generated section.
     toml_prefix: String,
-    slots: Vec<Slot>,
-    /// Index into `slots` of the currently selected slot, if any.
-    selected: Option<usize>,
+    resource_slots: Vec<Slot>,
+    turn_order_slots: Vec<Slot>,
+    /// Index into `resource_slots` of the currently selected slot, if any.
+    selected_resource: Option<usize>,
+    /// Index into `turn_order_slots` of the currently selected slot, if any.
+    selected_turn_order: Option<usize>,
     cursor_pct: Option<(f32, f32)>,
     status_msg: String,
 }
@@ -71,9 +76,15 @@ impl App {
         let raw = fs::read_to_string(&toml_path)
             .unwrap_or_else(|e| panic!("Cannot read {}: {e}", toml_path.display()));
 
-        // Split off anything at or after the first [[resource_slots]] block so
-        // we can regenerate that section on save while preserving everything else.
-        let toml_prefix = if let Some(pos) = raw.find("[[resource_slots]]") {
+        // Split at whichever generated section comes first so we can regenerate both.
+        let split_pos = [
+            raw.find("[[resource_slots]]"),
+            raw.find("[[turn_order_slots]]"),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let toml_prefix = if let Some(pos) = split_pos {
             raw[..pos].trim_end().to_string()
         } else {
             raw.trim_end().to_string()
@@ -82,15 +93,9 @@ impl App {
         let map_data: MapData = toml::from_str(&raw)
             .unwrap_or_else(|e| panic!("Cannot parse {}: {e}", toml_path.display()));
 
-        // Build slot list.  Pre-populate positions from any existing entries in the file.
-        // We need to know all resources and their slot counts.  Derive from price table
-        // lengths as reflected in the existing resource_slots, or fall back to the
-        // standard counts if none are present.
-        let mut slots = build_slot_list(&map_data);
-
-        // Populate existing positions.
+        let mut resource_slots = build_resource_slot_list(&map_data);
         for rs in &map_data.resource_slots {
-            if let Some(slot) = slots
+            if let Some(slot) = resource_slots
                 .iter_mut()
                 .find(|s| s.resource == rs.resource && s.index == rs.index)
             {
@@ -98,10 +103,21 @@ impl App {
             }
         }
 
-        let placed = slots.iter().filter(|s| s.pos.is_some()).count();
-        let total = slots.len();
-        let status_msg =
-            format!("{placed}/{total} slots placed. Select a slot, then click the map.");
+        let mut turn_order_slots = build_turn_order_slot_list();
+        for ts in &map_data.turn_order_slots {
+            if let Some(slot) = turn_order_slots.iter_mut().find(|s| s.index == ts.index) {
+                slot.pos = Some((ts.x, ts.y));
+            }
+        }
+
+        let res_placed = resource_slots.iter().filter(|s| s.pos.is_some()).count();
+        let to_placed = turn_order_slots.iter().filter(|s| s.pos.is_some()).count();
+        let status_msg = format!(
+            "Resources: {}/{} placed. Turn order: {}/6 placed.",
+            res_placed,
+            resource_slots.len(),
+            to_placed
+        );
 
         (
             Self {
@@ -110,8 +126,10 @@ impl App {
                 img_h,
                 toml_path,
                 toml_prefix,
-                slots,
-                selected: None,
+                resource_slots,
+                turn_order_slots,
+                selected_resource: None,
+                selected_turn_order: None,
                 cursor_pct: None,
                 status_msg,
             },
@@ -125,19 +143,26 @@ impl App {
                 self.cursor_pct = Some((pct.x, pct.y));
             }
             Message::Clicked(pct) => {
-                if let Some(idx) = self.selected {
-                    self.slots[idx].pos = Some((pct.x, pct.y));
-                    // Advance selection to the next slot.
-                    if idx + 1 < self.slots.len() {
-                        self.selected = Some(idx + 1);
+                if let Some(idx) = self.selected_resource {
+                    self.resource_slots[idx].pos = Some((pct.x, pct.y));
+                    if idx + 1 < self.resource_slots.len() {
+                        self.selected_resource = Some(idx + 1);
                     }
-                    let placed = self.slots.iter().filter(|s| s.pos.is_some()).count();
-                    let total = self.slots.len();
-                    self.status_msg = format!("{placed}/{total} slots placed.");
+                } else if let Some(idx) = self.selected_turn_order {
+                    self.turn_order_slots[idx].pos = Some((pct.x, pct.y));
+                    if idx + 1 < self.turn_order_slots.len() {
+                        self.selected_turn_order = Some(idx + 1);
+                    }
                 }
+                self.refresh_status();
             }
-            Message::SelectSlot(idx) => {
-                self.selected = Some(idx);
+            Message::SelectResourceSlot(idx) => {
+                self.selected_resource = Some(idx);
+                self.selected_turn_order = None;
+            }
+            Message::SelectTurnOrderSlot(idx) => {
+                self.selected_turn_order = Some(idx);
+                self.selected_resource = None;
             }
             Message::Save => match self.save_toml() {
                 Ok(()) => {
@@ -151,10 +176,29 @@ impl App {
         iced::Task::none()
     }
 
+    fn refresh_status(&mut self) {
+        let res_placed = self
+            .resource_slots
+            .iter()
+            .filter(|s| s.pos.is_some())
+            .count();
+        let to_placed = self
+            .turn_order_slots
+            .iter()
+            .filter(|s| s.pos.is_some())
+            .count();
+        self.status_msg = format!(
+            "Resources: {}/{} placed. Turn order: {}/6 placed.",
+            res_placed,
+            self.resource_slots.len(),
+            to_placed
+        );
+    }
+
     fn save_toml(&self) -> Result<(), String> {
         let mut out = self.toml_prefix.clone();
         out.push('\n');
-        for slot in &self.slots {
+        for slot in &self.resource_slots {
             if let Some((x, y)) = slot.pos {
                 out.push('\n');
                 out.push_str("[[resource_slots]]\n");
@@ -164,59 +208,83 @@ impl App {
                 out.push_str(&format!("y = {y:.4}\n"));
             }
         }
+        for slot in &self.turn_order_slots {
+            if let Some((x, y)) = slot.pos {
+                out.push('\n');
+                out.push_str("[[turn_order_slots]]\n");
+                out.push_str(&format!("index = {}\n", slot.index));
+                out.push_str(&format!("x = {x:.4}\n"));
+                out.push_str(&format!("y = {y:.4}\n"));
+            }
+        }
         fs::write(&self.toml_path, &out).map_err(|e| e.to_string())
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // ---- Sidebar ----
-        let placed = self.slots.iter().filter(|s| s.pos.is_some()).count();
-        let total = self.slots.len();
-        let header = text(format!("Slots: {placed}/{total}"))
-            .size(14)
-            .color(Color::WHITE);
+        let res_placed = self
+            .resource_slots
+            .iter()
+            .filter(|s| s.pos.is_some())
+            .count();
+        let to_placed = self
+            .turn_order_slots
+            .iter()
+            .filter(|s| s.pos.is_some())
+            .count();
+        let header = text(format!(
+            "Resources: {}/{}\nTurn order: {}/6",
+            res_placed,
+            self.resource_slots.len(),
+            to_placed
+        ))
+        .size(13)
+        .color(Color::WHITE);
 
-        let slot_list: Element<_> = scrollable(self.slots.iter().enumerate().fold(
-            column![].spacing(2),
+        // Resource slots list
+        let res_header = text("-- Resources --")
+            .size(12)
+            .color(Color::from_rgb(0.7, 0.7, 0.7));
+        let res_list = self.resource_slots.iter().enumerate().fold(
+            column![res_header].spacing(2),
             |col, (i, slot)| {
-                let is_selected = self.selected == Some(i);
+                let is_selected = self.selected_resource == Some(i);
                 let label = if slot.pos.is_some() {
                     format!("✓ {}", slot.label())
                 } else {
                     format!("  {}", slot.label())
                 };
-                let btn = button(text(label).size(13))
-                    .width(Length::Fill)
-                    .on_press(Message::SelectSlot(i))
-                    .style(move |_theme, status| {
-                        let base = button::Style {
-                            background: Some(
-                                if is_selected {
-                                    Color::from_rgb(0.2, 0.4, 0.7)
-                                } else {
-                                    Color::from_rgb(0.15, 0.15, 0.15)
-                                }
-                                .into(),
-                            ),
-                            text_color: Color::WHITE,
-                            border: iced::Border {
-                                radius: 3.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        };
-                        match status {
-                            button::Status::Hovered if !is_selected => button::Style {
-                                background: Some(Color::from_rgb(0.25, 0.25, 0.25).into()),
-                                ..base
-                            },
-                            _ => base,
-                        }
-                    });
-                col.push(btn)
+                col.push(slot_button(
+                    label,
+                    is_selected,
+                    Message::SelectResourceSlot(i),
+                ))
             },
-        ))
-        .height(Length::Fill)
-        .into();
+        );
+
+        // Turn order slots list
+        let to_header = text("-- Turn Order --")
+            .size(12)
+            .color(Color::from_rgb(0.7, 0.7, 0.7));
+        let to_list = self.turn_order_slots.iter().enumerate().fold(
+            column![to_header].spacing(2),
+            |col, (i, slot)| {
+                let is_selected = self.selected_turn_order == Some(i);
+                let label = if slot.pos.is_some() {
+                    format!("✓ pos {}", slot.index)
+                } else {
+                    format!("  pos {}", slot.index)
+                };
+                col.push(slot_button(
+                    label,
+                    is_selected,
+                    Message::SelectTurnOrderSlot(i),
+                ))
+            },
+        );
+
+        let slot_list: Element<_> = scrollable(column![res_list, to_list].spacing(8))
+            .height(Length::Fill)
+            .into();
 
         let save_btn = button(text("Save").size(14).color(Color::WHITE))
             .on_press(Message::Save)
@@ -238,20 +306,33 @@ impl App {
             });
 
         let sidebar = container(column![header, slot_list, save_btn].spacing(6).padding(8))
-            .width(Length::Fixed(150.0))
+            .width(Length::Fixed(160.0))
             .height(Length::Fill)
             .style(|_theme: &Theme| container::Style {
                 background: Some(Color::from_rgb(0.1, 0.1, 0.1).into()),
                 ..Default::default()
             });
 
-        // ---- Map + overlay ----
-        let placed_positions: Vec<(f32, f32, bool)> = self
-            .slots
+        // Build placed positions for the overlay.
+        // (x, y, is_selected, is_turn_order)
+        let mut placed_positions: Vec<(f32, f32, bool, bool)> = self
+            .resource_slots
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| s.pos.map(|(x, y)| (x, y, self.selected == Some(i))))
+            .filter_map(|(i, s)| {
+                s.pos
+                    .map(|(x, y)| (x, y, self.selected_resource == Some(i), false))
+            })
             .collect();
+        placed_positions.extend(
+            self.turn_order_slots
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| {
+                    s.pos
+                        .map(|(x, y)| (x, y, self.selected_turn_order == Some(i), true))
+                }),
+        );
 
         let overlay = CoordOverlay {
             img_w: self.img_w,
@@ -259,8 +340,6 @@ impl App {
             placed: placed_positions,
         };
 
-        // Use a column for the map area so the image+canvas stack gets laid out
-        // the same way the original tool did (column > stack).
         let map_col = column![stack![
             iced::widget::image(self.image_handle.clone())
                 .width(Length::Fill)
@@ -271,7 +350,6 @@ impl App {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        // ---- Status bar ----
         let coord_str = match self.cursor_pct {
             Some((x, y)) => format!("{} | cursor: x={x:.4} y={y:.4}", self.status_msg),
             None => self.status_msg.clone(),
@@ -284,7 +362,6 @@ impl App {
             .width(Length::Fill)
             .padding([5, 10]);
 
-        // Outer layout: sidebar + map side by side, status bar below.
         let main_row = row![sidebar, map_col]
             .width(Length::Fill)
             .height(Length::Fill);
@@ -296,19 +373,48 @@ impl App {
     }
 }
 
+fn slot_button(label: String, is_selected: bool, msg: Message) -> Element<'static, Message> {
+    button(text(label).size(13))
+        .width(Length::Fill)
+        .on_press(msg)
+        .style(move |_theme, status| {
+            let base = button::Style {
+                background: Some(
+                    if is_selected {
+                        Color::from_rgb(0.2, 0.4, 0.7)
+                    } else {
+                        Color::from_rgb(0.15, 0.15, 0.15)
+                    }
+                    .into(),
+                ),
+                text_color: Color::WHITE,
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            match status {
+                button::Status::Hovered if !is_selected => button::Style {
+                    background: Some(Color::from_rgb(0.25, 0.25, 0.25).into()),
+                    ..base
+                },
+                _ => base,
+            }
+        })
+        .into()
+}
+
 // ---------------------------------------------------------------------------
-// Build the slot list from MapData
+// Build slot lists from MapData
 // ---------------------------------------------------------------------------
 
 /// Standard slot counts per resource (matches price_table lengths in powergrid-core).
 const STANDARD_SLOTS: &[(&str, usize)] =
     &[("coal", 24), ("oil", 24), ("garbage", 24), ("uranium", 12)];
 
-fn build_slot_list(map_data: &MapData) -> Vec<Slot> {
-    // If the TOML already declares resource_slots, use the set of (resource, index) pairs
-    // from there to know what slots need positioning.  Otherwise fall back to the standard list.
+fn build_resource_slot_list(map_data: &MapData) -> Vec<Slot> {
     if !map_data.resource_slots.is_empty() {
-        // Collect unique (resource, index) pairs in the order they appear.
         let mut seen = std::collections::HashSet::new();
         let mut slots = Vec::new();
         for rs in &map_data.resource_slots {
@@ -321,7 +427,6 @@ fn build_slot_list(map_data: &MapData) -> Vec<Slot> {
                 });
             }
         }
-        // Ensure they are sorted by resource (in STANDARD_SLOTS order) then index.
         let resource_order: std::collections::HashMap<&str, usize> = STANDARD_SLOTS
             .iter()
             .enumerate()
@@ -338,7 +443,6 @@ fn build_slot_list(map_data: &MapData) -> Vec<Slot> {
         });
         slots
     } else {
-        // Generate from standard counts.
         STANDARD_SLOTS
             .iter()
             .flat_map(|(resource, count)| {
@@ -352,12 +456,20 @@ fn build_slot_list(map_data: &MapData) -> Vec<Slot> {
     }
 }
 
+fn build_turn_order_slot_list() -> Vec<Slot> {
+    (0..6)
+        .map(|i| Slot {
+            resource: "turn_order".to_string(),
+            index: i,
+            pos: None,
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Coordinate helpers
 // ---------------------------------------------------------------------------
 
-/// Compute the ContentFit::Contain rendered dimensions and offsets within a canvas.
-/// Returns (disp_w, disp_h, offset_x, offset_y).
 fn contain_rect(canvas_w: f32, canvas_h: f32, img_w: f32, img_h: f32) -> (f32, f32, f32, f32) {
     let img_ratio = img_w / img_h;
     let canvas_ratio = canvas_w / canvas_h;
@@ -373,8 +485,6 @@ fn contain_rect(canvas_w: f32, canvas_h: f32, img_w: f32, img_h: f32) -> (f32, f
     (disp_w, disp_h, offset_x, offset_y)
 }
 
-/// Convert a canvas-local point to image-relative percentages (0.0–1.0).
-/// Returns None when the point is in the letterbox area outside the image.
 fn to_pct(local: Point, disp_w: f32, disp_h: f32, off_x: f32, off_y: f32) -> Option<(f32, f32)> {
     let x = (local.x - off_x) / disp_w;
     let y = (local.y - off_y) / disp_h;
@@ -382,14 +492,14 @@ fn to_pct(local: Point, disp_w: f32, disp_h: f32, off_x: f32, off_y: f32) -> Opt
 }
 
 // ---------------------------------------------------------------------------
-// Canvas overlay — handles mouse events and draws placed markers
+// Canvas overlay
 // ---------------------------------------------------------------------------
 
 struct CoordOverlay {
     img_w: f32,
     img_h: f32,
-    /// (x_pct, y_pct, is_selected_slot) for each already-placed slot.
-    placed: Vec<(f32, f32, bool)>,
+    /// (x_pct, y_pct, is_selected, is_turn_order) for each placed slot.
+    placed: Vec<(f32, f32, bool, bool)>,
 }
 
 impl canvas::Program<Message> for CoordOverlay {
@@ -438,11 +548,13 @@ impl canvas::Program<Message> for CoordOverlay {
         let radius = (disp_w * 0.008).max(4.0);
 
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        for (x_pct, y_pct, is_selected) in &self.placed {
+        for (x_pct, y_pct, is_selected, is_turn_order) in &self.placed {
             let cx = off_x + x_pct * disp_w;
             let cy = off_y + y_pct * disp_h;
             let color = if *is_selected {
                 Color::from_rgba(1.0, 1.0, 0.0, 0.9)
+            } else if *is_turn_order {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.85)
             } else {
                 Color::from_rgba(0.0, 0.8, 1.0, 0.7)
             };

@@ -4,7 +4,7 @@ use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
 };
 use powergrid_core::{
-    map::ResourceSlot,
+    map::{ResourceSlot, TurnOrderSlot},
     types::{Phase, PlayerColor, PlayerId, Resource},
     GameState,
 };
@@ -26,6 +26,9 @@ struct MarketOverlay<'a> {
     garbage: u8,
     uranium: u8,
     slots: &'a [ResourceSlot],
+    turn_order_slots: &'a [TurnOrderSlot],
+    /// (slot_index, player_color) for each player in turn order (index 0 = first place).
+    turn_order_players: Vec<(usize, PlayerColor)>,
 }
 
 impl canvas::Program<Message> for MarketOverlay<'_> {
@@ -96,7 +99,31 @@ impl canvas::Program<Message> for MarketOverlay<'_> {
             self.uranium,
         );
 
+        // Draw turn order markers: player-colored circles at the turn order spaces.
+        for (slot_idx, player_color) in &self.turn_order_players {
+            if let Some(slot) = self.turn_order_slots.iter().find(|s| s.index == *slot_idx) {
+                let cx = offset_x + slot.x * img_w;
+                let cy = offset_y + slot.y * img_h;
+                // White outline for visibility.
+                let outline = canvas::Path::circle(Point::new(cx, cy), radius + 1.5);
+                frame.fill(&outline, Color::WHITE);
+                let fill = canvas::Path::circle(Point::new(cx, cy), radius);
+                frame.fill(&fill, player_color_to_iced(*player_color));
+            }
+        }
+
         vec![frame.into_geometry()]
+    }
+}
+
+fn player_color_to_iced(color: PlayerColor) -> Color {
+    match color {
+        PlayerColor::Red => Color::from_rgb(0.9, 0.1, 0.1),
+        PlayerColor::Blue => Color::from_rgb(0.1, 0.3, 0.9),
+        PlayerColor::Green => Color::from_rgb(0.1, 0.7, 0.2),
+        PlayerColor::Yellow => Color::from_rgb(0.95, 0.85, 0.1),
+        PlayerColor::Purple => Color::from_rgb(0.6, 0.1, 0.8),
+        PlayerColor::Black => Color::from_rgb(0.15, 0.15, 0.15),
     }
 }
 
@@ -243,12 +270,8 @@ pub fn game_view<'a>(
 
     let active_player_id = active_player(state);
 
-    // Player status panel — ordered by turn order.
-    let ordered_players: Vec<_> = state
-        .player_order
-        .iter()
-        .filter_map(|id| state.player(*id))
-        .collect();
+    // Player status panel — listed in join order (turn order is shown on the map).
+    let ordered_players: Vec<_> = state.players.iter().collect();
     let player_panel =
         ordered_players
             .iter()
@@ -326,12 +349,20 @@ pub fn game_view<'a>(
             col.push(text(entry.as_str()).size(12))
         });
 
+    let turn_order_players: Vec<(usize, PlayerColor)> = state
+        .player_order
+        .iter()
+        .enumerate()
+        .filter_map(|(i, pid)| state.player(*pid).map(|p| (i, p.color)))
+        .collect();
     let overlay = MarketOverlay {
         coal: state.resources.coal,
         oil: state.resources.oil,
         garbage: state.resources.garbage,
         uranium: state.resources.uranium,
         slots: &state.map.resource_slots,
+        turn_order_slots: &state.map.turn_order_slots,
+        turn_order_players,
     };
     let map_panel = container(stack![
         iced::widget::image(germany_map_handle())

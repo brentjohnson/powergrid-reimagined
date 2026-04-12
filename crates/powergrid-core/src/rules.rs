@@ -1048,6 +1048,7 @@ mod tests {
                 },
             ],
             resource_slots: vec![],
+            turn_order_slots: vec![],
         })
     }
 
