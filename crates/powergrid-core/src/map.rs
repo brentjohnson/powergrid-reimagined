@@ -8,6 +8,19 @@ pub struct MapData {
     pub regions: Vec<String>,
     pub cities: Vec<CityData>,
     pub connections: Vec<ConnectionData>,
+    #[serde(default)]
+    pub resource_slots: Vec<ResourceSlotData>,
+}
+
+/// Raw TOML entry for a single resource market slot position.
+#[derive(Debug, Deserialize)]
+pub struct ResourceSlotData {
+    pub resource: String,
+    pub index: usize,
+    /// x-position as a fraction of the map image width (0.0–1.0).
+    pub x: f32,
+    /// y-position as a fraction of the map image height (0.0–1.0).
+    pub y: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +45,17 @@ pub struct Map {
     pub cities: HashMap<String, City>,
     /// Adjacency: city_id → list of (neighbor_id, edge_cost).
     pub edges: HashMap<String, Vec<(String, u32)>>,
+    /// Positions of resource market slots, ordered by resource and index.
+    pub resource_slots: Vec<ResourceSlot>,
+}
+
+/// A single resource market slot with its fractional position on the map image.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceSlot {
+    pub resource: String,
+    pub index: usize,
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,11 +94,23 @@ impl Map {
                 .push((conn.from.clone(), conn.cost));
         }
 
+        let resource_slots = data
+            .resource_slots
+            .into_iter()
+            .map(|s| ResourceSlot {
+                resource: s.resource,
+                index: s.index,
+                x: s.x,
+                y: s.y,
+            })
+            .collect();
+
         Self {
             name: data.name,
             regions: data.regions,
             cities,
             edges,
+            resource_slots,
         }
     }
 

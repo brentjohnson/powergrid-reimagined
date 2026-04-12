@@ -9,3 +9,5 @@ path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.13", features = ["image", "canvas"] }
+powergrid-core = { path = "../powergrid-core" }
+toml = "0.8"

@@ -497,3 +497,375 @@ cost = 10
 from = "berlin"
 to = "dresden"
 cost = 16
+
+[[resource_slots]]
+resource = "coal"
+index = 0
+x = 0.0634
+y = 0.9385
+
+[[resource_slots]]
+resource = "coal"
+index = 1
+x = 0.0924
+y = 0.9381
+
+[[resource_slots]]
+resource = "coal"
+index = 2
+x = 0.1261
+y = 0.9381
+
+[[resource_slots]]
+resource = "coal"
+index = 3
+x = 0.1671
+y = 0.9390
+
+[[resource_slots]]
+resource = "coal"
+index = 4
+x = 0.1984
+y = 0.9372
+
+[[resource_slots]]
+resource = "coal"
+index = 5
+x = 0.2335
+y = 0.9386
+
+[[resource_slots]]
+resource = "coal"
+index = 6
+x = 0.2730
+y = 0.9377
+
+[[resource_slots]]
+resource = "coal"
+index = 7
+x = 0.3046
+y = 0.9407
+
+[[resource_slots]]
+resource = "coal"
+index = 8
+x = 0.3352
+y = 0.9380
+
+[[resource_slots]]
+resource = "coal"
+index = 9
+x = 0.3788
+y = 0.9381
+
+[[resource_slots]]
+resource = "coal"
+index = 10
+x = 0.4066
+y = 0.9396
+
+[[resource_slots]]
+resource = "coal"
+index = 11
+x = 0.4419
+y = 0.9381
+
+[[resource_slots]]
+resource = "coal"
+index = 12
+x = 0.4811
+y = 0.9392
+
+[[resource_slots]]
+resource = "coal"
+index = 13
+x = 0.5124
+y = 0.9373
+
+[[resource_slots]]
+resource = "coal"
+index = 14
+x = 0.5454
+y = 0.9400
+
+[[resource_slots]]
+resource = "coal"
+index = 15
+x = 0.5875
+y = 0.9369
+
+[[resource_slots]]
+resource = "coal"
+index = 16
+x = 0.6179
+y = 0.9379
+
+[[resource_slots]]
+resource = "coal"
+index = 17
+x = 0.6502
+y = 0.9379
+
+[[resource_slots]]
+resource = "coal"
+index = 18
+x = 0.6910
+y = 0.9379
+
+[[resource_slots]]
+resource = "coal"
+index = 19
+x = 0.7253
+y = 0.9379
+
+[[resource_slots]]
+resource = "coal"
+index = 20
+x = 0.7577
+y = 0.9396
+
+[[resource_slots]]
+resource = "coal"
+index = 21
+x = 0.7947
+y = 0.9396
+
+[[resource_slots]]
+resource = "coal"
+index = 22
+x = 0.8243
+y = 0.9378
+
+[[resource_slots]]
+resource = "coal"
+index = 23
+x = 0.8570
+y = 0.9387
+
+[[resource_slots]]
+resource = "oil"
+index = 0
+x = 0.0595
+y = 0.9579
+
+[[resource_slots]]
+resource = "oil"
+index = 1
+x = 0.0837
+y = 0.9579
+
+[[resource_slots]]
+resource = "oil"
+index = 2
+x = 0.1086
+y = 0.9571
+
+[[resource_slots]]
+resource = "oil"
+index = 3
+x = 0.1614
+y = 0.9582
+
+[[resource_slots]]
+resource = "oil"
+index = 4
+x = 0.1866
+y = 0.9582
+
+[[resource_slots]]
+resource = "oil"
+index = 5
+x = 0.2093
+y = 0.9582
+
+[[resource_slots]]
+resource = "oil"
+index = 6
+x = 0.2639
+y = 0.9582
+
+[[resource_slots]]
+resource = "oil"
+index = 7
+x = 0.2913
+y = 0.9571
+
+[[resource_slots]]
+resource = "oil"
+index = 8
+x = 0.3130
+y = 0.9571
+
+[[resource_slots]]
+resource = "oil"
+index = 9
+x = 0.3709
+y = 0.9598
+
+[[resource_slots]]
+resource = "oil"
+index = 10
+x = 0.3975
+y = 0.9598
+
+[[resource_slots]]
+resource = "oil"
+index = 11
+x = 0.4202
+y = 0.9598
+
+[[resource_slots]]
+resource = "oil"
+index = 12
+x = 0.4808
+y = 0.9578
+
+[[resource_slots]]
+resource = "oil"
+index = 13
+x = 0.5051
+y = 0.9578
+
+[[resource_slots]]
+resource = "oil"
+index = 14
+x = 0.5243
+y = 0.9586
+
+[[resource_slots]]
+resource = "oil"
+index = 15
+x = 0.5794
+y = 0.9586
+
+[[resource_slots]]
+resource = "oil"
+index = 16
+x = 0.6057
+y = 0.9589
+
+[[resource_slots]]
+resource = "oil"
+index = 17
+x = 0.6301
+y = 0.9578
+
+[[resource_slots]]
+resource = "garbage"
+index = 0
+x = 0.0608
+y = 0.9777
+
+[[resource_slots]]
+resource = "garbage"
+index = 1
+x = 0.0880
+y = 0.9764
+
+[[resource_slots]]
+resource = "garbage"
+index = 2
+x = 0.1223
+y = 0.9753
+
+[[resource_slots]]
+resource = "garbage"
+index = 3
+x = 0.1652
+y = 0.9762
+
+[[resource_slots]]
+resource = "garbage"
+index = 4
+x = 0.1998
+y = 0.9743
+
+[[resource_slots]]
+resource = "garbage"
+index = 5
+x = 0.2309
+y = 0.9781
+
+[[resource_slots]]
+resource = "garbage"
+index = 6
+x = 0.2735
+y = 0.9781
+
+[[resource_slots]]
+resource = "garbage"
+index = 7
+x = 0.3047
+y = 0.9780
+
+[[resource_slots]]
+resource = "garbage"
+index = 8
+x = 0.3350
+y = 0.9763
+
+[[resource_slots]]
+resource = "garbage"
+index = 9
+x = 0.3719
+y = 0.9791
+
+[[resource_slots]]
+resource = "uranium"
+index = 0
+x = 0.1263
+y = 0.9552
+
+[[resource_slots]]
+resource = "uranium"
+index = 1
+x = 0.2307
+y = 0.9562
+
+[[resource_slots]]
+resource = "uranium"
+index = 2
+x = 0.3364
+y = 0.9551
+
+[[resource_slots]]
+resource = "uranium"
+index = 3
+x = 0.4411
+y = 0.9564
+
+[[resource_slots]]
+resource = "uranium"
+index = 4
+x = 0.5444
+y = 0.9563
+
+[[resource_slots]]
+resource = "uranium"
+index = 5
+x = 0.6507
+y = 0.9582
+
+[[resource_slots]]
+resource = "uranium"
+index = 6
+x = 0.7541
+y = 0.9575
+
+[[resource_slots]]
+resource = "uranium"
+index = 7
+x = 0.8573
+y = 0.9561
+
+[[resource_slots]]
+resource = "uranium"
+index = 8
+x = 0.8973
+y = 0.9408
+
+[[resource_slots]]
+resource = "uranium"
+index = 9
+x = 0.9418
+y = 0.9392

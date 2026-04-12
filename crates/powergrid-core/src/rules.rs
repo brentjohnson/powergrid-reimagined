@@ -1047,6 +1047,7 @@ mod tests {
                     cost: 3,
                 },
             ],
+            resource_slots: vec![],
         })
     }
 

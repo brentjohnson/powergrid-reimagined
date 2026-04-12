@@ -4,6 +4,7 @@ use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
 };
 use powergrid_core::{
+    map::ResourceSlot,
     types::{Phase, PlayerColor, PlayerId, Resource},
     GameState,
 };
@@ -19,32 +20,15 @@ const IMG_H: f32 = 2048.0;
 /// Circle radius expressed as a fraction of the displayed image width.
 const SLOT_RADIUS_FRAC: f32 = 0.009;
 
-/// Map a slot column index to an x-fraction of the original image.
-/// The resource market runs from expensive (left) to cheap (right).
-/// x_start/x_end mark the left/right edges of the slot grid on the map image.
-fn slot_x(col: usize, total_cols: usize) -> f32 {
-    let x_start = 0.62_f32;
-    let x_end = 0.97_f32;
-    if total_cols <= 1 {
-        return (x_start + x_end) / 2.0;
-    }
-    x_start + (col as f32 / (total_cols - 1) as f32) * (x_end - x_start)
-}
-
-/// y-center fraction for each resource row on the map image.
-const COAL_Y: f32 = 0.885;
-const OIL_Y: f32 = 0.910;
-const GARBAGE_Y: f32 = 0.935;
-const URANIUM_Y: f32 = 0.960;
-
-struct MarketOverlay {
+struct MarketOverlay<'a> {
     coal: u8,
     oil: u8,
     garbage: u8,
     uranium: u8,
+    slots: &'a [ResourceSlot],
 }
 
-impl canvas::Program<Message> for MarketOverlay {
+impl canvas::Program<Message> for MarketOverlay<'_> {
     type State = ();
 
     fn draw(
@@ -71,28 +55,46 @@ impl canvas::Program<Message> for MarketOverlay {
         let offset_y = (bounds.height - img_h) / 2.0;
         let radius = SLOT_RADIUS_FRAC * img_w;
 
-        let mut draw_row = |color: Color, total_slots: usize, current: u8, y_frac: f32| {
-            if current == 0 || total_slots == 0 {
-                return;
-            }
-            let occupied_from = total_slots.saturating_sub(current as usize);
-            for col in occupied_from..total_slots {
-                let cx = offset_x + slot_x(col, total_slots) * img_w;
-                let cy = offset_y + y_frac * img_h;
-                let circle = canvas::Path::circle(Point::new(cx, cy), radius);
-                frame.fill(&circle, color);
-            }
-        };
+        let draw_resource =
+            |frame: &mut canvas::Frame, color: Color, resource_name: &str, current: u8| {
+                let mut resource_slots: Vec<&ResourceSlot> = self
+                    .slots
+                    .iter()
+                    .filter(|s| s.resource == resource_name)
+                    .collect();
+                resource_slots.sort_by_key(|s| s.index);
+                let total = resource_slots.len();
+                if total == 0 || current == 0 {
+                    return;
+                }
+                let occupied_from = total.saturating_sub(current as usize);
+                for slot in &resource_slots[occupied_from..] {
+                    let cx = offset_x + slot.x * img_w;
+                    let cy = offset_y + slot.y * img_h;
+                    let circle = canvas::Path::circle(Point::new(cx, cy), radius);
+                    frame.fill(&circle, color);
+                }
+            };
 
-        draw_row(Color::from_rgb(0.42, 0.27, 0.14), 24, self.coal, COAL_Y);
-        draw_row(Color::from_rgb(0.1, 0.1, 0.1), 18, self.oil, OIL_Y);
-        draw_row(
-            Color::from_rgb(0.95, 0.85, 0.1),
-            10,
-            self.garbage,
-            GARBAGE_Y,
+        draw_resource(
+            &mut frame,
+            Color::from_rgb(0.42, 0.27, 0.14),
+            "coal",
+            self.coal,
         );
-        draw_row(Color::from_rgb(0.85, 0.1, 0.1), 10, self.uranium, URANIUM_Y);
+        draw_resource(&mut frame, Color::from_rgb(0.1, 0.1, 0.1), "oil", self.oil);
+        draw_resource(
+            &mut frame,
+            Color::from_rgb(0.95, 0.85, 0.1),
+            "garbage",
+            self.garbage,
+        );
+        draw_resource(
+            &mut frame,
+            Color::from_rgb(0.85, 0.1, 0.1),
+            "uranium",
+            self.uranium,
+        );
 
         vec![frame.into_geometry()]
     }
@@ -329,6 +331,7 @@ pub fn game_view<'a>(
         oil: state.resources.oil,
         garbage: state.resources.garbage,
         uranium: state.resources.uranium,
+        slots: &state.map.resource_slots,
     };
     let map_panel = container(stack![
         iced::widget::image(germany_map_handle())
