@@ -2130,6 +2130,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "map-tool"
+version = "0.1.0"
+dependencies = [
+ "iced",
+]
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
