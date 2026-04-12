@@ -50,9 +50,12 @@ pub async fn handle_socket(socket: WebSocket, state: SharedState) {
             }
         };
 
+        info!("Action from {player_id}: {action:?}");
+
         let mut s = state.lock().await;
         match apply_action(&mut s.game, player_id, action) {
             Ok(()) => {
+                info!("Action from {player_id} succeeded; broadcasting state to {} client(s)", s.clients.len());
                 // Broadcast full state to all clients.
                 let msg = serde_json::to_string(
                     &ServerMessage::StateUpdate(s.game.clone())
@@ -60,6 +63,7 @@ pub async fn handle_socket(socket: WebSocket, state: SharedState) {
                 s.clients.retain(|(_, tx): &(Uuid, _)| tx.send(msg.clone()).is_ok());
             }
             Err(e) => {
+                warn!("Action from {player_id} rejected: {e}");
                 let err_msg = serde_json::to_string(
                     &ServerMessage::ActionError(e.to_string())
                 ).unwrap();

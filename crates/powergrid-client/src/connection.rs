@@ -1,7 +1,8 @@
-use futures::{SinkExt, Stream, StreamExt};
+use futures::{SinkExt, StreamExt};
 use iced::futures::channel::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use powergrid_core::actions::{Action, ServerMessage};
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
 pub enum WsEvent {
@@ -12,15 +13,19 @@ pub enum WsEvent {
 
 pub fn connect(url: String) -> iced::Subscription<WsEvent> {
     iced::Subscription::run_with_id(
-        std::any::TypeId::of::<WsEvent>(),
-        event_stream(url),
+        url.clone(),
+        // Wrap in `once(...).flatten()` so the worker is spawned lazily — only
+        // when iced actually starts this subscription instance.  Without this,
+        // the spawn fires on every render (each call to `subscription()`), and
+        // any worker whose receiver was discarded by iced's dedup logic
+        // immediately connects then disconnects (phantom pairs in the log).
+        futures::stream::once(async move {
+            let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<WsEvent>();
+            tokio::spawn(ws_worker(url, event_tx));
+            tokio_stream::wrappers::UnboundedReceiverStream::new(event_rx)
+        })
+        .flatten(),
     )
-}
-
-fn event_stream(url: String) -> impl Stream<Item = WsEvent> + Send + 'static {
-    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<WsEvent>();
-    tokio::spawn(ws_worker(url, event_tx));
-    tokio_stream::wrappers::UnboundedReceiverStream::new(event_rx)
 }
 
 async fn ws_worker(
@@ -59,7 +64,18 @@ async fn ws_worker(
                                 }
                             }
                         }
-                        _ => break,
+                        // Pings are auto-replied by tungstenite; pongs are no-ops.
+                        Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
+                        Some(Ok(Message::Close(frame))) => {
+                            debug!("Server closed connection: {frame:?}");
+                            break;
+                        }
+                        Some(Ok(_)) => {} // Binary / Frame — ignore
+                        Some(Err(e)) => {
+                            warn!("WebSocket error: {e}");
+                            break;
+                        }
+                        None => break, // stream ended
                     }
                 }
             }
