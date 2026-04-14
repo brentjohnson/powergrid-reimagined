@@ -1,6 +1,8 @@
 use crate::actions::{Action, ActionError};
 use crate::state::GameState;
 use crate::types::*;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
 
 /// Entry point: validate and apply an action from `actor`.
 /// Returns the mutated state on success, or an error (state unchanged).
@@ -67,9 +69,17 @@ fn handle_start(state: &mut GameState, actor: PlayerId) -> Result<(), ActionErro
     }
 
     state.round = 1;
-    // Initial player order: random (use player insertion order as proxy for now).
+
+    let mut rng = match state.rng_seed {
+        Some(seed) => rand::rngs::SmallRng::seed_from_u64(seed),
+        None => rand::rngs::SmallRng::from_entropy(),
+    };
+
     state.player_order = state.players.iter().map(|p| p.id).collect();
-    // Shuffle would go here in a real impl; for determinism in tests we skip it.
+    state.player_order.shuffle(&mut rng);
+
+    let player_count = state.players.len();
+    state.market.setup_deck(&mut rng, player_count);
 
     begin_auction(state);
     state.log("Game started!".to_string());
@@ -985,16 +995,20 @@ pub fn build_plant_deck() -> PlantMarket {
     all_plants.sort_by_key(|p| p.number);
 
     // Plants 3–10 form the initial market visible at game start.
-    // The "13" card is set aside (Step 3 card — deferred for MVP).
-    // For MVP: put the 8 lowest into actual+future, rest into deck.
     let initial: Vec<PowerPlant> = all_plants
         .iter()
         .filter(|p| p.number <= 10)
         .cloned()
         .collect();
+
+    // Plant 13 is set aside and placed on top of the deck at game start.
+    let plant_13 = all_plants.iter().find(|p| p.number == 13).cloned();
+
+    // Remaining plants (11–50, excluding 13) form the draw deck.
+    // Reversed so that pop() draws in ascending order before shuffling.
     let deck: Vec<PowerPlant> = all_plants
         .iter()
-        .filter(|p| p.number > 10)
+        .filter(|p| p.number > 10 && p.number != 13)
         .rev()
         .cloned()
         .collect();
@@ -1006,6 +1020,8 @@ pub fn build_plant_deck() -> PlantMarket {
         actual,
         future,
         deck,
+        plant_13,
+        step3_at_bottom: false,
     }
 }
 
@@ -1059,7 +1075,7 @@ mod tests {
     }
 
     fn three_player_game() -> (GameState, PlayerId, PlayerId, PlayerId) {
-        let mut state = GameState::new(test_map(), 3);
+        let mut state = GameState::new_with_seed(test_map(), 3, 42);
         let p1 = uuid::Uuid::new_v4();
         let p2 = uuid::Uuid::new_v4();
         let p3 = uuid::Uuid::new_v4();
@@ -1094,7 +1110,7 @@ mod tests {
     }
 
     fn two_player_game() -> (GameState, PlayerId, PlayerId) {
-        let mut state = GameState::new(test_map(), 2);
+        let mut state = GameState::new_with_seed(test_map(), 2, 42);
         let p1 = uuid::Uuid::new_v4();
         let p2 = uuid::Uuid::new_v4();
         apply_action(
@@ -1120,15 +1136,17 @@ mod tests {
 
     #[test]
     fn test_bid_order_after_overbid() {
-        // Scenario: p1 selects a plant, p2 overbids.
-        // The next bidder should be p3, not p1.
+        // Scenario: the first player selects a plant, the second overbids.
+        // The next bidder should be the third player, not the first.
         let (mut state, p1, p2, p3) = three_player_game();
         apply_action(&mut state, p1, Action::StartGame).unwrap();
 
-        // Confirm player_order is [p1, p2, p3] so p1 selects first.
-        assert_eq!(state.player_order[0], p1);
+        // Derive the seeded turn order rather than assuming insertion order.
+        let first = state.player_order[0];
+        let second = state.player_order[1];
+        let third = state.player_order[2];
 
-        // p1 selects the lowest-numbered plant in the actual market.
+        // First player selects the lowest-numbered plant in the actual market.
         let plant_number = {
             let Phase::Auction { .. } = &state.phase else {
                 panic!("expected Auction phase");
@@ -1137,24 +1155,30 @@ mod tests {
         };
         let min_bid = plant_number as u32;
 
-        apply_action(&mut state, p1, Action::SelectPlant { plant_number }).unwrap();
+        apply_action(&mut state, first, Action::SelectPlant { plant_number }).unwrap();
 
-        // p2 overbids.
+        // Second player overbids.
         apply_action(
             &mut state,
-            p2,
+            second,
             Action::PlaceBid {
                 amount: min_bid + 1,
             },
         )
         .unwrap();
 
-        // Next bidder in remaining_bidders must be p3, not p1.
+        // Next bidder in remaining_bidders must be the third player.
         let Phase::Auction { active_bid, .. } = &state.phase else {
-            panic!("expected Auction phase after p2 bid");
+            panic!("expected Auction phase after second bid");
         };
         let bid = active_bid.as_ref().expect("should have active bid");
-        assert_eq!(bid.remaining_bidders[0], p3, "p3 should bid next, not p1");
+        assert_eq!(
+            bid.remaining_bidders[0], third,
+            "third player should bid next"
+        );
+
+        // Suppress unused variable warnings — all three player ids are needed for the game setup.
+        let _ = (p1, p2, p3);
     }
 
     #[test]
@@ -1167,7 +1191,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_name_rejected() {
-        let mut state = GameState::new(test_map(), 2);
+        let mut state = GameState::new_with_seed(test_map(), 2, 42);
         let p1 = uuid::Uuid::new_v4();
         let p2 = uuid::Uuid::new_v4();
         apply_action(
@@ -1216,11 +1240,15 @@ mod tests {
         let (mut state, p1, p2) = two_player_game();
         apply_action(&mut state, p1, Action::StartGame).unwrap();
 
-        // p1 goes first — passes their auction turn.
-        apply_action(&mut state, p1, Action::PassAuction).unwrap();
+        // Derive actual turn order from the seeded shuffle.
+        let first = state.player_order[0];
+        let second = state.player_order[1];
 
-        // Now only p2 remains. Selecting a plant should immediately award it at minimum bid.
-        apply_action(&mut state, p2, Action::SelectPlant { plant_number: 3 }).unwrap();
+        // First player passes their auction turn.
+        apply_action(&mut state, first, Action::PassAuction).unwrap();
+
+        // Now only the second player remains. Selecting a plant should immediately award it.
+        apply_action(&mut state, second, Action::SelectPlant { plant_number: 3 }).unwrap();
 
         // Should have advanced past auction into BuyResources.
         assert!(
@@ -1229,10 +1257,12 @@ mod tests {
             state.phase
         );
 
-        // p2 should own plant 3 and have been charged its minimum bid (3).
-        let p2_player = state.player(p2).unwrap();
-        assert!(p2_player.plants.iter().any(|p| p.number == 3));
-        assert_eq!(p2_player.money, 50 - 3);
+        // Second player should own plant 3 and have been charged its minimum bid (3).
+        let second_player = state.player(second).unwrap();
+        assert!(second_player.plants.iter().any(|p| p.number == 3));
+        assert_eq!(second_player.money, 50 - 3);
+
+        let _ = (p1, p2);
     }
 
     #[test]

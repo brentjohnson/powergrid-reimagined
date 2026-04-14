@@ -16,10 +16,21 @@ pub struct GameState {
     pub end_game_cities: u8,
     /// Log of recent events for display.
     pub event_log: Vec<String>,
+    /// Optional RNG seed for deterministic play (used in tests; `None` = entropy).
+    #[serde(default)]
+    pub rng_seed: Option<u64>,
 }
 
 impl GameState {
     pub fn new(map: Map, player_count: usize) -> Self {
+        Self::new_inner(map, player_count, None)
+    }
+
+    pub fn new_with_seed(map: Map, player_count: usize, seed: u64) -> Self {
+        Self::new_inner(map, player_count, Some(seed))
+    }
+
+    fn new_inner(map: Map, player_count: usize, rng_seed: Option<u64>) -> Self {
         let end_game_cities = match player_count {
             2 => 21,
             3 => 17,
@@ -38,6 +49,7 @@ impl GameState {
             round: 0,
             end_game_cities,
             event_log: Vec::new(),
+            rng_seed,
         }
     }
 

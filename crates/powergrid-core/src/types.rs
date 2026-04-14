@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -414,8 +415,14 @@ pub struct PlantMarket {
     pub actual: Vec<PowerPlant>,
     /// The 4 plants in the future market (sorted by number).
     pub future: Vec<PowerPlant>,
-    /// Draw deck (face down).
+    /// Draw deck (face down). Index 0 is the bottom; `pop()` draws from the top.
     pub deck: Vec<PowerPlant>,
+    /// Plant 13, held aside until placed on top of the deck at game start.
+    #[serde(default)]
+    pub plant_13: Option<PowerPlant>,
+    /// Whether the Step 3 trigger card is at the bottom of the deck.
+    #[serde(default)]
+    pub step3_at_bottom: bool,
 }
 
 impl PlantMarket {
@@ -451,5 +458,31 @@ impl PlantMarket {
             self.actual.remove(0);
             self.refill();
         }
+    }
+
+    /// Shuffle the draw deck, remove plants based on player count,
+    /// then place plant 13 on top and the Step 3 card on the bottom.
+    /// Called once at game start.
+    pub fn setup_deck(&mut self, rng: &mut impl rand::Rng, player_count: usize) {
+        // 1. Shuffle the deck.
+        self.deck.shuffle(rng);
+
+        // 2. Remove random plants (face-down) based on player count.
+        let remove_count = match player_count {
+            2 => 8,
+            3 => 8,
+            4 => 4,
+            _ => 0, // 5-6 players: remove none
+        };
+        self.deck
+            .truncate(self.deck.len().saturating_sub(remove_count));
+
+        // 3. Place plant 13 on top (end of vec, drawn first via pop()).
+        if let Some(plant_13) = self.plant_13.take() {
+            self.deck.push(plant_13);
+        }
+
+        // 4. Step 3 card goes on the bottom (index 0, drawn last).
+        self.step3_at_bottom = true;
     }
 }

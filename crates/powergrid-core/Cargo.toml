@@ -9,3 +9,4 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 toml = "0.8"
 thiserror = "1"
+rand = { version = "0.8", features = ["small_rng"] }
