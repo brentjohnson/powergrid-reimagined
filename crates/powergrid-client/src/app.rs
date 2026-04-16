@@ -1,9 +1,12 @@
 use iced::{futures::channel::mpsc, Element, Subscription, Vector};
 use powergrid_core::{
     actions::Action,
-    types::{PlayerColor, Resource},
+    connection_cost,
+    map::Map,
+    types::{Phase, PlayerColor, Resource},
     GameState,
 };
+use std::collections::HashSet;
 use uuid::Uuid;
 
 use crate::connection::{self, WsEvent};
@@ -34,7 +37,8 @@ pub enum Message {
     DoneBuying,
 
     // Build
-    BuildCity(String),
+    ToggleBuildCity(String),
+    ClearBuildSelection,
     DoneBuilding,
 
     // Bureaucracy
@@ -57,6 +61,21 @@ pub enum Screen {
     Game,
 }
 
+/// Pre-computed preview of a pending multi-city build.
+#[derive(Default)]
+pub struct BuildPreview {
+    /// Cities in the order that minimises total per-city cost.
+    pub ordered: Vec<String>,
+    /// Sum of all routing (edge) costs.
+    pub total_route_cost: u32,
+    /// Sum of all city-slot fees.
+    pub total_slot_cost: u32,
+    /// Total cost (route + slots).
+    pub total_cost: u32,
+    /// Set of map edges (each as `(smaller_id, larger_id)`) that form the cheapest paths.
+    pub edges: HashSet<(String, String)>,
+}
+
 pub struct App {
     screen: Screen,
     game_state: Option<GameState>,
@@ -72,6 +91,10 @@ pub struct App {
     error_message: Option<String>,
     map_zoom: f32,
     map_pan: Vector,
+    /// Cities the player has toggled for the pending batch build.
+    selected_build_cities: Vec<String>,
+    /// Cached preview for the current selection (routes, costs, edges to draw).
+    build_preview: BuildPreview,
 }
 
 impl App {
@@ -88,6 +111,8 @@ impl App {
                 error_message: None,
                 map_zoom: 1.0,
                 map_pan: Vector::default(),
+                selected_build_cities: Vec::new(),
+                build_preview: BuildPreview::default(),
             },
             iced::Task::none(),
         )
@@ -138,6 +163,18 @@ impl App {
                             }
                         }
                         ServerMessage::StateUpdate(state) => {
+                            // Clear build selection once it's no longer our build turn.
+                            let still_my_build_turn = self
+                                .my_id
+                                .map(|id| {
+                                    matches!(&state.phase, Phase::BuildCities { remaining }
+                                    if remaining.first() == Some(&id))
+                                })
+                                .unwrap_or(false);
+                            if !still_my_build_turn {
+                                self.selected_build_cities.clear();
+                                self.build_preview = BuildPreview::default();
+                            }
                             self.game_state = Some(*state);
                             self.error_message = None;
                         }
@@ -182,11 +219,39 @@ impl App {
             Message::DoneBuying => {
                 self.send(Action::DoneBuying);
             }
-            Message::BuildCity(city_id) => {
-                self.send(Action::BuildCity { city_id });
+            Message::ToggleBuildCity(city_id) => {
+                if let Some(state) = &self.game_state {
+                    if let Some(my_id) = self.my_id {
+                        // Ignore clicks on cities we already own or that are full.
+                        if let Some(city) = state.map.cities.get(&city_id) {
+                            if city.owners.contains(&my_id) || city.owners.len() >= 3 {
+                                return iced::Task::none();
+                            }
+                        }
+                    }
+                }
+                if let Some(pos) = self
+                    .selected_build_cities
+                    .iter()
+                    .position(|c| c == &city_id)
+                {
+                    self.selected_build_cities.remove(pos);
+                } else {
+                    self.selected_build_cities.push(city_id);
+                }
+                self.refresh_build_preview();
+            }
+            Message::ClearBuildSelection => {
+                self.selected_build_cities.clear();
+                self.build_preview = BuildPreview::default();
             }
             Message::DoneBuilding => {
-                self.send(Action::DoneBuilding);
+                if self.selected_build_cities.is_empty() {
+                    self.send(Action::DoneBuilding);
+                } else {
+                    let city_ids = self.build_preview.ordered.clone();
+                    self.send(Action::BuildCities { city_ids });
+                }
             }
             Message::PowerCities => {
                 // Fire all plants by default.
@@ -236,6 +301,8 @@ impl App {
                             self.error_message.as_deref(),
                             self.map_zoom,
                             self.map_pan,
+                            &self.selected_build_cities,
+                            &self.build_preview,
                         )
                     }
                 } else {
@@ -255,6 +322,144 @@ impl App {
     fn send(&mut self, action: Action) {
         if let Some(tx) = &mut self.ws_sender {
             let _ = tx.try_send(action);
+        }
+    }
+
+    fn refresh_build_preview(&mut self) {
+        let Some(state) = &self.game_state else {
+            self.build_preview = BuildPreview::default();
+            return;
+        };
+        let Some(my_id) = self.my_id else {
+            self.build_preview = BuildPreview::default();
+            return;
+        };
+        let owned = state
+            .player(my_id)
+            .map(|p| p.cities.clone())
+            .unwrap_or_default();
+        self.build_preview = compute_build_preview(
+            &state.map,
+            &owned,
+            &self.selected_build_cities,
+            &state.map.cities,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build preview helpers
+// ---------------------------------------------------------------------------
+
+fn compute_build_preview(
+    map: &Map,
+    owned: &[String],
+    selected: &[String],
+    cities: &std::collections::HashMap<String, powergrid_core::map::City>,
+) -> BuildPreview {
+    if selected.is_empty() {
+        return BuildPreview::default();
+    }
+
+    let ordered = optimal_build_order(map, owned, selected);
+
+    let mut current_owned: Vec<String> = owned.to_vec();
+    let mut total_route_cost = 0u32;
+    let mut total_slot_cost = 0u32;
+    let mut edges: HashSet<(String, String)> = HashSet::new();
+
+    for city_id in &ordered {
+        if let Some(path) = map.shortest_path_to(&current_owned, city_id) {
+            total_route_cost = total_route_cost.saturating_add(path.cost);
+            for edge in path.edges {
+                edges.insert(edge);
+            }
+        }
+        let slot_cost = cities
+            .get(city_id)
+            .map(|c| connection_cost(c.owners.len()))
+            .unwrap_or(10);
+        total_slot_cost = total_slot_cost.saturating_add(slot_cost);
+        current_owned.push(city_id.clone());
+    }
+
+    let total_cost = total_route_cost.saturating_add(total_slot_cost);
+    BuildPreview {
+        ordered,
+        total_route_cost,
+        total_slot_cost,
+        total_cost,
+        edges,
+    }
+}
+
+fn simulate_per_city_route_cost(map: &Map, owned: &[String], order: &[String]) -> u32 {
+    let mut current_owned = owned.to_vec();
+    let mut total = 0u32;
+    for city in order {
+        total = total.saturating_add(map.connection_cost_to(&current_owned, city).unwrap_or(0));
+        current_owned.push(city.clone());
+    }
+    total
+}
+
+fn optimal_build_order(map: &Map, owned: &[String], selected: &[String]) -> Vec<String> {
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    if selected.len() == 1 {
+        return selected.to_vec();
+    }
+
+    if selected.len() <= 7 {
+        // Brute-force all permutations (Heap's algorithm) to find the cheapest order.
+        let mut arr: Vec<String> = selected.to_vec();
+        let n = arr.len();
+        let mut best_cost = u32::MAX;
+        let mut best_order: Vec<String> = arr.clone();
+        heap_permutations(&mut arr, n, &mut |perm: &[String]| {
+            let cost = simulate_per_city_route_cost(map, owned, perm);
+            if cost < best_cost {
+                best_cost = cost;
+                best_order = perm.to_vec();
+            }
+        });
+        best_order
+    } else {
+        // Greedy: always pick the currently cheapest city to extend the network.
+        let mut remaining: Vec<String> = selected.to_vec();
+        let mut current_owned: Vec<String> = owned.to_vec();
+        let mut order = Vec::new();
+        while !remaining.is_empty() {
+            let best_idx = remaining
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, city)| {
+                    map.connection_cost_to(&current_owned, city)
+                        .unwrap_or(u32::MAX)
+                })
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            let city = remaining.remove(best_idx);
+            current_owned.push(city.clone());
+            order.push(city);
+        }
+        order
+    }
+}
+
+/// Heap's algorithm: generate all permutations of `arr[0..k]`, calling `callback` for each.
+fn heap_permutations<T: Clone>(arr: &mut Vec<T>, k: usize, callback: &mut impl FnMut(&[T])) {
+    if k == 1 {
+        callback(arr);
+        return;
+    }
+    for i in 0..k {
+        heap_permutations(arr, k - 1, callback);
+        if k.is_multiple_of(2) {
+            arr.swap(i, k - 1);
+        } else {
+            arr.swap(0, k - 1);
         }
     }
 }

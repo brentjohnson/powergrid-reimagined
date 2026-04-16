@@ -22,6 +22,7 @@ pub fn apply_action(
         }
         Action::DoneBuying => handle_done_buying(state, actor),
         Action::BuildCity { city_id } => handle_build_city(state, actor, city_id),
+        Action::BuildCities { city_ids } => handle_build_cities(state, actor, city_ids),
         Action::DoneBuilding => handle_done_building(state, actor),
         Action::PowerCities { plant_numbers } => handle_power_cities(state, actor, plant_numbers),
     }
@@ -461,6 +462,81 @@ fn begin_build_cities(state: &mut GameState) {
     state.phase = Phase::BuildCities { remaining };
 }
 
+/// Validates and applies a single city build for `actor`. Does NOT advance the turn.
+/// Assumes phase and turn ownership have already been checked.
+fn apply_single_build(
+    state: &mut GameState,
+    actor: PlayerId,
+    city_id: &str,
+) -> Result<(), ActionError> {
+    let city = state
+        .map
+        .cities
+        .get(city_id)
+        .ok_or_else(|| ActionError::CityNotFound(city_id.to_string()))?;
+
+    if city.owners.len() >= 3 {
+        return Err(ActionError::CityFull(city_id.to_string()));
+    }
+    if city.owners.contains(&actor) {
+        return Err(ActionError::AlreadyBuiltThere);
+    }
+
+    let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
+    let owned_cities = player.cities.clone();
+    let route_cost = state
+        .map
+        .connection_cost_to(&owned_cities, city_id)
+        .unwrap_or(0);
+    let city_slot_cost = connection_cost(state.map.cities[city_id].owners.len());
+    let total_cost = route_cost + city_slot_cost;
+
+    if player.money < total_cost {
+        return Err(ActionError::CannotAffordCity);
+    }
+
+    let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
+    player.money -= total_cost;
+    player.cities.push(city_id.to_string());
+
+    state
+        .map
+        .cities
+        .get_mut(city_id)
+        .unwrap()
+        .owners
+        .push(actor);
+    state.log(format!(
+        "{} built in {}",
+        state.player(actor).map(|p| p.name.as_str()).unwrap_or("?"),
+        city_id
+    ));
+
+    Ok(())
+}
+
+/// Removes the acting player from the build queue and transitions phase.
+fn advance_build_phase(state: &mut GameState, mut remaining: Vec<PlayerId>) {
+    remaining.remove(0);
+    if remaining.is_empty() {
+        begin_bureaucracy(state);
+    } else {
+        state.phase = Phase::BuildCities { remaining };
+    }
+}
+
+fn check_end_game_trigger(state: &mut GameState) {
+    let max_cities = state
+        .players
+        .iter()
+        .map(|p| p.cities.len())
+        .max()
+        .unwrap_or(0);
+    if max_cities >= state.end_game_cities as usize {
+        state.log("End-game triggered! Finish the round.".to_string());
+    }
+}
+
 fn handle_build_city(
     state: &mut GameState,
     actor: PlayerId,
@@ -475,66 +551,18 @@ fn handle_build_city(
         return Err(ActionError::NotYourTurn);
     }
 
-    let city = state
-        .map
-        .cities
-        .get(&city_id)
-        .ok_or_else(|| ActionError::CityNotFound(city_id.clone()))?;
-
-    if city.owners.len() >= 3 {
-        return Err(ActionError::CityFull(city_id.clone()));
-    }
-    if city.owners.contains(&actor) {
-        return Err(ActionError::AlreadyBuiltThere);
-    }
-
-    let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
-    let owned_cities = player.cities.clone();
-    let route_cost = state
-        .map
-        .connection_cost_to(&owned_cities, &city_id)
-        .unwrap_or(0);
-    let city_slot_cost = connection_cost(state.map.cities[&city_id].owners.len());
-    let total_cost = route_cost + city_slot_cost;
-
-    if player.money < total_cost {
-        return Err(ActionError::CannotAffordCity);
-    }
-
-    let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
-    player.money -= total_cost;
-    player.cities.push(city_id.clone());
-
-    state
-        .map
-        .cities
-        .get_mut(&city_id)
-        .unwrap()
-        .owners
-        .push(actor);
-    state.log(format!(
-        "{} built in {}",
-        state.player(actor).map(|p| p.name.as_str()).unwrap_or("?"),
-        city_id
-    ));
-
-    // Check end-game trigger.
-    let max_cities = state
-        .players
-        .iter()
-        .map(|p| p.cities.len())
-        .max()
-        .unwrap_or(0);
-    if max_cities >= state.end_game_cities as usize {
-        // End-game triggered; finish the round normally then score.
-        state.log("End-game triggered! Finish the round.".to_string());
-    }
+    apply_single_build(state, actor, &city_id)?;
+    check_end_game_trigger(state);
 
     Ok(())
 }
 
-fn handle_done_building(state: &mut GameState, actor: PlayerId) -> Result<(), ActionError> {
-    let mut remaining = match &state.phase {
+fn handle_build_cities(
+    state: &mut GameState,
+    actor: PlayerId,
+    city_ids: Vec<String>,
+) -> Result<(), ActionError> {
+    let remaining = match &state.phase {
         Phase::BuildCities { remaining } => remaining.clone(),
         _ => return Err(ActionError::WrongPhase),
     };
@@ -543,12 +571,43 @@ fn handle_done_building(state: &mut GameState, actor: PlayerId) -> Result<(), Ac
         return Err(ActionError::NotYourTurn);
     }
 
-    remaining.remove(0);
-    if remaining.is_empty() {
-        begin_bureaucracy(state);
-    } else {
-        state.phase = Phase::BuildCities { remaining };
+    if city_ids.is_empty() {
+        return Err(ActionError::EmptyBuildList);
     }
+
+    // Reject duplicates.
+    let mut seen = std::collections::HashSet::new();
+    for id in &city_ids {
+        if !seen.insert(id.as_str()) {
+            return Err(ActionError::DuplicateCityInBuild);
+        }
+    }
+
+    // Apply all builds on a scratch copy for atomicity.
+    let mut scratch = state.clone();
+    for city_id in &city_ids {
+        apply_single_build(&mut scratch, actor, city_id)?;
+    }
+
+    // All succeeded — commit and advance the phase.
+    *state = scratch;
+    check_end_game_trigger(state);
+    advance_build_phase(state, remaining);
+
+    Ok(())
+}
+
+fn handle_done_building(state: &mut GameState, actor: PlayerId) -> Result<(), ActionError> {
+    let remaining = match &state.phase {
+        Phase::BuildCities { remaining } => remaining.clone(),
+        _ => return Err(ActionError::WrongPhase),
+    };
+
+    if remaining.first().copied() != Some(actor) {
+        return Err(ActionError::NotYourTurn);
+    }
+
+    advance_build_phase(state, remaining);
     Ok(())
 }
 
@@ -1272,6 +1331,196 @@ mod tests {
         // With full coal supply (24 units), the cheapest slots are occupied.
         let price = market.price(Resource::Coal, 1);
         assert!(price.is_some());
+    }
+
+    /// Set up a two-player game in the BuildCities phase with `first` as the current actor.
+    fn two_player_build_phase() -> (GameState, PlayerId, PlayerId) {
+        let (mut state, p1, p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+        // Force the state directly into BuildCities so we don't need to replay the full
+        // Auction + BuyResources flow. Give both players plenty of money.
+        state.phase = Phase::BuildCities {
+            remaining: state.player_order.iter().rev().cloned().collect(),
+        };
+        for player in &mut state.players {
+            player.money = 500;
+        }
+        (state, p1, p2)
+    }
+
+    #[test]
+    fn test_build_cities_empty_list_rejected() {
+        let (mut state, p1, p2) = two_player_build_phase();
+        let first = match &state.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        let err =
+            apply_action(&mut state, first, Action::BuildCities { city_ids: vec![] }).unwrap_err();
+        assert!(matches!(err, ActionError::EmptyBuildList), "got {err:?}");
+        let _ = (p1, p2); // suppress unused warnings
+    }
+
+    #[test]
+    fn test_build_cities_duplicate_rejected() {
+        let (mut state, _p1, _p2) = two_player_build_phase();
+        let first = match &state.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        let err = apply_action(
+            &mut state,
+            first,
+            Action::BuildCities {
+                city_ids: vec!["a".into(), "a".into()],
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ActionError::DuplicateCityInBuild),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_build_cities_single_equivalent_to_build_city_then_done() {
+        let (mut state_batch, _, _) = two_player_build_phase();
+        let (mut state_single, _, _) = two_player_build_phase();
+
+        let first_batch = match &state_batch.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        let first_single = match &state_single.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+
+        // Batch: build "a" and end turn.
+        apply_action(
+            &mut state_batch,
+            first_batch,
+            Action::BuildCities {
+                city_ids: vec!["a".into()],
+            },
+        )
+        .unwrap();
+
+        // Single: build "a" then done.
+        apply_action(
+            &mut state_single,
+            first_single,
+            Action::BuildCity {
+                city_id: "a".into(),
+            },
+        )
+        .unwrap();
+        apply_action(&mut state_single, first_single, Action::DoneBuilding).unwrap();
+
+        // Both should have advanced to the same phase.
+        let batch_phase = std::mem::discriminant(&state_batch.phase);
+        let single_phase = std::mem::discriminant(&state_single.phase);
+        assert_eq!(batch_phase, single_phase);
+
+        // Player should own "a" and have been charged at least the slot fee.
+        let player_batch = state_batch.player(first_batch).unwrap();
+        let player_single = state_single.player(first_single).unwrap();
+        assert!(player_batch.cities.contains(&"a".to_string()));
+        assert!(player_single.cities.contains(&"a".to_string()));
+        assert_eq!(player_batch.money, player_single.money);
+    }
+
+    #[test]
+    fn test_build_cities_per_city_pricing() {
+        // Map: a --5-- b --3-- c
+        // Own {a}, build {b, c} in that order.
+        // Build b: route=5 (a→b), slot=10. Total=15. Now own {a,b}.
+        // Build c: route=3 (b→c), slot=10. Total=13. Now own {a,b,c}.
+        // Grand total charged = 28.
+        let (mut state, _p1, _p2) = two_player_build_phase();
+        let first = match &state.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        let starting_money = state.player(first).unwrap().money;
+
+        // Pre-seed city "a" as owned so the player has a network.
+        state.player_mut(first).unwrap().cities.push("a".into());
+        state.map.cities.get_mut("a").unwrap().owners.push(first);
+
+        apply_action(
+            &mut state,
+            first,
+            Action::BuildCities {
+                city_ids: vec!["b".into(), "c".into()],
+            },
+        )
+        .unwrap();
+
+        let player = state.player(first).unwrap();
+        assert!(player.cities.contains(&"b".to_string()));
+        assert!(player.cities.contains(&"c".to_string()));
+        // route costs: 5 + 3 = 8; slot costs: 10 + 10 = 20; total = 28.
+        assert_eq!(player.money, starting_money - 28);
+    }
+
+    #[test]
+    fn test_build_cities_atomic_rollback() {
+        let (mut state, _p1, _p2) = two_player_build_phase();
+        let first = match &state.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        // Give player only enough for the first city slot (10), not the second.
+        state.player_mut(first).unwrap().money = 10;
+        let money_before = 10u32;
+
+        // Build a (first city, slot fee 10 = exactly affordable), then b (route 5 + slot 10 = 15, unaffordable).
+        let err = apply_action(
+            &mut state,
+            first,
+            Action::BuildCities {
+                city_ids: vec!["a".into(), "b".into()],
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ActionError::CannotAffordCity), "got {err:?}");
+        // State should be unchanged — player still has original money and no cities.
+        let player = state.player(first).unwrap();
+        assert_eq!(player.money, money_before);
+        assert!(!player.cities.contains(&"a".to_string()));
+    }
+
+    #[test]
+    fn test_build_cities_advances_phase() {
+        let (mut state, _p1, _p2) = two_player_build_phase();
+        let first = match &state.phase {
+            Phase::BuildCities { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+
+        apply_action(
+            &mut state,
+            first,
+            Action::BuildCities {
+                city_ids: vec!["a".into()],
+            },
+        )
+        .unwrap();
+
+        // Turn should have advanced; first player should no longer be acting.
+        match &state.phase {
+            Phase::BuildCities { remaining } => {
+                assert_ne!(
+                    remaining.first().copied(),
+                    Some(first),
+                    "first player should no longer be current"
+                );
+            }
+            Phase::Bureaucracy { .. } => {} // also valid if only one player left
+            other => panic!("unexpected phase: {other:?}"),
+        }
     }
 
     #[test]

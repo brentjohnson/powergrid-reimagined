@@ -1,4 +1,4 @@
-use crate::app::Message;
+use crate::app::{BuildPreview, Message};
 use iced::{
     widget::{button, canvas, column, container, row, scrollable, stack, text, text_input, Action},
     Color, Element, Length, Point, Rectangle, Renderer, Theme, Vector,
@@ -8,7 +8,7 @@ use powergrid_core::{
     types::{Phase, PlayerColor, PlayerId, Resource},
     GameState,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 static GERMANY_MAP_HANDLE: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
@@ -370,6 +370,10 @@ struct MarketOverlay<'a> {
     my_id: PlayerId,
     zoom: f32,
     pan: Vector,
+    /// Cities the local player has toggled for the pending build.
+    selected_build: &'a [String],
+    /// Map edges to highlight as the cheapest connecting route, each as (smaller_id, larger_id).
+    preview_edges: &'a HashSet<(String, String)>,
 }
 
 impl canvas::Program<Message> for MarketOverlay<'_> {
@@ -453,8 +457,10 @@ impl canvas::Program<Message> for MarketOverlay<'_> {
                                     let dy = y_pct - cy;
                                     if dx * dx + dy * dy <= CITY_HIT_RADIUS * CITY_HIT_RADIUS {
                                         return Some(
-                                            Action::publish(Message::BuildCity(city_id.clone()))
-                                                .and_capture(),
+                                            Action::publish(Message::ToggleBuildCity(
+                                                city_id.clone(),
+                                            ))
+                                            .and_capture(),
                                         );
                                     }
                                 }
@@ -554,12 +560,51 @@ impl canvas::Program<Message> for MarketOverlay<'_> {
                 }
             }
 
+            // Draw preview route edges before city dots so dots render on top.
+            if !self.preview_edges.is_empty() {
+                let edge_color = Color::from_rgba(0.1, 0.8, 1.0, 0.9);
+                let stroke_width = (city_radius * 0.7).max(2.0);
+                for (from_id, to_id) in self.preview_edges {
+                    let from_city = self.cities.get(from_id);
+                    let to_city = self.cities.get(to_id);
+                    if let (
+                        Some(City {
+                            x: Some(fx),
+                            y: Some(fy),
+                            ..
+                        }),
+                        Some(City {
+                            x: Some(tx),
+                            y: Some(ty),
+                            ..
+                        }),
+                    ) = (from_city, to_city)
+                    {
+                        let fp = Point::new(offset_x + fx * img_w, offset_y + fy * img_h);
+                        let tp = Point::new(offset_x + tx * img_w, offset_y + ty * img_h);
+                        let line = canvas::Path::new(|b| {
+                            b.move_to(fp);
+                            b.line_to(tp);
+                        });
+                        frame.stroke(
+                            &line,
+                            canvas::Stroke::default()
+                                .with_color(edge_color)
+                                .with_width(stroke_width),
+                        );
+                    }
+                }
+            }
+
             for city in self.cities.values() {
                 if let (Some(cx), Some(cy)) = (city.x, city.y) {
                     let px = offset_x + cx * img_w;
                     let py = offset_y + cy * img_h;
+                    let is_selected = self.selected_build.contains(&city.id);
                     let color = if !city.owners.is_empty() {
                         Color::from_rgba(0.2, 0.9, 0.2, 0.8)
+                    } else if is_selected {
+                        Color::from_rgba(0.1, 0.8, 1.0, 0.95)
                     } else if is_build_phase {
                         Color::from_rgba(1.0, 1.0, 1.0, 0.7)
                     } else {
@@ -717,6 +762,7 @@ pub fn lobby_view<'a>(
 // Game screen
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub fn game_view<'a>(
     state: &'a GameState,
     my_id: uuid::Uuid,
@@ -724,6 +770,8 @@ pub fn game_view<'a>(
     error: Option<&'a str>,
     map_zoom: f32,
     map_pan: Vector,
+    selected_build: &'a [String],
+    build_preview: &'a BuildPreview,
 ) -> Element<'a, Message> {
     let phase_label = phase_description(&state.phase);
 
@@ -795,7 +843,14 @@ pub fn game_view<'a>(
         if let Some(err) = error {
             col = col.push(text(format!("Error: {err}")).color([0.8, 0.1, 0.1]));
         }
-        col.push(action_panel(state, my_id, bid_amount)).into()
+        col.push(action_panel(
+            state,
+            my_id,
+            bid_amount,
+            selected_build,
+            build_preview,
+        ))
+        .into()
     } else {
         text("Spectating").into()
     };
@@ -833,6 +888,8 @@ pub fn game_view<'a>(
         my_id,
         zoom: map_zoom,
         pan: map_pan,
+        selected_build,
+        preview_edges: &build_preview.edges,
     };
     // stack! renders each child after the first in its own layer, so the
     // overlay canvas (layer 1) draws on top of the background image (layer 0).
@@ -903,6 +960,8 @@ fn action_panel<'a>(
     state: &'a GameState,
     my_id: uuid::Uuid,
     bid_amount: &'a str,
+    selected_build: &'a [String],
+    build_preview: &'a BuildPreview,
 ) -> Element<'a, Message> {
     match &state.phase {
         Phase::Auction {
@@ -971,12 +1030,35 @@ fn action_panel<'a>(
         }
         Phase::BuildCities { remaining } => {
             if remaining.first() == Some(&my_id) {
-                column![
-                    text("Build cities — click a city on the map:"),
-                    row![button("Done Building").on_press(Message::DoneBuilding),].spacing(8),
-                ]
-                .spacing(8)
-                .into()
+                let my_money = state.player(my_id).map(|p| p.money).unwrap_or(0);
+                let mut col = column![text("Build cities — click map to toggle:"),].spacing(8);
+
+                if !selected_build.is_empty() {
+                    let cost_color = if build_preview.total_cost > my_money {
+                        [0.8f32, 0.1, 0.1]
+                    } else {
+                        [0.1f32, 0.7, 0.1]
+                    };
+                    col = col.push(
+                        text(format!(
+                            "Selected: {}  |  Route: ${}  Slots: ${}  Total: ${}",
+                            selected_build.len(),
+                            build_preview.total_route_cost,
+                            build_preview.total_slot_cost,
+                            build_preview.total_cost,
+                        ))
+                        .color(cost_color),
+                    );
+                }
+
+                col = col.push(
+                    row![
+                        button("Clear").on_press(Message::ClearBuildSelection),
+                        button("Done Building").on_press(Message::DoneBuilding),
+                    ]
+                    .spacing(8),
+                );
+                col.into()
             } else {
                 text("Waiting for other players to build...").into()
             }

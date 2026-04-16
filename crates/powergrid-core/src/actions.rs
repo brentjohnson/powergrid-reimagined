@@ -22,6 +22,8 @@ pub enum Action {
     DoneBuying,
     /// During build cities: build in a city.
     BuildCity { city_id: CityId },
+    /// During build cities: build in multiple cities (in order) and end turn atomically.
+    BuildCities { city_ids: Vec<CityId> },
     /// During build cities: done building (pass).
     DoneBuilding,
     /// During bureaucracy: declare which plants to fire.
@@ -66,6 +68,10 @@ pub enum ActionError {
     AlreadyBuiltThere,
     #[error("you cannot afford to build there")]
     CannotAffordCity,
+    #[error("build list must not be empty; use DoneBuilding to skip")]
+    EmptyBuildList,
+    #[error("duplicate city in build list")]
+    DuplicateCityInBuild,
     #[error("you do not own plant {0}")]
     PlantNotOwned(u8),
     #[error("unknown player")]
