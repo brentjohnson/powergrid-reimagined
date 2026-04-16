@@ -4,11 +4,11 @@ use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme, Vector,
 };
 use powergrid_core::{
-    map::{City, ResourceSlot, TurnOrderSlot},
-    types::{Phase, PlayerColor, PlayerId, Resource},
+    map::{City, ConnectionEdge, ResourceSlot, TurnOrderSlot},
+    types::{connection_cost, Phase, PlayerColor, PlayerId, Resource},
     GameState,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 static GERMANY_MAP_HANDLE: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
@@ -368,6 +368,8 @@ struct MarketOverlay<'a> {
     cities: &'a HashMap<String, City>,
     phase: &'a Phase,
     my_id: PlayerId,
+    selected_build_cities: HashSet<String>,
+    highlighted_edges: Vec<ConnectionEdge>,
     zoom: f32,
     pan: Vector,
 }
@@ -450,8 +452,10 @@ impl canvas::Program<Message> for MarketOverlay<'_> {
                                     let dy = y_pct - cy;
                                     if dx * dx + dy * dy <= CITY_HIT_RADIUS * CITY_HIT_RADIUS {
                                         return Some(
-                                            Action::publish(Message::BuildCity(city_id.clone()))
-                                                .and_capture(),
+                                            Action::publish(Message::ToggleBuildCity(
+                                                city_id.clone(),
+                                            ))
+                                            .and_capture(),
                                         );
                                     }
                                 }
@@ -555,7 +559,9 @@ impl canvas::Program<Message> for MarketOverlay<'_> {
                 if let (Some(cx), Some(cy)) = (city.x, city.y) {
                     let px = offset_x + cx * img_w;
                     let py = offset_y + cy * img_h;
-                    let color = if !city.owners.is_empty() {
+                    let color = if self.selected_build_cities.contains(&city.id) {
+                        Color::from_rgba(0.1, 0.7, 1.0, 0.95)
+                    } else if !city.owners.is_empty() {
                         Color::from_rgba(0.2, 0.9, 0.2, 0.8)
                     } else if is_build_phase {
                         Color::from_rgba(1.0, 1.0, 1.0, 0.7)
@@ -565,6 +571,30 @@ impl canvas::Program<Message> for MarketOverlay<'_> {
                     let circle = canvas::Path::circle(Point::new(px, py), city_radius);
                     frame.fill(&circle, color);
                 }
+            }
+
+            for edge in &self.highlighted_edges {
+                let Some(from_city) = self.cities.get(&edge.from) else {
+                    continue;
+                };
+                let Some(to_city) = self.cities.get(&edge.to) else {
+                    continue;
+                };
+                let (Some(from_x), Some(from_y)) = (from_city.x, from_city.y) else {
+                    continue;
+                };
+                let (Some(to_x), Some(to_y)) = (to_city.x, to_city.y) else {
+                    continue;
+                };
+                let start = Point::new(offset_x + from_x * img_w, offset_y + from_y * img_h);
+                let end = Point::new(offset_x + to_x * img_w, offset_y + to_y * img_h);
+                let line = canvas::Path::line(start, end);
+                frame.stroke(
+                    &line,
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgba(0.1, 0.7, 1.0, 0.95))
+                        .with_width((city_radius * 0.7).max(2.0)),
+                );
             }
         });
 
@@ -721,6 +751,7 @@ pub fn game_view<'a>(
     error: Option<&'a str>,
     map_zoom: f32,
     map_pan: Vector,
+    selected_build_cities: &'a [String],
 ) -> Element<'a, Message> {
     let phase_label = phase_description(&state.phase);
 
@@ -776,6 +807,51 @@ pub fn game_view<'a>(
     ]
     .spacing(4);
 
+    let mut build_selection = Vec::new();
+    let mut build_preview_edges = Vec::new();
+    let mut build_projected_total_cost: Option<u32> = None;
+    let mut build_selection_error: Option<String> = None;
+    let is_my_build_turn = matches!(&state.phase, Phase::BuildCities { remaining }
+        if remaining.first() == Some(&my_id));
+
+    if is_my_build_turn {
+        let mut seen = HashSet::new();
+        for city_id in selected_build_cities {
+            if seen.insert(city_id.clone()) {
+                build_selection.push(city_id.clone());
+            }
+        }
+        if let Some(me) = me {
+            for city_id in &build_selection {
+                let Some(city) = state.map.cities.get(city_id) else {
+                    build_selection_error = Some(format!("Unknown city: {city_id}"));
+                    break;
+                };
+                if city.owners.len() >= 3 {
+                    build_selection_error = Some(format!("City is full: {city_id}"));
+                    break;
+                }
+                if city.owners.contains(&my_id) {
+                    build_selection_error = Some(format!("You already built there: {city_id}"));
+                    break;
+                }
+            }
+            if build_selection_error.is_none() {
+                if let Some(network) = state
+                    .map
+                    .connection_network_for(&me.cities, &build_selection)
+                {
+                    let slot_cost: u32 = build_selection
+                        .iter()
+                        .map(|city_id| connection_cost(state.map.cities[city_id].owners.len()))
+                        .sum();
+                    build_preview_edges = network.edges;
+                    build_projected_total_cost = Some(network.route_cost + slot_cost);
+                }
+            }
+        }
+    }
+
     // My resources + actions.
     let my_panel: Element<Message> = if let Some(me) = me {
         let res = &me.resources;
@@ -792,7 +868,15 @@ pub fn game_view<'a>(
         if let Some(err) = error {
             col = col.push(text(format!("Error: {err}")).color([0.8, 0.1, 0.1]));
         }
-        col.push(action_panel(state, my_id, bid_amount)).into()
+        col.push(action_panel(
+            state,
+            my_id,
+            bid_amount,
+            build_selection.len(),
+            build_projected_total_cost,
+            build_selection_error.clone(),
+        ))
+        .into()
     } else {
         text("Spectating").into()
     };
@@ -828,6 +912,8 @@ pub fn game_view<'a>(
         cities: &state.map.cities,
         phase: &state.phase,
         my_id,
+        selected_build_cities: build_selection.iter().cloned().collect(),
+        highlighted_edges: build_preview_edges,
         zoom: map_zoom,
         pan: map_pan,
     };
@@ -900,6 +986,9 @@ fn action_panel<'a>(
     state: &'a GameState,
     my_id: uuid::Uuid,
     bid_amount: &'a str,
+    selected_build_count: usize,
+    projected_build_cost: Option<u32>,
+    build_selection_error: Option<String>,
 ) -> Element<'a, Message> {
     match &state.phase {
         Phase::Auction {
@@ -968,9 +1057,15 @@ fn action_panel<'a>(
         }
         Phase::BuildCities { remaining } => {
             if remaining.first() == Some(&my_id) {
+                let cost_text = projected_build_cost
+                    .map(|cost| format!("Projected total cost: ${cost}"))
+                    .unwrap_or_else(|| "Projected total cost: --".to_string());
                 column![
-                    text("Build cities — click a city on the map:"),
-                    row![button("Done Building").on_press(Message::DoneBuilding),].spacing(8),
+                    text("Build cities — click to select/deselect on the map:"),
+                    text(format!("Selected cities: {}", selected_build_count)),
+                    text(cost_text),
+                    text(build_selection_error.unwrap_or_default()),
+                    row![button("Done Building").on_press(Message::SubmitBuildCities),].spacing(8),
                 ]
                 .spacing(8)
                 .into()

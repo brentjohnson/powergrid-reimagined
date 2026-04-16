@@ -34,8 +34,8 @@ pub enum Message {
     DoneBuying,
 
     // Build
-    BuildCity(String),
-    DoneBuilding,
+    ToggleBuildCity(String),
+    SubmitBuildCities,
 
     // Bureaucracy
     PowerCities,
@@ -72,6 +72,8 @@ pub struct App {
     error_message: Option<String>,
     map_zoom: f32,
     map_pan: Vector,
+    selected_build_cities: Vec<String>,
+    pending_done_building: bool,
 }
 
 impl App {
@@ -88,6 +90,8 @@ impl App {
                 error_message: None,
                 map_zoom: 1.0,
                 map_pan: Vector::default(),
+                selected_build_cities: Vec::new(),
+                pending_done_building: false,
             },
             iced::Task::none(),
         )
@@ -138,11 +142,29 @@ impl App {
                             }
                         }
                         ServerMessage::StateUpdate(state) => {
+                            let my_id = self.my_id.unwrap_or(Uuid::nil());
+                            let was_submitting_build = self.pending_done_building;
                             self.game_state = Some(*state);
                             self.error_message = None;
+                            if let Some(current) = &self.game_state {
+                                let is_my_build_turn = matches!(
+                                    &current.phase,
+                                    powergrid_core::types::Phase::BuildCities { remaining }
+                                    if remaining.first() == Some(&my_id)
+                                );
+                                if !is_my_build_turn {
+                                    self.selected_build_cities.clear();
+                                    self.pending_done_building = false;
+                                } else if was_submitting_build {
+                                    self.selected_build_cities.clear();
+                                    self.pending_done_building = false;
+                                    self.send(Action::DoneBuilding);
+                                }
+                            }
                         }
                         ServerMessage::ActionError { message } => {
                             self.error_message = Some(message);
+                            self.pending_done_building = false;
                         }
                         ServerMessage::Event { .. } => {}
                     }
@@ -182,11 +204,26 @@ impl App {
             Message::DoneBuying => {
                 self.send(Action::DoneBuying);
             }
-            Message::BuildCity(city_id) => {
-                self.send(Action::BuildCity { city_id });
+            Message::ToggleBuildCity(city_id) => {
+                if let Some(pos) = self
+                    .selected_build_cities
+                    .iter()
+                    .position(|selected| selected == &city_id)
+                {
+                    self.selected_build_cities.remove(pos);
+                } else {
+                    self.selected_build_cities.push(city_id);
+                }
             }
-            Message::DoneBuilding => {
-                self.send(Action::DoneBuilding);
+            Message::SubmitBuildCities => {
+                if self.selected_build_cities.is_empty() {
+                    self.send(Action::DoneBuilding);
+                } else {
+                    self.pending_done_building = true;
+                    self.send(Action::BuildCities {
+                        city_ids: self.selected_build_cities.clone(),
+                    });
+                }
             }
             Message::PowerCities => {
                 // Fire all plants by default.
@@ -236,6 +273,7 @@ impl App {
                             self.error_message.as_deref(),
                             self.map_zoom,
                             self.map_pan,
+                            &self.selected_build_cities,
                         )
                     }
                 } else {
