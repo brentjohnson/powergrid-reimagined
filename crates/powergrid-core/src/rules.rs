@@ -22,7 +22,6 @@ pub fn apply_action(
         }
         Action::DoneBuying => handle_done_buying(state, actor),
         Action::BuildCity { city_id } => handle_build_city(state, actor, city_id),
-        Action::BuildCities { city_ids } => handle_build_cities(state, actor, city_ids),
         Action::DoneBuilding => handle_done_building(state, actor),
         Action::PowerCities { plant_numbers } => handle_power_cities(state, actor, plant_numbers),
     }
@@ -467,14 +466,6 @@ fn handle_build_city(
     actor: PlayerId,
     city_id: String,
 ) -> Result<(), ActionError> {
-    handle_build_cities(state, actor, vec![city_id])
-}
-
-fn handle_build_cities(
-    state: &mut GameState,
-    actor: PlayerId,
-    city_ids: Vec<String>,
-) -> Result<(), ActionError> {
     let remaining = match &state.phase {
         Phase::BuildCities { remaining } => remaining.clone(),
         _ => return Err(ActionError::WrongPhase),
@@ -484,40 +475,27 @@ fn handle_build_cities(
         return Err(ActionError::NotYourTurn);
     }
 
-    if city_ids.is_empty() {
-        return Ok(());
-    }
+    let city = state
+        .map
+        .cities
+        .get(&city_id)
+        .ok_or_else(|| ActionError::CityNotFound(city_id.clone()))?;
 
-    let mut selected = Vec::new();
-    for city_id in city_ids {
-        if selected.contains(&city_id) {
-            return Err(ActionError::AlreadyBuiltThere);
-        }
-        let city = state
-            .map
-            .cities
-            .get(&city_id)
-            .ok_or_else(|| ActionError::CityNotFound(city_id.clone()))?;
-        if city.owners.len() >= 3 {
-            return Err(ActionError::CityFull(city_id.clone()));
-        }
-        if city.owners.contains(&actor) {
-            return Err(ActionError::AlreadyBuiltThere);
-        }
-        selected.push(city_id);
+    if city.owners.len() >= 3 {
+        return Err(ActionError::CityFull(city_id.clone()));
+    }
+    if city.owners.contains(&actor) {
+        return Err(ActionError::AlreadyBuiltThere);
     }
 
     let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
     let owned_cities = player.cities.clone();
-    let network = state
+    let route_cost = state
         .map
-        .connection_network_for(&owned_cities, &selected)
-        .ok_or(ActionError::CannotAffordCity)?;
-    let slot_cost: u32 = selected
-        .iter()
-        .map(|city_id| connection_cost(state.map.cities[city_id].owners.len()))
-        .sum();
-    let total_cost = network.route_cost + slot_cost;
+        .connection_cost_to(&owned_cities, &city_id)
+        .unwrap_or(0);
+    let city_slot_cost = connection_cost(state.map.cities[&city_id].owners.len());
+    let total_cost = route_cost + city_slot_cost;
 
     if player.money < total_cost {
         return Err(ActionError::CannotAffordCity);
@@ -525,25 +503,22 @@ fn handle_build_cities(
 
     let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
     player.money -= total_cost;
-    for city_id in &selected {
-        player.cities.push(city_id.clone());
-    }
+    player.cities.push(city_id.clone());
 
-    for city_id in &selected {
-        state
-            .map
-            .cities
-            .get_mut(city_id)
-            .expect("city validated above")
-            .owners
-            .push(actor);
-        state.log(format!(
-            "{} built in {}",
-            state.player(actor).map(|p| p.name.as_str()).unwrap_or("?"),
-            city_id
-        ));
-    }
+    state
+        .map
+        .cities
+        .get_mut(&city_id)
+        .unwrap()
+        .owners
+        .push(actor);
+    state.log(format!(
+        "{} built in {}",
+        state.player(actor).map(|p| p.name.as_str()).unwrap_or("?"),
+        city_id
+    ));
 
+    // Check end-game trigger.
     let max_cities = state
         .players
         .iter()
@@ -551,6 +526,7 @@ fn handle_build_cities(
         .max()
         .unwrap_or(0);
     if max_cities >= state.end_game_cities as usize {
+        // End-game triggered; finish the round normally then score.
         state.log("End-game triggered! Finish the round.".to_string());
     }
 
@@ -1288,92 +1264,6 @@ mod tests {
         assert_eq!(second_player.money, 50 - 3);
 
         let _ = (p1, p2);
-    }
-
-    #[test]
-    fn test_build_cities_batch_applies_atomically() {
-        let mut state = GameState::new_with_seed(test_map(), 2, 42);
-        let p1 = uuid::Uuid::new_v4();
-        let p2 = uuid::Uuid::new_v4();
-        apply_action(
-            &mut state,
-            p1,
-            Action::JoinGame {
-                name: "Alice".into(),
-                color: PlayerColor::Red,
-            },
-        )
-        .unwrap();
-        apply_action(
-            &mut state,
-            p2,
-            Action::JoinGame {
-                name: "Bob".into(),
-                color: PlayerColor::Blue,
-            },
-        )
-        .unwrap();
-        state.player_order = vec![p1, p2];
-        state.phase = Phase::BuildCities {
-            remaining: vec![p1, p2],
-        };
-
-        apply_action(
-            &mut state,
-            p1,
-            Action::BuildCities {
-                city_ids: vec!["a".into(), "b".into()],
-            },
-        )
-        .unwrap();
-
-        let player = state.player(p1).unwrap();
-        assert!(player.cities.contains(&"a".to_string()));
-        assert!(player.cities.contains(&"b".to_string()));
-        // First city costs 10, second costs 10 + route(5).
-        assert_eq!(player.money, 25);
-    }
-
-    #[test]
-    fn test_build_cities_batch_rejects_when_unaffordable_without_partial_apply() {
-        let mut state = GameState::new_with_seed(test_map(), 2, 42);
-        let p1 = uuid::Uuid::new_v4();
-        let p2 = uuid::Uuid::new_v4();
-        apply_action(
-            &mut state,
-            p1,
-            Action::JoinGame {
-                name: "Alice".into(),
-                color: PlayerColor::Red,
-            },
-        )
-        .unwrap();
-        apply_action(
-            &mut state,
-            p2,
-            Action::JoinGame {
-                name: "Bob".into(),
-                color: PlayerColor::Blue,
-            },
-        )
-        .unwrap();
-        state.player_order = vec![p1, p2];
-        state.phase = Phase::BuildCities {
-            remaining: vec![p1, p2],
-        };
-        state.player_mut(p1).unwrap().money = 15;
-
-        let err = apply_action(
-            &mut state,
-            p1,
-            Action::BuildCities {
-                city_ids: vec!["a".into(), "b".into()],
-            },
-        );
-        assert!(matches!(err, Err(ActionError::CannotAffordCity)));
-        let player = state.player(p1).unwrap();
-        assert!(player.cities.is_empty());
-        assert_eq!(player.money, 15);
     }
 
     #[test]

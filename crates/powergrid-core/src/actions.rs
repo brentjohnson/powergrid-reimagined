@@ -22,8 +22,6 @@ pub enum Action {
     DoneBuying,
     /// During build cities: build in a city.
     BuildCity { city_id: CityId },
-    /// During build cities: build in multiple cities atomically.
-    BuildCities { city_ids: Vec<CityId> },
     /// During build cities: done building (pass).
     DoneBuilding,
     /// During bureaucracy: declare which plants to fire.
