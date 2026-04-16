@@ -99,14 +99,48 @@ pub struct App {
 
 impl App {
     pub fn new() -> (Self, iced::Task<Message>) {
+        let cli = CliArgs::parse();
+
+        let mut connect_screen = ConnectScreen::new();
+        if let Some(ref name) = cli.name {
+            connect_screen.player_name = name.clone();
+        }
+        if let Some(color) = cli.color {
+            connect_screen.selected_color = color;
+        }
+        if let Some(ref url) = cli.url {
+            connect_screen.server_url = url.clone();
+        }
+
+        // Auto-connect when all three args are provided.
+        let (connect_url, pending_join, screen) =
+            if cli.name.is_some() && cli.color.is_some() && cli.url.is_some() {
+                (
+                    Some(connect_screen.server_url.clone()),
+                    Some((
+                        connect_screen.player_name.clone(),
+                        connect_screen.selected_color,
+                    )),
+                    Screen::Connect(connect_screen),
+                )
+            } else {
+                (None, None, Screen::Connect(connect_screen))
+            };
+
+        let task = if connect_url.is_some() {
+            iced::Task::done(Message::Connect)
+        } else {
+            iced::Task::none()
+        };
+
         (
             Self {
-                screen: Screen::Connect(ConnectScreen::new()),
+                screen,
                 game_state: None,
                 my_id: None,
                 ws_sender: None,
-                connect_url: None,
-                pending_join: None,
+                connect_url,
+                pending_join,
                 bid_amount: String::new(),
                 error_message: None,
                 map_zoom: 1.0,
@@ -114,7 +148,7 @@ impl App {
                 selected_build_cities: Vec::new(),
                 build_preview: BuildPreview::default(),
             },
-            iced::Task::none(),
+            task,
         )
     }
 
@@ -136,9 +170,12 @@ impl App {
                 }
             }
             Message::Connect => {
-                if let Screen::Connect(s) = &self.screen {
-                    self.connect_url = Some(s.server_url.clone());
-                    self.pending_join = Some((s.player_name.clone(), s.selected_color));
+                // Only act if not already connecting (auto-connect sets these in new()).
+                if self.connect_url.is_none() {
+                    if let Screen::Connect(s) = &self.screen {
+                        self.connect_url = Some(s.server_url.clone());
+                        self.pending_join = Some((s.player_name.clone(), s.selected_color));
+                    }
                 }
             }
 
@@ -445,6 +482,49 @@ fn optimal_build_order(map: &Map, owned: &[String], selected: &[String]) -> Vec<
             order.push(city);
         }
         order
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+struct CliArgs {
+    name: Option<String>,
+    color: Option<PlayerColor>,
+    url: Option<String>,
+}
+
+impl CliArgs {
+    fn parse() -> Self {
+        let mut args = std::env::args().skip(1);
+        let mut name = None;
+        let mut color = None;
+        let mut url = None;
+
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--name" => name = args.next(),
+                "--color" => {
+                    color = args.next().and_then(|s| match s.to_lowercase().as_str() {
+                        "red" => Some(PlayerColor::Red),
+                        "blue" => Some(PlayerColor::Blue),
+                        "green" => Some(PlayerColor::Green),
+                        "yellow" => Some(PlayerColor::Yellow),
+                        "purple" => Some(PlayerColor::Purple),
+                        "black" => Some(PlayerColor::Black),
+                        _ => {
+                            eprintln!("Unknown color '{}'. Valid: red, blue, green, yellow, purple, black", s);
+                            None
+                        }
+                    });
+                }
+                "--url" => url = args.next(),
+                other => eprintln!("Unknown argument: {other}"),
+            }
+        }
+
+        Self { name, color, url }
     }
 }
 
