@@ -143,6 +143,19 @@ impl ResourceMarket {
         }
         Some(total)
     }
+
+    /// Cost to buy all items in `purchases`, simulating sequential market depletion.
+    /// Returns `None` if any resource is unavailable in the required quantity.
+    pub fn batch_price(&self, purchases: &[(Resource, u8)]) -> Option<u32> {
+        let mut scratch = self.clone();
+        let mut total = 0u32;
+        for &(resource, amount) in purchases {
+            let cost = scratch.price(resource, amount)?;
+            total += cost;
+            scratch.take(resource, amount);
+        }
+        Some(total)
+    }
 }
 
 /// Returns the price per unit at each market slot (index 0 = most expensive / scarce).

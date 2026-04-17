@@ -18,6 +18,9 @@ pub enum Action {
     PassAuction,
     /// During buy resources: purchase resources from the market.
     BuyResources { resource: Resource, amount: u8 },
+    /// During buy resources: purchase a batch of resources atomically and end turn.
+    /// An empty purchases list is equivalent to DoneBuying (skip buying).
+    BuyResourceBatch { purchases: Vec<(Resource, u8)> },
     /// During buy resources: done buying (pass).
     DoneBuying,
     /// During build cities: build in a city.

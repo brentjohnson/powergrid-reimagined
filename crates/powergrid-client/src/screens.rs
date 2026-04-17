@@ -803,6 +803,8 @@ pub fn game_view<'a>(
     map_pan: Vector,
     selected_build: &'a [String],
     build_preview: &'a BuildPreview,
+    resource_cart: &'a HashMap<Resource, u8>,
+    resource_cart_cost: Option<u32>,
 ) -> Element<'a, Message> {
     let phase_label = phase_description(&state.phase);
 
@@ -880,6 +882,8 @@ pub fn game_view<'a>(
             bid_amount,
             selected_build,
             build_preview,
+            resource_cart,
+            resource_cart_cost,
         ))
         .into()
     } else {
@@ -999,6 +1003,8 @@ fn action_panel<'a>(
     bid_amount: &'a str,
     selected_build: &'a [String],
     build_preview: &'a BuildPreview,
+    resource_cart: &'a HashMap<Resource, u8>,
+    resource_cart_cost: Option<u32>,
 ) -> Element<'a, Message> {
     match &state.phase {
         Phase::Auction {
@@ -1048,19 +1054,56 @@ fn action_panel<'a>(
         }
         Phase::BuyResources { remaining } => {
             if remaining.first() == Some(&my_id) {
-                column![
-                    text("Buy resources (click to buy 1 unit):"),
+                let my_money = state.player(my_id).map(|p| p.money).unwrap_or(0);
+                let mut col = column![text("Buy resources:")].spacing(6);
+
+                for resource in [
+                    Resource::Coal,
+                    Resource::Oil,
+                    Resource::Garbage,
+                    Resource::Uranium,
+                ] {
+                    let count = resource_cart.get(&resource).copied().unwrap_or(0);
+                    let label = format!("{resource:?}: {count}");
+                    let minus_btn = if count > 0 {
+                        button("-").on_press(Message::RemoveResourceFromCart(resource))
+                    } else {
+                        button("-")
+                    };
+                    col = col.push(
+                        row![
+                            text(label).width(110),
+                            button("+").on_press(Message::AddResourceToCart(resource)),
+                            minus_btn,
+                        ]
+                        .spacing(4),
+                    );
+                }
+
+                if let Some(cost) = resource_cart_cost {
+                    let cost_color = if cost > my_money {
+                        [0.8f32, 0.1, 0.1]
+                    } else {
+                        [0.1f32, 0.7, 0.1]
+                    };
+                    col = col.push(text(format!("Total: ${cost}")).color(cost_color));
+                }
+
+                let cart_non_empty = resource_cart.values().any(|&v| v > 0);
+                let unaffordable = resource_cart_cost.is_some_and(|c| c > my_money);
+                let done_btn = if cart_non_empty && unaffordable {
+                    button("Done Buying")
+                } else {
+                    button("Done Buying").on_press(Message::DoneBuying)
+                };
+                col = col.push(
                     row![
-                        button("Coal").on_press(Message::BuyResource(Resource::Coal)),
-                        button("Oil").on_press(Message::BuyResource(Resource::Oil)),
-                        button("Garbage").on_press(Message::BuyResource(Resource::Garbage)),
-                        button("Uranium").on_press(Message::BuyResource(Resource::Uranium)),
-                        button("Done").on_press(Message::DoneBuying),
+                        button("Clear").on_press(Message::ClearResourceCart),
+                        done_btn,
                     ]
                     .spacing(8),
-                ]
-                .spacing(8)
-                .into()
+                );
+                col.into()
             } else {
                 text("Waiting for other players to buy resources...").into()
             }

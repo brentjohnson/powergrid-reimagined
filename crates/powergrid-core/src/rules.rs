@@ -20,6 +20,9 @@ pub fn apply_action(
         Action::BuyResources { resource, amount } => {
             handle_buy_resources(state, actor, resource, amount)
         }
+        Action::BuyResourceBatch { purchases } => {
+            handle_buy_resource_batch(state, actor, purchases)
+        }
         Action::DoneBuying => handle_done_buying(state, actor),
         Action::BuildCity { city_id } => handle_build_city(state, actor, city_id),
         Action::BuildCities { city_ids } => handle_build_cities(state, actor, city_ids),
@@ -433,6 +436,59 @@ fn handle_done_buying(state: &mut GameState, actor: PlayerId) -> Result<(), Acti
         return Err(ActionError::NotYourTurn);
     }
 
+    remaining.remove(0);
+    if remaining.is_empty() {
+        begin_build_cities(state);
+    } else {
+        state.phase = Phase::BuyResources { remaining };
+    }
+    Ok(())
+}
+
+fn handle_buy_resource_batch(
+    state: &mut GameState,
+    actor: PlayerId,
+    purchases: Vec<(Resource, u8)>,
+) -> Result<(), ActionError> {
+    let mut remaining = match &state.phase {
+        Phase::BuyResources { remaining } => remaining.clone(),
+        _ => return Err(ActionError::WrongPhase),
+    };
+
+    if remaining.first().copied() != Some(actor) {
+        return Err(ActionError::NotYourTurn);
+    }
+
+    // Empty purchases = skip buying (equivalent to DoneBuying).
+    if !purchases.is_empty() {
+        // Validate and apply on a scratch copy for atomicity.
+        let mut scratch = state.clone();
+        for (resource, amount) in &purchases {
+            let cost = scratch
+                .resources
+                .price(*resource, *amount)
+                .ok_or(ActionError::ResourceUnavailable)?;
+
+            let player = scratch.player(actor).ok_or(ActionError::UnknownPlayer)?;
+            if player.money < cost {
+                return Err(ActionError::CannotAfford);
+            }
+            if !player.can_add_resource(*resource, *amount) {
+                return Err(ActionError::OverCapacity);
+            }
+
+            scratch.resources.take(*resource, *amount);
+            let player = scratch
+                .player_mut(actor)
+                .ok_or(ActionError::UnknownPlayer)?;
+            player.money -= cost;
+            player.resources.add(*resource, *amount);
+        }
+        // All succeeded — commit.
+        *state = scratch;
+    }
+
+    // Advance turn.
     remaining.remove(0);
     if remaining.is_empty() {
         begin_build_cities(state);
@@ -1636,5 +1692,128 @@ mod tests {
             "expected exactly 3 coal replenished for 2 players"
         );
         let _ = (p1, p2);
+    }
+
+    /// Set up a two-player game in the BuyResources phase.
+    /// Both players have a coal plant (cost 2, capacity 4 coal) and plenty of money.
+    fn two_player_buy_phase() -> (GameState, PlayerId, PlayerId) {
+        use crate::types::{PlantKind, PowerPlant};
+        let (mut state, p1, p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+        state.phase = Phase::BuyResources {
+            remaining: state.player_order.iter().rev().cloned().collect(),
+        };
+        for player in &mut state.players {
+            player.money = 500;
+            player.plants.push(PowerPlant {
+                number: 4,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            });
+        }
+        (state, p1, p2)
+    }
+
+    #[test]
+    fn test_buy_resource_batch_valid() {
+        let (mut state, _p1, _p2) = two_player_buy_phase();
+        let first = match &state.phase {
+            Phase::BuyResources { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        let starting_money = state.player(first).unwrap().money;
+        let expected_cost = state.resources.price(Resource::Coal, 2).unwrap();
+
+        apply_action(
+            &mut state,
+            first,
+            Action::BuyResourceBatch {
+                purchases: vec![(Resource::Coal, 2)],
+            },
+        )
+        .unwrap();
+
+        let player = state.player(first).unwrap();
+        assert_eq!(player.resources.coal, 2);
+        assert_eq!(player.money, starting_money - expected_cost);
+        // Turn should have advanced.
+        match &state.phase {
+            Phase::BuyResources { remaining } => {
+                assert_ne!(remaining.first().copied(), Some(first));
+            }
+            Phase::BuildCities { .. } => {}
+            other => panic!("unexpected phase: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_buy_resource_batch_empty_advances_turn() {
+        let (mut state, _p1, _p2) = two_player_buy_phase();
+        let first = match &state.phase {
+            Phase::BuyResources { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+
+        apply_action(
+            &mut state,
+            first,
+            Action::BuyResourceBatch { purchases: vec![] },
+        )
+        .unwrap();
+
+        // Turn advanced, first player no longer acting.
+        match &state.phase {
+            Phase::BuyResources { remaining } => {
+                assert_ne!(remaining.first().copied(), Some(first));
+            }
+            Phase::BuildCities { .. } => {}
+            other => panic!("unexpected phase: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_buy_resource_batch_atomic_rollback() {
+        let (mut state, _p1, _p2) = two_player_buy_phase();
+        let first = match &state.phase {
+            Phase::BuyResources { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        // Give very little money — enough for some coal but not oil as well.
+        state.player_mut(first).unwrap().money = 1;
+        let coal_before = state.resources.coal;
+
+        let err = apply_action(
+            &mut state,
+            first,
+            Action::BuyResourceBatch {
+                purchases: vec![(Resource::Coal, 1), (Resource::Coal, 1)],
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, ActionError::CannotAfford), "got {err:?}");
+        // State unchanged — market and player untouched.
+        assert_eq!(state.resources.coal, coal_before);
+        assert_eq!(state.player(first).unwrap().money, 1);
+    }
+
+    #[test]
+    fn test_buy_resource_batch_over_capacity_rejected() {
+        let (mut state, _p1, _p2) = two_player_buy_phase();
+        let first = match &state.phase {
+            Phase::BuyResources { remaining } => *remaining.first().unwrap(),
+            _ => unreachable!(),
+        };
+        // Plant cost=2, capacity=4 coal. Trying to buy 5 should fail.
+        let err = apply_action(
+            &mut state,
+            first,
+            Action::BuyResourceBatch {
+                purchases: vec![(Resource::Coal, 5)],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, ActionError::OverCapacity), "got {err:?}");
     }
 }

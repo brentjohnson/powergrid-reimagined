@@ -6,7 +6,7 @@ use powergrid_core::{
     types::{Phase, PlayerColor, Resource},
     GameState,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::connection::{self, WsEvent};
@@ -32,8 +32,10 @@ pub enum Message {
     PlaceBid,
     PassAuction,
 
-    // Buy resources
-    BuyResource(Resource),
+    // Buy resources cart
+    AddResourceToCart(Resource),
+    RemoveResourceFromCart(Resource),
+    ClearResourceCart,
     DoneBuying,
 
     // Build
@@ -95,6 +97,10 @@ pub struct App {
     selected_build_cities: Vec<String>,
     /// Cached preview for the current selection (routes, costs, edges to draw).
     build_preview: BuildPreview,
+    /// Resources staged for the pending batch purchase.
+    resource_cart: HashMap<Resource, u8>,
+    /// Cached total cost of the current cart contents (None if cart is empty).
+    resource_cart_cost: Option<u32>,
 }
 
 impl App {
@@ -147,6 +153,8 @@ impl App {
                 map_pan: Vector::default(),
                 selected_build_cities: Vec::new(),
                 build_preview: BuildPreview::default(),
+                resource_cart: HashMap::new(),
+                resource_cart_cost: None,
             },
             task,
         )
@@ -212,6 +220,18 @@ impl App {
                                 self.selected_build_cities.clear();
                                 self.build_preview = BuildPreview::default();
                             }
+                            // Clear resource cart once it's no longer our buy turn.
+                            let still_my_buy_turn = self
+                                .my_id
+                                .map(|id| {
+                                    matches!(&state.phase, Phase::BuyResources { remaining }
+                                    if remaining.first() == Some(&id))
+                                })
+                                .unwrap_or(false);
+                            if !still_my_buy_turn {
+                                self.resource_cart.clear();
+                                self.resource_cart_cost = None;
+                            }
                             self.game_state = Some(*state);
                             self.error_message = None;
                         }
@@ -247,14 +267,59 @@ impl App {
             Message::PassAuction => {
                 self.send(Action::PassAuction);
             }
-            Message::BuyResource(resource) => {
-                self.send(Action::BuyResources {
-                    resource,
-                    amount: 1,
-                });
+            Message::AddResourceToCart(resource) => {
+                if let Some(state) = &self.game_state {
+                    if let Some(my_id) = self.my_id {
+                        if let Some(player) = state.player(my_id) {
+                            // Check market availability.
+                            let cart_count = self.resource_cart.get(&resource).copied().unwrap_or(0);
+                            let new_count = cart_count + 1;
+                            if state.resources.available(resource) < new_count {
+                                return iced::Task::none();
+                            }
+                            // Check capacity: simulate player with current resources + cart + 1 more.
+                            let mut sim = player.clone();
+                            for (&r, &amt) in &self.resource_cart {
+                                sim.resources.add(r, amt);
+                            }
+                            if !sim.can_add_resource(resource, 1) {
+                                return iced::Task::none();
+                            }
+                            *self.resource_cart.entry(resource).or_insert(0) += 1;
+                            self.refresh_resource_preview();
+                        }
+                    }
+                }
+            }
+            Message::RemoveResourceFromCart(resource) => {
+                let count = self.resource_cart.entry(resource).or_insert(0);
+                if *count > 0 {
+                    *count -= 1;
+                }
+                self.refresh_resource_preview();
+            }
+            Message::ClearResourceCart => {
+                self.resource_cart.clear();
+                self.resource_cart_cost = None;
             }
             Message::DoneBuying => {
-                self.send(Action::DoneBuying);
+                let purchases: Vec<(Resource, u8)> = [
+                    Resource::Coal,
+                    Resource::Oil,
+                    Resource::Garbage,
+                    Resource::Uranium,
+                ]
+                .iter()
+                .filter_map(|&r| {
+                    let amt = self.resource_cart.get(&r).copied().unwrap_or(0);
+                    if amt > 0 { Some((r, amt)) } else { None }
+                })
+                .collect();
+                if purchases.is_empty() {
+                    self.send(Action::DoneBuying);
+                } else {
+                    self.send(Action::BuyResourceBatch { purchases });
+                }
             }
             Message::ToggleBuildCity(city_id) => {
                 if let Some(state) = &self.game_state {
@@ -340,6 +405,8 @@ impl App {
                             self.map_pan,
                             &self.selected_build_cities,
                             &self.build_preview,
+                            &self.resource_cart,
+                            self.resource_cart_cost,
                         )
                     }
                 } else {
@@ -360,6 +427,30 @@ impl App {
         if let Some(tx) = &mut self.ws_sender {
             let _ = tx.try_send(action);
         }
+    }
+
+    fn refresh_resource_preview(&mut self) {
+        let Some(state) = &self.game_state else {
+            self.resource_cart_cost = None;
+            return;
+        };
+        let purchases: Vec<(Resource, u8)> = [
+            Resource::Coal,
+            Resource::Oil,
+            Resource::Garbage,
+            Resource::Uranium,
+        ]
+        .iter()
+        .filter_map(|&r| {
+            let amt = self.resource_cart.get(&r).copied().unwrap_or(0);
+            if amt > 0 { Some((r, amt)) } else { None }
+        })
+        .collect();
+        self.resource_cart_cost = if purchases.is_empty() {
+            None
+        } else {
+            state.resources.batch_price(&purchases)
+        };
     }
 
     fn refresh_build_preview(&mut self) {
