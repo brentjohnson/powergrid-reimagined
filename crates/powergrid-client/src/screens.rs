@@ -1,6 +1,9 @@
 use crate::app::{BuildPreview, Message};
 use iced::{
-    widget::{button, canvas, column, container, row, scrollable, stack, text, text_input, Action},
+    widget::{
+        button, canvas, column, container, row, scrollable, stack, text, text_input, tooltip,
+        Action,
+    },
     Color, Element, Length, Point, Rectangle, Renderer, Theme, Vector,
 };
 use powergrid_core::{
@@ -10,6 +13,7 @@ use powergrid_core::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
+use std::time::Duration;
 
 static GERMANY_MAP_HANDLE: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
     iced::widget::image::Handle::from_bytes(include_bytes!("../assets/maps/germany.png").as_slice())
@@ -963,15 +967,29 @@ pub fn game_view<'a>(
         .into()
 }
 
+fn plant_card_tooltip(number: u8) -> Element<'static, Message> {
+    let handle = plant_card_handle(number);
+    container(iced::widget::image(handle).width(250).height(250))
+        .padding(4)
+        .into()
+}
+
 fn plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'static, Message> {
     plants
         .iter()
         .fold(row![].spacing(4), |r, p| {
             let handle = plant_card_handle(p.number);
+            let card = button(iced::widget::image(handle).width(80).height(80))
+                .padding(0)
+                .on_press(Message::SelectPlant(p.number));
             r.push(
-                button(iced::widget::image(handle).width(54).height(54))
-                    .padding(0)
-                    .on_press(Message::SelectPlant(p.number)),
+                tooltip(
+                    card,
+                    plant_card_tooltip(p.number),
+                    tooltip::Position::Bottom,
+                )
+                .delay(Duration::from_millis(500))
+                .snap_within_viewport(true),
             )
         })
         .into()
@@ -985,7 +1003,16 @@ fn owned_plants_row(plants: &[powergrid_core::types::PowerPlant]) -> Element<'st
         .iter()
         .fold(row![].spacing(4), |r, p| {
             let handle = plant_card_handle(p.number);
-            r.push(iced::widget::image(handle).width(54).height(54))
+            let card = iced::widget::image(handle).width(80).height(80);
+            r.push(
+                tooltip(
+                    card,
+                    plant_card_tooltip(p.number),
+                    tooltip::Position::Bottom,
+                )
+                .delay(Duration::from_millis(500))
+                .snap_within_viewport(true),
+            )
         })
         .into()
 }

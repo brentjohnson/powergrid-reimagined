@@ -272,7 +272,8 @@ impl App {
                     if let Some(my_id) = self.my_id {
                         if let Some(player) = state.player(my_id) {
                             // Check market availability.
-                            let cart_count = self.resource_cart.get(&resource).copied().unwrap_or(0);
+                            let cart_count =
+                                self.resource_cart.get(&resource).copied().unwrap_or(0);
                             let new_count = cart_count + 1;
                             if state.resources.available(resource) < new_count {
                                 return iced::Task::none();
@@ -312,7 +313,11 @@ impl App {
                 .iter()
                 .filter_map(|&r| {
                     let amt = self.resource_cart.get(&r).copied().unwrap_or(0);
-                    if amt > 0 { Some((r, amt)) } else { None }
+                    if amt > 0 {
+                        Some((r, amt))
+                    } else {
+                        None
+                    }
                 })
                 .collect();
                 if purchases.is_empty() {
@@ -443,7 +448,11 @@ impl App {
         .iter()
         .filter_map(|&r| {
             let amt = self.resource_cart.get(&r).copied().unwrap_or(0);
-            if amt > 0 { Some((r, amt)) } else { None }
+            if amt > 0 {
+                Some((r, amt))
+            } else {
+                None
+            }
         })
         .collect();
         self.resource_cart_cost = if purchases.is_empty() {
