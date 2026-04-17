@@ -780,19 +780,31 @@ fn recalculate_player_order(state: &mut GameState) {
 }
 
 fn replenish_resources(state: &mut GameState) {
-    // Standard replenishment per round (simplified flat amounts for MVP).
+    // Standard replenishment per round per player count (step 1 amounts).
     let n = state.players.len();
     let (coal, oil, garbage, uranium) = match n {
         2 => (3, 2, 1, 1),
         3 => (4, 2, 1, 1),
         4 => (5, 3, 2, 1),
-        5 => (5, 3, 2, 1),
+        5 => (5, 4, 3, 2),
         _ => (7, 5, 3, 2),
     };
+    let before = state.resources.clone();
     state.resources.replenish(Resource::Coal, coal);
     state.resources.replenish(Resource::Oil, oil);
     state.resources.replenish(Resource::Garbage, garbage);
     state.resources.replenish(Resource::Uranium, uranium);
+    let dc = state.resources.coal - before.coal;
+    let do_ = state.resources.oil - before.oil;
+    let dg = state.resources.garbage - before.garbage;
+    let du = state.resources.uranium - before.uranium;
+    if dc + do_ + dg + du > 0 {
+        state.log(format!(
+            "Resources replenished: +{dc} coal, +{do_} oil, +{dg} garbage, +{du} uranium"
+        ));
+    } else {
+        state.log("Resources: market already at capacity, nothing added");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1549,5 +1561,91 @@ mod tests {
         player.resources.coal = 2;
         assert!(player.can_add_resource(Resource::Oil, 2));
         assert!(!player.can_add_resource(Resource::Oil, 3));
+    }
+
+    #[test]
+    fn test_resources_replenished_after_round() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        // Give both players a coal plant (cost=2, powers 1 city) and money.
+        for player in &mut state.players {
+            player.plants.push(PowerPlant {
+                number: 4,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            });
+            player.money = 500;
+        }
+
+        // Force into BuyResources (reversed player order).
+        let buy_order: Vec<PlayerId> = state.player_order.iter().rev().cloned().collect();
+        state.phase = Phase::BuyResources {
+            remaining: buy_order,
+        };
+
+        // Each player buys 2 coal (4 total consumed from market).
+        let buy_order_snapshot: Vec<PlayerId> = match &state.phase {
+            Phase::BuyResources { remaining } => remaining.clone(),
+            _ => unreachable!(),
+        };
+        for actor in &buy_order_snapshot {
+            apply_action(
+                &mut state,
+                *actor,
+                Action::BuyResources {
+                    resource: Resource::Coal,
+                    amount: 2,
+                },
+            )
+            .unwrap();
+            apply_action(&mut state, *actor, Action::DoneBuying).unwrap();
+        }
+        let coal_after_buy = state.resources.coal;
+        assert_eq!(coal_after_buy, 20, "expected 4 coal bought from initial 24");
+
+        // Both players skip building.
+        assert!(matches!(state.phase, Phase::BuildCities { .. }));
+        let build_order: Vec<PlayerId> = match &state.phase {
+            Phase::BuildCities { remaining } => remaining.clone(),
+            _ => unreachable!(),
+        };
+        for actor in &build_order {
+            apply_action(&mut state, *actor, Action::DoneBuilding).unwrap();
+        }
+
+        // Bureaucracy: both players power their cities (no cities built, so 0 powered).
+        assert!(matches!(state.phase, Phase::Bureaucracy { .. }));
+        let power_order: Vec<PlayerId> = match &state.phase {
+            Phase::Bureaucracy { remaining } => remaining.clone(),
+            _ => unreachable!(),
+        };
+        for actor in &power_order {
+            apply_action(
+                &mut state,
+                *actor,
+                Action::PowerCities {
+                    plant_numbers: vec![4],
+                },
+            )
+            .unwrap();
+        }
+
+        // After end_of_round, 3 coal should have been replenished (2-player step-1 rate).
+        assert!(
+            state.resources.coal > coal_after_buy,
+            "expected coal to increase after replenishment; got {} (was {})",
+            state.resources.coal,
+            coal_after_buy
+        );
+        assert_eq!(
+            state.resources.coal,
+            coal_after_buy + 3,
+            "expected exactly 3 coal replenished for 2 players"
+        );
+        let _ = (p1, p2);
     }
 }

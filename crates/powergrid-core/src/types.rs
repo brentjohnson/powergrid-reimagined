@@ -112,9 +112,9 @@ impl ResourceMarket {
     pub fn replenish(&mut self, resource: Resource, amount: u8) {
         let max = match resource {
             Resource::Coal => 24,
-            Resource::Oil => 18,
-            Resource::Garbage => 6,
-            Resource::Uranium => 2,
+            Resource::Oil => 24,
+            Resource::Garbage => 24,
+            Resource::Uranium => 12,
         };
         let field = match resource {
             Resource::Coal => &mut self.coal,
