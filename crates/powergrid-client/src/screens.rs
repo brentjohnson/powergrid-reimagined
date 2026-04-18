@@ -1116,7 +1116,49 @@ pub fn game_view<'a>(
         .iter()
         .filter_map(|pid| state.player(*pid))
         .fold(column![].spacing(4), |col, p| {
-            let panel = container(text(&p.name).size(13))
+            let plants_row = if p.plants.is_empty() {
+                row![text("no plants").size(11)].spacing(3)
+            } else {
+                p.plants.iter().fold(row![].spacing(3), |r, plant| {
+                    let handle = plant_card_handle(plant.number);
+                    let card = iced::widget::image(handle).width(50).height(50);
+                    r.push(
+                        tooltip(
+                            card,
+                            plant_card_tooltip(plant.number),
+                            tooltip::Position::Bottom,
+                        )
+                        .delay(Duration::from_millis(500))
+                        .snap_within_viewport(true),
+                    )
+                })
+            };
+            let header = row![
+                text(&p.name).size(13),
+                text(format!("  ${}", p.money)).size(11),
+                text(format!("  {} cities", p.cities.len())).size(11),
+            ]
+            .spacing(2);
+            let res = &p.resources;
+            let mut res_parts: Vec<String> = Vec::new();
+            if res.coal > 0 {
+                res_parts.push(format!("Coal:{}", res.coal));
+            }
+            if res.oil > 0 {
+                res_parts.push(format!("Oil:{}", res.oil));
+            }
+            if res.garbage > 0 {
+                res_parts.push(format!("Garbage:{}", res.garbage));
+            }
+            if res.uranium > 0 {
+                res_parts.push(format!("Uranium:{}", res.uranium));
+            }
+            let res_text = if res_parts.is_empty() {
+                text("No resources").size(11)
+            } else {
+                text(res_parts.join("  ")).size(11)
+            };
+            let panel = container(column![header, res_text, plants_row].spacing(4))
                 .padding(6)
                 .width(Length::Fill)
                 .style({
