@@ -20,58 +20,14 @@ jobs:
             binary: powergrid-server
             artifact: powergrid-server-linux-x86_64
 
-          - name: linux-client
-            os: ubuntu-latest
-            package: powergrid-client
-            binary: powergrid-client
-            artifact: powergrid-client-linux-x86_64
-
           - name: linux-server-arm
             os: ubuntu-24.04-arm
             package: powergrid-server
             binary: powergrid-server
             artifact: powergrid-server-linux-aarch64
 
-          - name: linux-client-arm
-            os: ubuntu-24.04-arm
-            package: powergrid-client
-            binary: powergrid-client
-            artifact: powergrid-client-linux-aarch64
-
-          - name: windows-client
-            os: windows-latest
-            package: powergrid-client
-            binary: powergrid-client.exe
-            artifact: powergrid-client-windows-x86_64.exe
-
-          - name: macos-client-arm
-            os: macos-latest
-            package: powergrid-client
-            binary: powergrid-client
-            artifact: powergrid-client-macos-aarch64
-
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Linux GUI dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libegl1-mesa-dev \
-            libgl1-mesa-dev \
-            libgles2-mesa-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libxcursor-dev \
-            libxi-dev \
-            libxtst-dev \
-            libfontconfig1-dev \
-            libfreetype-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -133,10 +89,6 @@ jobs:
           files: |
             powergrid-server-linux-x86_64
             powergrid-server-linux-aarch64
-            powergrid-client-linux-x86_64
-            powergrid-client-linux-aarch64
-            powergrid-client-windows-x86_64.exe
-            powergrid-client-macos-aarch64
 
   docker:
     name: Build and Push Docker Image

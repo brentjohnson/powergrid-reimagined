@@ -10,12 +10,6 @@ Grab the latest binaries from the [Releases](../../releases/latest) page.
 |---|---|---|
 | `powergrid-server-linux-x86_64` | Linux (x86_64) | Server |
 | `powergrid-server-linux-aarch64` | Linux (ARM64) | Server |
-| `powergrid-client-linux-x86_64` | Linux (x86_64) | Client |
-| `powergrid-client-linux-aarch64` | Linux (ARM64) | Client |
-| `powergrid-client-macos-aarch64` | macOS (Apple Silicon) | Client |
-| `powergrid-client-windows-x86_64.exe` | Windows (x86_64) | Client |
-
-> The server runs headless — it has no GUI. Players only need the client.
 
 ## Quickstart (2+ players on a local network)
 
@@ -34,17 +28,7 @@ MAP_FILE=germany.toml ./powergrid-server-linux-x86_64
 
 The server listens on port `3000`. Find your local IP address (e.g. `192.168.1.10`) — other players will need it to connect.
 
-### 2. Launch the client (each player)
-
-**Linux/macOS:**
-```bash
-chmod +x powergrid-client-linux-x86_64   # or powergrid-client-macos-aarch64
-./powergrid-client-linux-x86_64
-```
-
-**Windows:** Double-click `powergrid-client-windows-x86_64.exe`.
-
-### 3. Connect
+### 2. Connect
 
 On the connect screen, fill in:
 
@@ -56,7 +40,7 @@ On the connect screen, fill in:
 
 Click **Connect** to join the lobby.
 
-### 4. Start the game
+### 3. Start the game
 
 The first player to connect is the host. Once at least 2 players have joined, the host clicks **Start Game**.
 

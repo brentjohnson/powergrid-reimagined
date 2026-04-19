@@ -5,7 +5,7 @@ use iced::{
 use powergrid_core::map::MapData;
 use std::{env, fs, path::PathBuf};
 
-const MAP_ASSETS_DIR: &str = "crates/powergrid-client/assets/maps";
+const MAP_ASSETS_DIR: &str = "crates/powergrid-reimagined/assets/maps";
 
 // ---------------------------------------------------------------------------
 // A positioned slot (in-memory working state)

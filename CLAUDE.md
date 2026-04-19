@@ -26,9 +26,6 @@ cargo test -p powergrid-core test_join_and_start
 # Run the server (from repo root)
 cargo run -p powergrid-server
 
-# Run the client
-cargo run -p powergrid-client
-
 # Docker
 docker compose up --build
 ```
@@ -45,7 +42,6 @@ Three-crate Cargo workspace:
 crates/
   powergrid-core/    # pure game logic, no I/O
   powergrid-server/  # axum WebSocket server, maps/germany.toml embedded at compile time
-  powergrid-client/  # iced native GUI client, assets/ contains card images and board maps
 ```
 
 ### powergrid-core
@@ -65,13 +61,6 @@ All game state and rules. The key entry point is `rules::apply_action(state, pla
 - `main.rs` — axum router: `GET /health`, `GET /ws`. Shared state is `Arc<Mutex<ServerState>>`.
 - `ws.rs` — per-connection WebSocket handler. On each valid action: mutate state, broadcast full `GameState` JSON to all clients. On error: send `ActionError` only to the acting client.
 - Configured via env vars: `PORT` (default 3000), `MAP_FILE` (optional override; germany map is embedded by default), `RUST_LOG`.
-
-### powergrid-client
-
-- `main.rs` — iced app entry point
-- `app.rs` — `App` struct, `Message` enum, `update` / `view` / `subscription`
-- `screens.rs` — `ConnectScreen`, `lobby_view`, `game_view`, `action_panel`
-- `connection.rs` — WebSocket subscription via `iced::Subscription::run_with_id` + a tokio task driving the socket. Emits `WsEvent::{Connected, MessageReceived, Disconnected}`.
 
 ### Protocol
 

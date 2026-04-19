@@ -3437,7 +3437,6 @@ dependencies = [
  "iced_core",
  "log",
  "rustc-hash 2.1.2",
- "tokio",
  "wasm-bindgen-futures",
  "wasmtimer",
 ]
@@ -5278,23 +5277,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "powergrid-client"
-version = "0.1.0"
-dependencies = [
- "futures",
- "iced",
- "powergrid-core",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "powergrid-core"
 version = "0.1.0"
 dependencies = [
@@ -6536,17 +6518,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
 ]
 
 [[package]]
