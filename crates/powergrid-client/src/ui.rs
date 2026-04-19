@@ -210,11 +210,23 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
         return;
     }
 
-    // Side panel (right)
-    egui::SidePanel::right("info_panel")
-        .resizable(true)
-        .min_width(340.0)
-        .default_width(380.0)
+    // Top panel — phase info and resource market
+    egui::TopBottomPanel::top("top_panel")
+        .exact_height(110.0)
+        .frame(
+            egui::Frame::none()
+                .fill(theme::BG_DEEP)
+                .stroke(egui::Stroke::new(1.0, theme::NEON_CYAN_DARK))
+                .inner_margin(egui::Margin::same(6.0)),
+        )
+        .show(ctx, |ui| {
+            top_panel_contents(ui, gs.clone());
+        });
+
+    // Left panel — player info
+    egui::SidePanel::left("player_panel")
+        .resizable(false)
+        .exact_width(220.0)
         .frame(
             egui::Frame::none()
                 .fill(theme::BG_DEEP)
@@ -223,8 +235,25 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
         )
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(8.0);
-                side_panel_contents(ui, state, channels, &gs, my_id);
+                ui.add_space(6.0);
+                left_panel_contents(ui, &gs, my_id);
+            });
+        });
+
+    // Right panel — plant market, actions, event log
+    egui::SidePanel::right("info_panel")
+        .resizable(false)
+        .exact_width(340.0)
+        .frame(
+            egui::Frame::none()
+                .fill(theme::BG_DEEP)
+                .stroke(egui::Stroke::new(1.0, theme::NEON_CYAN_DARK))
+                .inner_margin(egui::Margin::same(0.0)),
+        )
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add_space(6.0);
+                right_panel_contents(ui, state, channels, &gs, my_id);
             });
         });
 
@@ -337,25 +366,19 @@ fn lobby_screen(
 }
 
 // ---------------------------------------------------------------------------
-// Side panel contents
+// Top panel — phase/round header, phase tracker, resource market
 // ---------------------------------------------------------------------------
 
-fn side_panel_contents(
-    ui: &mut Ui,
-    state: &mut AppState,
-    channels: &Option<Res<WsChannels>>,
-    gs: &GameState,
-    my_id: PlayerId,
-) {
-    // ---- Phase / round header ----
-    theme::neon_frame_bright().show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("ROUND {}", gs.round))
-                    .color(theme::NEON_CYAN)
-                    .monospace(),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+fn top_panel_contents(ui: &mut Ui, gs: GameState) {
+    ui.horizontal(|ui| {
+        // Phase / round header
+        ui.vertical(|ui| {
+            theme::neon_frame_bright().show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!("ROUND {}", gs.round))
+                        .color(theme::NEON_CYAN)
+                        .monospace(),
+                );
                 ui.label(
                     RichText::new(phase_name(&gs.phase))
                         .color(theme::NEON_AMBER)
@@ -363,16 +386,35 @@ fn side_panel_contents(
                 );
             });
         });
+
+        ui.add_space(8.0);
+
+        // Phase tracker
+        phase_tracker(ui, &gs);
+
+        ui.add_space(8.0);
+
+        // Resource market
+        ui.vertical(|ui| {
+            section_header(ui, "RESOURCE MARKET");
+            theme::neon_frame().show(ui, |ui| {
+                let r = &gs.resources;
+                ui.horizontal(|ui| {
+                    resource_badge(ui, "COAL", r.coal, Color32::from_rgb(107, 68, 35));
+                    resource_badge(ui, "OIL", r.oil, Color32::from_rgb(60, 60, 60));
+                    resource_badge(ui, "GARB", r.garbage, Color32::from_rgb(200, 170, 20));
+                    resource_badge(ui, "URAN", r.uranium, Color32::from_rgb(200, 30, 30));
+                });
+            });
+        });
     });
+}
 
-    ui.add_space(6.0);
+// ---------------------------------------------------------------------------
+// Left panel — player info
+// ---------------------------------------------------------------------------
 
-    // ---- Phase tracker ----
-    phase_tracker(ui, gs);
-
-    ui.add_space(6.0);
-
-    // ---- Player panels ----
+fn left_panel_contents(ui: &mut Ui, gs: &GameState, my_id: PlayerId) {
     for pid in &gs.player_order {
         if let Some(p) = gs.player(*pid) {
             let is_me = p.id == my_id;
@@ -465,9 +507,19 @@ fn side_panel_contents(
             ui.add_space(4.0);
         }
     }
+}
 
-    ui.add_space(4.0);
+// ---------------------------------------------------------------------------
+// Right panel — plant market, action console, your plants, event log
+// ---------------------------------------------------------------------------
 
+fn right_panel_contents(
+    ui: &mut Ui,
+    state: &mut AppState,
+    channels: &Option<Res<WsChannels>>,
+    gs: &GameState,
+    my_id: PlayerId,
+) {
     // ---- Power plant market ----
     section_header(ui, "PLANT MARKET");
     theme::neon_frame().show(ui, |ui| {
@@ -504,25 +556,10 @@ fn side_panel_contents(
 
     ui.add_space(4.0);
 
-    // ---- Resource market ----
-    section_header(ui, "RESOURCE MARKET");
-    theme::neon_frame().show(ui, |ui| {
-        let r = &gs.resources;
-        ui.horizontal(|ui| {
-            resource_badge(ui, "COAL", r.coal, Color32::from_rgb(107, 68, 35));
-            resource_badge(ui, "OIL", r.oil, Color32::from_rgb(60, 60, 60));
-            resource_badge(ui, "GARB", r.garbage, Color32::from_rgb(200, 170, 20));
-            resource_badge(ui, "URAN", r.uranium, Color32::from_rgb(200, 30, 30));
-        });
-    });
-
-    ui.add_space(4.0);
-
     // ---- My action panel ----
     if let Some(me) = gs.player(my_id) {
         section_header(ui, "ACTION CONSOLE");
         theme::neon_frame_bright().show(ui, |ui| {
-            // Error
             if let Some(err) = &state.error_message.clone() {
                 ui.label(
                     RichText::new(format!("⚠ {err}"))
@@ -548,9 +585,9 @@ fn side_panel_contents(
                 });
             }
         });
-    }
 
-    ui.add_space(4.0);
+        ui.add_space(4.0);
+    }
 
     // ---- Event log ----
     section_header(ui, "EVENT LOG");
