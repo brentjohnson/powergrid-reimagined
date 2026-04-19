@@ -2,7 +2,6 @@
 members = [
     "crates/powergrid-core",
     "crates/powergrid-server",
-    "crates/map-tool",
     "crates/powergrid-client",
 ]
 resolver = "2"

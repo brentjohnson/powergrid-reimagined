@@ -2,7 +2,7 @@
 /// with zoom/pan and interactive overlays (resource slots, city markers, build edges).
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui};
 use powergrid_core::{
-    map::{City, ResourceSlot},
+    map::City,
     types::{Phase, PlayerColor, PlayerId},
     GameState,
 };
@@ -14,8 +14,6 @@ use crate::{state::AppState, theme};
 const IMG_W: f32 = 1869.0;
 const IMG_H: f32 = 2593.0;
 
-/// Fraction of displayed image width used as circle radius for resource/tracker dots.
-const SLOT_R_FRAC: f32 = 0.009;
 /// Fraction of displayed image width used as hit-test radius for city clicks.
 const CITY_HIT_FRAC: f32 = 0.030;
 /// Fraction of displayed image width used as draw radius for city dots.
@@ -81,7 +79,6 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
 
     // ---- overlays ----
     let (img_w, img_h, ox, oy) = image_layout(map_rect);
-    let slot_r = SLOT_R_FRAC * img_w * state.map_zoom;
     let city_r = CITY_R_FRAC * img_w * state.map_zoom;
 
     let to_screen = |xp: f32, yp: f32| -> Pos2 {
@@ -97,92 +94,6 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
         .iter()
         .filter_map(|pid| game_state.player(*pid).map(|p| (*pid, p.color)))
         .collect();
-
-    // Resource market slots
-    let res = &game_state.resources;
-    draw_resource_slots(
-        &painter,
-        &game_state.map.resource_slots,
-        "coal",
-        res.coal,
-        Color32::from_rgb(107, 68, 35),
-        slot_r,
-        &to_screen,
-    );
-    draw_resource_slots(
-        &painter,
-        &game_state.map.resource_slots,
-        "oil",
-        res.oil,
-        Color32::from_rgb(25, 25, 25),
-        slot_r,
-        &to_screen,
-    );
-    draw_resource_slots(
-        &painter,
-        &game_state.map.resource_slots,
-        "garbage",
-        res.garbage,
-        Color32::from_rgb(240, 215, 25),
-        slot_r,
-        &to_screen,
-    );
-    draw_resource_slots(
-        &painter,
-        &game_state.map.resource_slots,
-        "uranium",
-        res.uranium,
-        Color32::from_rgb(215, 25, 25),
-        slot_r,
-        &to_screen,
-    );
-
-    // Turn order tracker
-    let turn_order_players: Vec<(usize, PlayerColor)> = game_state
-        .player_order
-        .iter()
-        .enumerate()
-        .filter_map(|(i, pid)| game_state.player(*pid).map(|p| (i, p.color)))
-        .collect();
-    for (slot_idx, color) in &turn_order_players {
-        if let Some(slot) = game_state
-            .map
-            .turn_order_slots
-            .iter()
-            .find(|s| s.index == *slot_idx)
-        {
-            let center = to_screen(slot.x, slot.y);
-            painter.circle_filled(center, slot_r + 1.5, Color32::WHITE);
-            painter.circle_filled(center, slot_r, player_color_to_egui(*color));
-        }
-    }
-
-    // City count tracker
-    let mut by_count: HashMap<usize, Vec<PlayerColor>> = HashMap::new();
-    for pid in &game_state.player_order {
-        if let Some(p) = game_state.player(*pid) {
-            by_count.entry(p.city_count()).or_default().push(p.color);
-        }
-    }
-    for (count, colors) in &by_count {
-        if let Some(slot) = game_state
-            .map
-            .city_tracker_slots
-            .iter()
-            .find(|s| s.index == *count)
-        {
-            let base = to_screen(slot.x, slot.y);
-            let n = colors.len() as f32;
-            let spacing = slot_r * 2.3;
-            let total_w = spacing * (n - 1.0);
-            for (j, color) in colors.iter().enumerate() {
-                let cx = base.x - total_w / 2.0 + j as f32 * spacing;
-                let center = Pos2::new(cx, base.y);
-                painter.circle_filled(center, slot_r + 1.5, Color32::WHITE);
-                painter.circle_filled(center, slot_r, player_color_to_egui(*color));
-            }
-        }
-    }
 
     // Build preview edges
     if !state.build_preview.edges.is_empty() {
@@ -278,31 +189,6 @@ fn image_layout(rect: Rect) -> (f32, f32, f32, f32) {
         (IMG_W * s, rect.height())
     };
     (w, h, (rect.width() - w) / 2.0, (rect.height() - h) / 2.0)
-}
-
-fn draw_resource_slots(
-    painter: &egui::Painter,
-    slots: &[ResourceSlot],
-    resource_name: &str,
-    current: u8,
-    color: Color32,
-    radius: f32,
-    to_screen: &impl Fn(f32, f32) -> Pos2,
-) {
-    let mut matching: Vec<&ResourceSlot> = slots
-        .iter()
-        .filter(|s| s.resource == resource_name)
-        .collect();
-    matching.sort_by_key(|s| s.index);
-    let total = matching.len();
-    if total == 0 || current == 0 {
-        return;
-    }
-    let occupied_from = total.saturating_sub(current as usize);
-    for slot in &matching[occupied_from..] {
-        let center = to_screen(slot.x, slot.y);
-        painter.circle_filled(center, radius, color);
-    }
 }
 
 fn player_color_to_egui(color: PlayerColor) -> Color32 {
