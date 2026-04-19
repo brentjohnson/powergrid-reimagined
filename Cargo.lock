@@ -5277,19 +5277,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "powergrid-core"
-version = "0.1.0"
-dependencies = [
- "rand 0.8.5",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "toml",
- "uuid",
-]
-
-[[package]]
-name = "powergrid-reimagined"
+name = "powergrid-client"
 version = "0.1.0"
 dependencies = [
  "bevy",
@@ -5305,6 +5293,18 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "powergrid-core"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "toml",
  "uuid",
 ]
 
