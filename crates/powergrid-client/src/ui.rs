@@ -557,7 +557,7 @@ fn right_panel_contents(
     ui.add_space(4.0);
 
     // ---- My action panel ----
-    if let Some(me) = gs.player(my_id) {
+    if gs.player(my_id).is_some() {
         section_header(ui, "ACTION CONSOLE");
         theme::neon_frame_bright().show(ui, |ui| {
             if let Some(err) = &state.error_message.clone() {
@@ -570,20 +570,6 @@ fn right_panel_contents(
                 ui.add_space(4.0);
             }
             action_panel(ui, state, channels, gs, my_id);
-        });
-
-        ui.add_space(4.0);
-        section_header(ui, "YOUR PLANTS");
-        theme::neon_frame().show(ui, |ui| {
-            if me.plants.is_empty() {
-                ui.label(RichText::new("No plants").color(theme::TEXT_DIM).small());
-            } else {
-                ui.horizontal_wrapped(|ui| {
-                    for plant in &me.plants {
-                        card_painter::draw_plant_card(ui, plant, 70.0);
-                    }
-                });
-            }
         });
 
         ui.add_space(4.0);
