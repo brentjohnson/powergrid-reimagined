@@ -9,7 +9,7 @@ mod top_panel;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use egui::{Color32, RichText};
+use egui::{Color32, FontData, FontDefinitions, FontFamily, RichText};
 use powergrid_core::types::Phase;
 
 use crate::{
@@ -23,7 +23,22 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 pub fn setup_egui_theme(mut contexts: EguiContexts) {
-    theme::apply(contexts.ctx_mut());
+    let ctx = contexts.ctx_mut();
+
+    // Load Inter as the proportional font.
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(
+        "Inter-Regular".to_owned(),
+        FontData::from_static(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
+    );
+    fonts
+        .families
+        .entry(FontFamily::Proportional)
+        .or_default()
+        .insert(0, "Inter-Regular".to_owned());
+    ctx.set_fonts(fonts);
+
+    theme::apply(ctx);
 }
 
 // ---------------------------------------------------------------------------

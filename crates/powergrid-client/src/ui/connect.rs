@@ -56,8 +56,7 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                             .small(),
                     );
                     let btn_row_id = ui.id().with("color_btn_row_width");
-                    let row_width: f32 =
-                        ui.ctx().data(|d| d.get_temp(btn_row_id).unwrap_or(0.0));
+                    let row_width: f32 = ui.ctx().data(|d| d.get_temp(btn_row_id).unwrap_or(0.0));
                     let leading = ((ui.available_width() - row_width) / 2.0).max(0.0);
                     ui.horizontal(|ui| {
                         ui.add_space(leading);

@@ -78,17 +78,27 @@ pub fn apply(ctx: &egui::Context) {
 
     ctx.set_visuals(visuals);
 
-    // Typography: use the built-in proportional font but scaled up slightly.
+    // Typography: Inter for all proportional text; keep egui's built-in
+    // monospace (Hack) for the Monospace style only.
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.0, FontFamily::Monospace)),
-        (TextStyle::Body, FontId::new(13.0, FontFamily::Monospace)),
+        (
+            TextStyle::Small,
+            FontId::new(11.0, FontFamily::Proportional),
+        ),
+        (TextStyle::Body, FontId::new(13.0, FontFamily::Proportional)),
         (
             TextStyle::Monospace,
             FontId::new(13.0, FontFamily::Monospace),
         ),
-        (TextStyle::Button, FontId::new(13.0, FontFamily::Monospace)),
-        (TextStyle::Heading, FontId::new(18.0, FontFamily::Monospace)),
+        (
+            TextStyle::Button,
+            FontId::new(13.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Heading,
+            FontId::new(18.0, FontFamily::Proportional),
+        ),
     ]
     .into();
     style.spacing.item_spacing = Vec2::new(6.0, 4.0);

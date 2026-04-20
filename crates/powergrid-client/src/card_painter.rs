@@ -64,7 +64,7 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
             rect.center(),
             egui::Align2::CENTER_CENTER,
             "STEP\n 3",
-            FontId::new(size * 0.22, FontFamily::Monospace),
+            FontId::new(size * 0.22, FontFamily::Proportional),
             theme::NEON_AMBER,
         );
         return;
@@ -96,7 +96,7 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
             top_bar.center(),
             egui::Align2::CENTER_CENTER,
             kind_label(plant.kind),
-            FontId::new(size * 0.12, FontFamily::Monospace),
+            FontId::new(size * 0.12, FontFamily::Proportional),
             color,
         );
 
@@ -106,7 +106,7 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
             mid_center,
             egui::Align2::CENTER_CENTER,
             plant.number.to_string(),
-            FontId::new(size * 0.32, FontFamily::Monospace),
+            FontId::new(size * 0.32, FontFamily::Proportional),
             theme::TEXT_BRIGHT,
         );
 
@@ -121,7 +121,7 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
             egui::pos2(rect.center().x, bottom_y),
             egui::Align2::CENTER_CENTER,
             stats,
-            FontId::new(size * 0.13, FontFamily::Monospace),
+            FontId::new(size * 0.13, FontFamily::Proportional),
             theme::TEXT_MID,
         );
     } else {
@@ -148,7 +148,7 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
             rect.center() - Vec2::new(0.0, bar_h * 0.4),
             egui::Align2::CENTER_CENTER,
             plant.number.to_string(),
-            FontId::new(size * 0.38, FontFamily::Monospace),
+            FontId::new(size * 0.38, FontFamily::Proportional),
             theme::TEXT_BRIGHT,
         );
     }
