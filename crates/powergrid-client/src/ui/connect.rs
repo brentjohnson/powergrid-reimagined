@@ -38,7 +38,7 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                 ui.add_space(40.0);
 
                 theme::neon_frame().show(ui, |ui| {
-                    ui.set_width(360.0);
+                    ui.set_width(420.0);
                     ui.spacing_mut().item_spacing.y = 10.0;
 
                     // Server URL
@@ -55,7 +55,13 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                             .color(theme::TEXT_DIM)
                             .small(),
                     );
-                    ui.horizontal_wrapped(|ui| {
+                    let btn_row_id = ui.id().with("color_btn_row_width");
+                    let row_width: f32 =
+                        ui.ctx().data(|d| d.get_temp(btn_row_id).unwrap_or(0.0));
+                    let leading = ((ui.available_width() - row_width) / 2.0).max(0.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(leading);
+                        let x0 = ui.cursor().left();
                         for color in [
                             PlayerColor::Red,
                             PlayerColor::Blue,
@@ -87,6 +93,8 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                                 state.selected_color = color;
                             }
                         }
+                        let measured = ui.min_rect().right() - x0;
+                        ui.ctx().data_mut(|d| d.insert_temp(btn_row_id, measured));
                     });
 
                     ui.add_space(8.0);

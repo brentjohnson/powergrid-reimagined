@@ -36,7 +36,7 @@ Before running a build, do "cargo fmt" "cargo check" and run clippy.  Then fix a
 
 ## Architecture
 
-Four-crate Cargo workspace:
+Three-crate Cargo workspace:
 
 ```
 crates/
