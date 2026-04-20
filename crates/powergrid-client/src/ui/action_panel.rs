@@ -99,11 +99,11 @@ pub(super) fn action_panel(
                                 .color(theme::TEXT_BRIGHT)
                                 .monospace(),
                         );
-                        if ui.add(neon_button("[+]", theme::NEON_GREEN)).clicked() {
-                            state.add_to_cart(resource);
-                        }
                         if ui.add(neon_button("[-]", theme::NEON_AMBER)).clicked() {
                             state.remove_from_cart(resource);
+                        }
+                        if ui.add(neon_button("[+]", theme::NEON_GREEN)).clicked() {
+                            state.add_to_cart(resource);
                         }
                     });
                 }
