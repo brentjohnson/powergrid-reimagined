@@ -63,9 +63,8 @@ pub(super) fn phase_tracker(ui: &mut Ui, gs: &GameState) {
                 } else {
                     theme::TEXT_DIM
                 };
-                let prefix = if is_current { "▶ " } else { "  " };
                 ui.label(
-                    RichText::new(format!("{prefix}{label}"))
+                    RichText::new(*label)
                         .color(label_color)
                         .small()
                         .monospace(),
