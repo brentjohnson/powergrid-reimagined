@@ -24,22 +24,6 @@ pub(super) fn neon_button(label: &str, color: Color32) -> egui::Button<'static> 
         .stroke(egui::Stroke::new(1.0, color))
 }
 
-pub(super) fn resource_badge(ui: &mut Ui, label: &str, count: u8, color: Color32) {
-    egui::Frame::none()
-        .fill(theme::BG_WIDGET)
-        .stroke(egui::Stroke::new(1.0, color))
-        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-        .rounding(egui::Rounding::same(2.0))
-        .show(ui, |ui| {
-            ui.label(
-                RichText::new(format!("{label}\n{count:>2}"))
-                    .color(color)
-                    .small()
-                    .monospace(),
-            );
-        });
-}
-
 pub(super) fn dim_color(c: Color32) -> Color32 {
     Color32::from_rgba_unmultiplied(
         (c.r() as f32 * 0.3) as u8,
