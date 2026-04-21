@@ -19,7 +19,7 @@ pub(super) fn lobby_screen(
     my_id: PlayerId,
 ) {
     egui::CentralPanel::default()
-        .frame(egui::Frame::none().fill(theme::BG_DEEP))
+        .frame(egui::Frame::NONE.fill(theme::BG_DEEP))
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(60.0);

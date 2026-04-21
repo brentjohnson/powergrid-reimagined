@@ -20,14 +20,14 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameState, my_id: PlayerId) 
                 dim_color(player_color_to_egui(p.color))
             };
 
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(theme::BG_PANEL)
                 .stroke(egui::Stroke::new(
                     if active { 2.0 } else { 1.0 },
                     border_color,
                 ))
-                .inner_margin(egui::Margin::same(6.0))
-                .rounding(egui::Rounding::same(3.0))
+                .inner_margin(egui::Margin::same(6))
+                .corner_radius(egui::CornerRadius::same(3))
                 .show(ui, |ui| {
                     // Header row
                     ui.horizontal(|ui| {

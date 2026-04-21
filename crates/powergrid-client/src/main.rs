@@ -8,7 +8,7 @@ mod ws;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
-use bevy_egui::EguiPlugin;
+use bevy_egui::{EguiContextPass, EguiPlugin};
 use state::{AppState, CliArgs};
 use std::time::Duration;
 
@@ -37,14 +37,16 @@ fn main() {
         }),
         ..default()
     }))
-    .add_plugins(EguiPlugin)
+    .add_plugins(EguiPlugin {
+        enable_multipass_for_primary_context: true,
+    })
     .insert_resource(WinitSettings {
         focused_mode: UpdateMode::reactive(Duration::from_millis(100)),
         unfocused_mode: UpdateMode::reactive_low_power(Duration::from_millis(1000)),
     })
     .insert_resource(app_state)
-    .add_systems(Startup, ui::setup_egui_theme)
-    .add_systems(Update, (ws::process_ws_events, ui::ui_system).chain());
+    .add_systems(Update, ws::process_ws_events)
+    .add_systems(EguiContextPass, ui::ui_system);
 
     if let Some(channels) = channels {
         app.insert_resource(channels);

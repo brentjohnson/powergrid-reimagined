@@ -13,9 +13,9 @@ use super::helpers::color_label;
 pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands: &mut Commands) {
     egui::CentralPanel::default()
         .frame(
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(theme::BG_DEEP)
-                .inner_margin(egui::Margin::same(0.0)),
+                .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {

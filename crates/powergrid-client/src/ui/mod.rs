@@ -19,15 +19,7 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
-// One-time theme setup
-// ---------------------------------------------------------------------------
-
-pub fn setup_egui_theme(mut contexts: EguiContexts) {
-    theme::apply(contexts.ctx_mut());
-}
-
-// ---------------------------------------------------------------------------
-// Main UI system (runs every frame)
+// Main UI system (runs every frame via EguiContextPass)
 // ---------------------------------------------------------------------------
 
 pub fn ui_system(
@@ -81,10 +73,10 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
     egui::TopBottomPanel::top("top_panel")
         .exact_height(130.0)
         .frame(
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(theme::BG_DEEP)
                 .stroke(egui::Stroke::new(1.0, theme::NEON_CYAN_DARK))
-                .inner_margin(egui::Margin::same(6.0)),
+                .inner_margin(egui::Margin::same(6)),
         )
         .show(ctx, |ui| {
             let players_info: Vec<_> = gs.players.iter().map(|p| (p.id, p.color)).collect();
@@ -96,10 +88,10 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
         .resizable(false)
         .exact_width(220.0)
         .frame(
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(theme::BG_DEEP)
                 .stroke(egui::Stroke::new(1.0, theme::NEON_CYAN_DARK))
-                .inner_margin(egui::Margin::same(0.0)),
+                .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -113,10 +105,10 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
         .resizable(false)
         .exact_width(340.0)
         .frame(
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(theme::BG_DEEP)
                 .stroke(egui::Stroke::new(1.0, theme::NEON_CYAN_DARK))
-                .inner_margin(egui::Margin::same(0.0)),
+                .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -128,9 +120,9 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
     // Central map
     egui::CentralPanel::default()
         .frame(
-            egui::Frame::none()
+            egui::Frame::NONE
                 .fill(Color32::from_rgb(2, 4, 8))
-                .inner_margin(egui::Margin::same(0.0)),
+                .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
             crate::map_panel::draw(ui, state, &gs, my_id);

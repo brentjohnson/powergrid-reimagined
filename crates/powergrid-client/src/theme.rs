@@ -1,4 +1,4 @@
-use egui::{Color32, FontFamily, FontId, Rounding, Stroke, TextStyle, Vec2, Visuals};
+use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Vec2, Visuals};
 
 // ---------------------------------------------------------------------------
 // Neon palette
@@ -36,38 +36,38 @@ pub fn apply(ctx: &egui::Context) {
     visuals.faint_bg_color = BG_WIDGET;
     visuals.extreme_bg_color = BG_DEEP;
 
-    visuals.window_rounding = Rounding::same(3.0);
+    visuals.window_corner_radius = CornerRadius::same(3);
     visuals.window_stroke = Stroke::new(1.0, NEON_CYAN_DARK);
 
     // Non-interactive widgets (labels, separators)
     visuals.widgets.noninteractive.bg_fill = BG_PANEL;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER_PANEL);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_MID);
-    visuals.widgets.noninteractive.rounding = Rounding::same(2.0);
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(2);
 
     // Inactive (e.g. text input at rest)
     visuals.widgets.inactive.bg_fill = BG_WIDGET;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, NEON_CYAN_DARK);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT_MID);
-    visuals.widgets.inactive.rounding = Rounding::same(2.0);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(2);
 
     // Hovered
     visuals.widgets.hovered.bg_fill = BG_HOVER;
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.5, NEON_CYAN_DIM);
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.5, NEON_CYAN);
-    visuals.widgets.hovered.rounding = Rounding::same(2.0);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(2);
 
     // Active (clicked / focused)
     visuals.widgets.active.bg_fill = BG_ACTIVE;
     visuals.widgets.active.bg_stroke = Stroke::new(2.0, NEON_CYAN);
     visuals.widgets.active.fg_stroke = Stroke::new(2.0, Color32::WHITE);
-    visuals.widgets.active.rounding = Rounding::same(2.0);
+    visuals.widgets.active.corner_radius = CornerRadius::same(2);
 
     // Open (dropdown open state)
     visuals.widgets.open.bg_fill = BG_HOVER;
     visuals.widgets.open.bg_stroke = Stroke::new(1.5, NEON_CYAN_DIM);
     visuals.widgets.open.fg_stroke = Stroke::new(1.5, NEON_CYAN);
-    visuals.widgets.open.rounding = Rounding::same(2.0);
+    visuals.widgets.open.corner_radius = CornerRadius::same(2);
 
     visuals.selection.bg_fill = Color32::from_rgb(0, 90, 75);
     visuals.selection.stroke = Stroke::new(1.0, NEON_CYAN);
@@ -93,7 +93,7 @@ pub fn apply(ctx: &egui::Context) {
     .into();
     style.spacing.item_spacing = Vec2::new(6.0, 4.0);
     style.spacing.button_padding = Vec2::new(10.0, 4.0);
-    style.spacing.window_margin = egui::Margin::same(10.0);
+    style.spacing.window_margin = egui::Margin::same(10);
     ctx.set_style(style);
 }
 
@@ -102,17 +102,17 @@ pub fn apply(ctx: &egui::Context) {
 // ---------------------------------------------------------------------------
 
 pub fn neon_frame() -> egui::Frame {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(BG_PANEL)
         .stroke(Stroke::new(1.0, BORDER_PANEL))
-        .inner_margin(egui::Margin::same(8.0))
-        .rounding(Rounding::same(3.0))
+        .inner_margin(egui::Margin::same(8))
+        .corner_radius(CornerRadius::same(3))
 }
 
 pub fn neon_frame_bright() -> egui::Frame {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(BG_PANEL)
         .stroke(Stroke::new(1.5, NEON_CYAN_DIM))
-        .inner_margin(egui::Margin::same(8.0))
-        .rounding(Rounding::same(3.0))
+        .inner_margin(egui::Margin::same(8))
+        .corner_radius(CornerRadius::same(3))
 }

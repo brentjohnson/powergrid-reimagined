@@ -1,5 +1,5 @@
 use bevy_egui::egui;
-use egui::{Color32, FontFamily, FontId, Rect, Rounding, Stroke, Vec2};
+use egui::{Color32, CornerRadius, FontFamily, FontId, Rect, Stroke, StrokeKind, Vec2};
 use powergrid_core::types::{PlantKind, PowerPlant};
 
 use crate::theme;
@@ -54,12 +54,17 @@ pub fn draw_plant_card(ui: &mut egui::Ui, plant: &PowerPlant, size: f32) -> egui
 
 fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
     let painter = ui.painter_at(rect);
-    let rounding = Rounding::same(3.0);
+    let rounding = CornerRadius::same(3);
 
     // Step 3 special card
     if plant.number == 0 {
         painter.rect_filled(rect, rounding, theme::BG_WIDGET);
-        painter.rect_stroke(rect, rounding, Stroke::new(1.5, theme::NEON_AMBER));
+        painter.rect_stroke(
+            rect,
+            rounding,
+            Stroke::new(1.5, theme::NEON_AMBER),
+            StrokeKind::Inside,
+        );
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -74,7 +79,7 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
 
     // Background + border
     painter.rect_filled(rect, rounding, theme::BG_WIDGET);
-    painter.rect_stroke(rect, rounding, Stroke::new(1.5, color));
+    painter.rect_stroke(rect, rounding, Stroke::new(1.5, color), StrokeKind::Inside);
 
     if size >= 60.0 {
         // ---- Medium card (70px) ----
@@ -82,11 +87,11 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
         let top_bar = Rect::from_min_size(rect.min, Vec2::new(size, size * 0.20));
         painter.rect_filled(
             top_bar,
-            Rounding {
-                nw: 3.0,
-                ne: 3.0,
-                sw: 0.0,
-                se: 0.0,
+            CornerRadius {
+                nw: 3,
+                ne: 3,
+                sw: 0,
+                se: 0,
             },
             color.linear_multiply(0.35),
         );
@@ -134,11 +139,11 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
         );
         painter.rect_filled(
             bar,
-            Rounding {
-                nw: 0.0,
-                ne: 0.0,
-                sw: 3.0,
-                se: 3.0,
+            CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: 3,
+                se: 3,
             },
             color.linear_multiply(0.5),
         );
