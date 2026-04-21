@@ -5,6 +5,13 @@ use powergrid_core::types::{PlantKind, PowerPlant};
 use crate::theme;
 
 // ---------------------------------------------------------------------------
+// Card dimensions
+// ---------------------------------------------------------------------------
+
+pub const CARD_W: f32 = 120.0;
+pub const CARD_H: f32 = 26.0;
+
+// ---------------------------------------------------------------------------
 // PlantKind color + label
 // ---------------------------------------------------------------------------
 
@@ -36,13 +43,13 @@ fn kind_label(kind: PlantKind) -> &'static str {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Draw a power plant card at the given size and return the egui Response.
+/// Draw a power plant card (CARD_W × CARD_H) and return the egui Response.
 /// The response can be checked for `.clicked()` and `.hovered()`.
-pub fn draw_plant_card(ui: &mut egui::Ui, plant: &PowerPlant, size: f32) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+pub fn draw_plant_card(ui: &mut egui::Ui, plant: &PowerPlant) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(CARD_W, CARD_H), egui::Sense::click());
 
     if ui.is_rect_visible(rect) {
-        paint_card(ui, rect, plant, size);
+        paint_card(ui, rect, plant);
     }
 
     response
@@ -52,7 +59,7 @@ pub fn draw_plant_card(ui: &mut egui::Ui, plant: &PowerPlant, size: f32) -> egui
 // Painting
 // ---------------------------------------------------------------------------
 
-fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
+fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant) {
     let painter = ui.painter_at(rect);
     let rounding = CornerRadius::same(3);
 
@@ -68,8 +75,8 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "STEP\n 3",
-            FontId::new(size * 0.22, FontFamily::Monospace),
+            "STEP 3",
+            FontId::new(10.0, FontFamily::Monospace),
             theme::NEON_AMBER,
         );
         return;
@@ -81,80 +88,48 @@ fn paint_card(ui: &mut egui::Ui, rect: Rect, plant: &PowerPlant, size: f32) {
     painter.rect_filled(rect, rounding, theme::BG_WIDGET);
     painter.rect_stroke(rect, rounding, Stroke::new(1.5, color), StrokeKind::Inside);
 
-    if size >= 60.0 {
-        // ---- Medium card (70px) ----
-        // Color bar at top
-        let top_bar = Rect::from_min_size(rect.min, Vec2::new(size, size * 0.20));
-        painter.rect_filled(
-            top_bar,
-            CornerRadius {
-                nw: 3,
-                ne: 3,
-                sw: 0,
-                se: 0,
-            },
-            color.linear_multiply(0.35),
-        );
+    // Left number box — colored background, plant number centered
+    let num_box_w = CARD_H; // square: height × height
+    let num_box = Rect::from_min_size(rect.min, Vec2::new(num_box_w, CARD_H));
+    painter.rect_filled(
+        num_box,
+        CornerRadius {
+            nw: 3,
+            ne: 0,
+            sw: 3,
+            se: 0,
+        },
+        color.linear_multiply(0.45),
+    );
+    painter.text(
+        num_box.center(),
+        egui::Align2::CENTER_CENTER,
+        plant.number.to_string(),
+        FontId::new(13.0, FontFamily::Monospace),
+        theme::TEXT_BRIGHT,
+    );
 
-        // Kind label inside top bar
-        painter.text(
-            top_bar.center(),
-            egui::Align2::CENTER_CENTER,
-            kind_label(plant.kind),
-            FontId::new(size * 0.12, FontFamily::Monospace),
-            color,
-        );
+    // Kind label — left of center, after number box
+    let label_x = num_box_w + 6.0 + rect.min.x;
+    painter.text(
+        egui::pos2(label_x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        kind_label(plant.kind),
+        FontId::new(9.0, FontFamily::Monospace),
+        color,
+    );
 
-        // Plant number — large, centered in the middle area
-        let mid_center = rect.center() + Vec2::new(0.0, size * 0.06);
-        painter.text(
-            mid_center,
-            egui::Align2::CENTER_CENTER,
-            plant.number.to_string(),
-            FontId::new(size * 0.32, FontFamily::Monospace),
-            theme::TEXT_BRIGHT,
-        );
-
-        // Bottom row: cost → cities (or just cities for free plants)
-        let bottom_y = rect.max.y - size * 0.13;
-        let stats = if plant.kind.needs_resources() {
-            format!("{}  \u{2192}  {}", plant.cost, plant.cities)
-        } else {
-            format!("\u{2192}  {}", plant.cities)
-        };
-        painter.text(
-            egui::pos2(rect.center().x, bottom_y),
-            egui::Align2::CENTER_CENTER,
-            stats,
-            FontId::new(size * 0.13, FontFamily::Monospace),
-            theme::TEXT_MID,
-        );
+    // Stats — right-aligned: "2 → 1" or "→ 1"
+    let stats = if plant.kind.needs_resources() {
+        format!("{} \u{2192} {}", plant.cost, plant.cities)
     } else {
-        // ---- Small card (44px) ----
-        // Thin color bar at the bottom
-        let bar_h = size * 0.15;
-        let bar = Rect::from_min_size(
-            egui::pos2(rect.min.x, rect.max.y - bar_h),
-            Vec2::new(size, bar_h),
-        );
-        painter.rect_filled(
-            bar,
-            CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: 3,
-                se: 3,
-            },
-            color.linear_multiply(0.5),
-        );
-
-        // Plant number — large, centered
-        painter.text(
-            rect.center() - Vec2::new(0.0, bar_h * 0.4),
-            egui::Align2::CENTER_CENTER,
-            plant.number.to_string(),
-            FontId::new(size * 0.38, FontFamily::Monospace),
-            theme::TEXT_BRIGHT,
-        );
-    }
+        format!("\u{2192} {}", plant.cities)
+    };
+    painter.text(
+        egui::pos2(rect.max.x - 5.0, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        stats,
+        FontId::new(9.0, FontFamily::Monospace),
+        theme::TEXT_MID,
+    );
 }

@@ -120,9 +120,10 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameState, my_id: PlayerId) 
 
                     // Plants row
                     if !p.plants.is_empty() {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
                             for plant in &p.plants {
-                                card_painter::draw_plant_card(ui, plant, 44.0);
+                                card_painter::draw_plant_card(ui, plant);
                             }
                         });
                     }

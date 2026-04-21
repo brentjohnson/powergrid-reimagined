@@ -2,7 +2,7 @@ use bevy::prelude::Res;
 use bevy_egui::egui;
 use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, Ui};
 use powergrid_core::{
-    types::{PlayerId, PlayerColor},
+    types::{PlayerColor, PlayerId},
     GameState,
 };
 

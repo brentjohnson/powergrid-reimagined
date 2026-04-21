@@ -46,35 +46,41 @@ pub(super) fn top_panel_contents(
         ui.vertical(|ui| {
             section_header(ui, "PLANT MARKET");
             theme::neon_frame().show(ui, |ui| {
-                ui.label(
-                    RichText::new("ACTUAL")
-                        .color(theme::TEXT_DIM)
-                        .small()
-                        .monospace(),
-                );
-                plant_row(
-                    ui,
-                    &gs.market.actual,
-                    channels,
-                    &gs.phase,
-                    my_id,
-                    &gs.player_order,
-                );
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new("FUTURE")
-                        .color(theme::TEXT_DIM)
-                        .small()
-                        .monospace(),
-                );
-                plant_row(
-                    ui,
-                    &gs.market.future,
-                    channels,
-                    &gs.phase,
-                    my_id,
-                    &gs.player_order,
-                );
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("ACTUAL")
+                                .color(theme::TEXT_DIM)
+                                .small()
+                                .monospace(),
+                        );
+                        plant_column(
+                            ui,
+                            &gs.market.actual,
+                            channels,
+                            &gs.phase,
+                            my_id,
+                            &gs.player_order,
+                        );
+                    });
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new("FUTURE")
+                                .color(theme::TEXT_DIM)
+                                .small()
+                                .monospace(),
+                        );
+                        plant_column(
+                            ui,
+                            &gs.market.future,
+                            channels,
+                            &gs.phase,
+                            my_id,
+                            &gs.player_order,
+                        );
+                    });
+                });
             });
         });
 
@@ -90,7 +96,7 @@ pub(super) fn top_panel_contents(
     });
 }
 
-fn plant_row(
+fn plant_column(
     ui: &mut Ui,
     plants: &[powergrid_core::types::PowerPlant],
     channels: &Option<Res<WsChannels>>,
@@ -101,9 +107,10 @@ fn plant_row(
     let is_my_auction_turn = matches!(phase, Phase::Auction { current_bidder_idx, active_bid, .. }
         if active_bid.is_none() && player_order.get(*current_bidder_idx) == Some(&my_id));
 
-    ui.horizontal_wrapped(|ui| {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
         for plant in plants {
-            let resp = card_painter::draw_plant_card(ui, plant, 70.0);
+            let resp = card_painter::draw_plant_card(ui, plant);
             if is_my_auction_turn && resp.clicked() {
                 send(
                     Action::SelectPlant {
@@ -284,4 +291,3 @@ fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {
         );
     }
 }
-

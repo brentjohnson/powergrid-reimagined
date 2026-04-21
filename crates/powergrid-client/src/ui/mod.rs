@@ -79,7 +79,7 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
                 .inner_margin(egui::Margin::same(6)),
         )
         .show(ctx, |ui| {
-            top_panel::top_panel_contents(ui, gs.clone(), &channels, my_id);
+            top_panel::top_panel_contents(ui, gs.clone(), channels, my_id);
         });
 
     // Left panel — player info
