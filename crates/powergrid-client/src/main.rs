@@ -16,20 +16,6 @@ fn main() {
     let cli = CliArgs::parse();
     let auto_connect = cli.auto_connect;
     let windowed = cli.windowed;
-    let url = cli
-        .url
-        .clone()
-        .unwrap_or_else(|| "ws://localhost:3000/ws".to_string());
-    let pending_join = if auto_connect {
-        cli.name.as_ref().map(|name| {
-            (
-                name.clone(),
-                cli.color.unwrap_or(powergrid_core::types::PlayerColor::Red),
-            )
-        })
-    } else {
-        None
-    };
 
     let window_mode = if windowed {
         WindowMode::Windowed
@@ -37,51 +23,32 @@ fn main() {
         WindowMode::BorderlessFullscreen(MonitorSelection::Current)
     };
 
-    let mut app_state = AppState::new(cli);
-    // If all three args provided, kick off connection immediately.
-    if auto_connect {
-        let channels = ws::spawn_ws(url.clone());
-        app_state.pending_join = pending_join;
+    let app_state = AppState::new(cli);
 
-        App::new()
-            .add_plugins(DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Power Grid: Reimagined".into(),
-                    resolution: (1600.0, 900.0).into(),
-                    mode: window_mode,
-                    ..default()
-                }),
-                ..default()
-            }))
-            .add_plugins(EguiPlugin)
-            .insert_resource(WinitSettings {
-                focused_mode: UpdateMode::reactive(Duration::from_millis(100)),
-                unfocused_mode: UpdateMode::reactive_low_power(Duration::from_millis(1000)),
-            })
-            .insert_resource(app_state)
-            .insert_resource(channels)
-            .add_systems(Startup, ui::setup_egui_theme)
-            .add_systems(Update, (ws::process_ws_events, ui::ui_system).chain())
-            .run();
-    } else {
-        App::new()
-            .add_plugins(DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Power Grid: Reimagined".into(),
-                    resolution: (1600.0, 900.0).into(),
-                    mode: window_mode,
-                    ..default()
-                }),
-                ..default()
-            }))
-            .add_plugins(EguiPlugin)
-            .insert_resource(WinitSettings {
-                focused_mode: UpdateMode::reactive(Duration::from_millis(100)),
-                unfocused_mode: UpdateMode::reactive_low_power(Duration::from_millis(1000)),
-            })
-            .insert_resource(app_state)
-            .add_systems(Startup, ui::setup_egui_theme)
-            .add_systems(Update, (ws::process_ws_events, ui::ui_system).chain())
-            .run();
+    let channels = auto_connect.then(|| ws::spawn_ws(app_state.connect_url.clone()));
+
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: "Power Grid: Reimagined".into(),
+            resolution: (1600.0, 900.0).into(),
+            mode: window_mode,
+            ..default()
+        }),
+        ..default()
+    }))
+    .add_plugins(EguiPlugin)
+    .insert_resource(WinitSettings {
+        focused_mode: UpdateMode::reactive(Duration::from_millis(100)),
+        unfocused_mode: UpdateMode::reactive_low_power(Duration::from_millis(1000)),
+    })
+    .insert_resource(app_state)
+    .add_systems(Startup, ui::setup_egui_theme)
+    .add_systems(Update, (ws::process_ws_events, ui::ui_system).chain());
+
+    if let Some(channels) = channels {
+        app.insert_resource(channels);
     }
+
+    app.run();
 }
