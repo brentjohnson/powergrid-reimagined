@@ -3,7 +3,7 @@ use bevy_egui::egui;
 use egui::{RichText, Ui};
 use powergrid_core::{
     actions::Action,
-    types::{Phase, PlayerId, Resource},
+    types::{Phase, PlantKind, PlayerId, Resource},
     GameState,
 };
 
@@ -85,6 +85,7 @@ pub(super) fn action_panel(
         Phase::BuyResources { remaining } => {
             if remaining.first() == Some(&my_id) {
                 let my_money = gs.player(my_id).map(|p| p.money).unwrap_or(0);
+                let player = gs.player(my_id);
 
                 for resource in [
                     Resource::Coal,
@@ -93,6 +94,52 @@ pub(super) fn action_panel(
                     Resource::Uranium,
                 ] {
                     let count = state.resource_cart.get(&resource).copied().unwrap_or(0);
+
+                    let (owned, cap_lo, cap_hi) = player
+                        .map(|p| {
+                            let has_hybrid =
+                                p.plants.iter().any(|pl| pl.kind == PlantKind::CoalOrOil);
+                            match resource {
+                                Resource::Coal | Resource::Oil if has_hybrid => {
+                                    let coal_only: u8 = p
+                                        .plants
+                                        .iter()
+                                        .filter(|pl| pl.kind == PlantKind::Coal)
+                                        .map(|pl| pl.cost * 2)
+                                        .sum();
+                                    let oil_only: u8 = p
+                                        .plants
+                                        .iter()
+                                        .filter(|pl| pl.kind == PlantKind::Oil)
+                                        .map(|pl| pl.cost * 2)
+                                        .sum();
+                                    let hybrid: u8 = p
+                                        .plants
+                                        .iter()
+                                        .filter(|pl| pl.kind == PlantKind::CoalOrOil)
+                                        .map(|pl| pl.cost * 2)
+                                        .sum();
+                                    let (dedicated, owned) = if resource == Resource::Coal {
+                                        (coal_only, p.resources.coal)
+                                    } else {
+                                        (oil_only, p.resources.oil)
+                                    };
+                                    (owned, dedicated, dedicated + hybrid)
+                                }
+                                _ => {
+                                    let cap = p.resource_capacity(resource);
+                                    (p.resources.get(resource), cap, cap)
+                                }
+                            }
+                        })
+                        .unwrap_or((0, 0, 0));
+
+                    let cap_str = if cap_lo == cap_hi {
+                        format!("{owned}/{cap_hi}")
+                    } else {
+                        format!("{owned}/{cap_lo}-{cap_hi}")
+                    };
+
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(format!("{:>8}: {:>2}", resource_name(resource), count))
@@ -105,6 +152,7 @@ pub(super) fn action_panel(
                         if ui.add(neon_button("[+]", theme::NEON_GREEN)).clicked() {
                             state.add_to_cart(resource);
                         }
+                        ui.label(RichText::new(cap_str).color(theme::TEXT_DIM).monospace());
                     });
                 }
 
