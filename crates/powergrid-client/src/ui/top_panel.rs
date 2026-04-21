@@ -45,7 +45,7 @@ pub(super) fn top_panel_contents(
             ui.vertical(|ui| {
                 section_header(ui, "CITIES");
                 theme::neon_frame().show(ui, |ui| {
-                    city_history_graph(ui, city_history, players_info, gs.end_game_cities);
+                    city_history_graph(ui, city_history, players_info, gs.end_game_cities, &gs);
                 });
             });
 
@@ -67,6 +67,7 @@ fn city_history_graph(
     history: &[CitySnapshot],
     players_info: &[(PlayerId, PlayerColor)],
     end_game_cities: u8,
+    gs: &GameState,
 ) {
     const W: f32 = 120.0;
     const H: f32 = 72.0;
@@ -91,12 +92,22 @@ fn city_history_graph(
     let max_cities = history
         .iter()
         .flat_map(|snap| snap.iter().map(|(_, c)| *c))
+        .chain(gs.players.iter().map(|p| p.city_count()))
         .max()
         .unwrap_or(1)
         .max(end_game_cities as usize)
         .max(1);
 
     let rounds = history.len();
+    // Include a projected point slot beyond the historical rounds
+    let total_points = rounds + 1;
+    let x_for = |idx: usize| -> f32 {
+        if total_points <= 1 {
+            ox
+        } else {
+            ox + (idx as f32 / (total_points - 1) as f32) * W
+        }
+    };
 
     // Draw axes
     painter.line_segment(
@@ -136,7 +147,7 @@ fn city_history_graph(
         painter.text(
             egui::pos2(ox + W, oy + H + PAD_B),
             Align2::RIGHT_BOTTOM,
-            format!("{rounds}"),
+            format!("{}", rounds + 1),
             FontId::monospace(7.0),
             theme::TEXT_DIM,
         );
@@ -195,11 +206,7 @@ fn city_history_graph(
                 snap.iter()
                     .find(|(id, _)| id == player_id)
                     .map(|(_, count)| {
-                        let x = if rounds <= 1 {
-                            ox
-                        } else {
-                            ox + (round_idx as f32 / (rounds - 1) as f32) * W
-                        };
+                        let x = x_for(round_idx);
                         let y = oy + H - (*count as f32 / max_cities as f32) * H;
                         egui::pos2(x, y)
                     })
@@ -214,6 +221,19 @@ fn city_history_graph(
         // Draw dots
         for pt in &points {
             painter.circle_filled(*pt, DOT_R, color);
+        }
+
+        // Draw projected next-round point (dimmer) using live city count
+        if let Some(&last_pt) = points.last() {
+            if let Some(player) = gs.players.iter().find(|p| p.id == *player_id) {
+                let proj_count = player.city_count();
+                let proj_x = x_for(rounds); // one slot beyond historical points
+                let proj_y = oy + H - (proj_count as f32 / max_cities as f32) * H;
+                let proj_pt = egui::pos2(proj_x, proj_y);
+                let dim = dim_color(color);
+                painter.line_segment([last_pt, proj_pt], Stroke::new(1.5, dim));
+                painter.circle_filled(proj_pt, DOT_R, dim);
+            }
         }
     }
 }
