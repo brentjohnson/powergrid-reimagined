@@ -1,13 +1,21 @@
 use bevy_egui::egui;
-use egui::{Align2, Color32, FontId, Rect, RichText, Sense, Ui};
-use powergrid_core::{types::ResourceMarket, GameState};
+use egui::{Align2, Color32, FontId, Rect, RichText, Sense, Stroke, Ui};
+use powergrid_core::{
+    types::{PlayerColor, PlayerId, ResourceMarket},
+    GameState,
+};
 
-use crate::theme;
+use crate::{state::player_color_to_egui, state::CitySnapshot, theme};
 
 use super::helpers::{dim_color, section_header};
 use super::phase_tracker::phase_tracker;
 
-pub(super) fn top_panel_contents(ui: &mut Ui, gs: GameState) {
+pub(super) fn top_panel_contents(
+    ui: &mut Ui,
+    gs: GameState,
+    city_history: &[CitySnapshot],
+    players_info: &[(PlayerId, PlayerColor)],
+) {
     ui.horizontal(|ui| {
         // Round header
         ui.vertical(|ui| {
@@ -27,6 +35,18 @@ pub(super) fn top_panel_contents(ui: &mut Ui, gs: GameState) {
 
         ui.add_space(8.0);
 
+        // City count graph
+        if !city_history.is_empty() {
+            ui.vertical(|ui| {
+                section_header(ui, "CITIES");
+                theme::neon_frame().show(ui, |ui| {
+                    city_history_graph(ui, city_history, players_info);
+                });
+            });
+
+            ui.add_space(8.0);
+        }
+
         // Resource market
         ui.vertical(|ui| {
             section_header(ui, "RESOURCE MARKET");
@@ -35,6 +55,117 @@ pub(super) fn top_panel_contents(ui: &mut Ui, gs: GameState) {
             });
         });
     });
+}
+
+fn city_history_graph(
+    ui: &mut Ui,
+    history: &[CitySnapshot],
+    players_info: &[(PlayerId, PlayerColor)],
+) {
+    const W: f32 = 120.0;
+    const H: f32 = 72.0;
+    const PAD_L: f32 = 14.0; // left padding for y-axis label
+    const PAD_B: f32 = 10.0; // bottom padding for x-axis label
+    const DOT_R: f32 = 2.0;
+
+    let total_w = PAD_L + W;
+    let total_h = PAD_B + H;
+
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, total_h), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+
+    let painter = ui.painter();
+    let ox = rect.min.x + PAD_L;
+    let oy = rect.min.y;
+
+    // Determine y range
+    let max_cities = history
+        .iter()
+        .flat_map(|snap| snap.iter().map(|(_, c)| *c))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+
+    let rounds = history.len();
+
+    // Draw axes
+    painter.line_segment(
+        [egui::pos2(ox, oy), egui::pos2(ox, oy + H)],
+        Stroke::new(1.0, theme::TEXT_DIM),
+    );
+    painter.line_segment(
+        [egui::pos2(ox, oy + H), egui::pos2(ox + W, oy + H)],
+        Stroke::new(1.0, theme::TEXT_DIM),
+    );
+
+    // Y-axis label (max value)
+    painter.text(
+        egui::pos2(ox - 2.0, oy),
+        Align2::RIGHT_TOP,
+        format!("{max_cities}"),
+        FontId::monospace(7.0),
+        theme::TEXT_DIM,
+    );
+    painter.text(
+        egui::pos2(ox - 2.0, oy + H),
+        Align2::RIGHT_BOTTOM,
+        "0",
+        FontId::monospace(7.0),
+        theme::TEXT_DIM,
+    );
+
+    // X-axis round labels (first and last)
+    painter.text(
+        egui::pos2(ox, oy + H + PAD_B),
+        Align2::LEFT_BOTTOM,
+        "1",
+        FontId::monospace(7.0),
+        theme::TEXT_DIM,
+    );
+    if rounds > 1 {
+        painter.text(
+            egui::pos2(ox + W, oy + H + PAD_B),
+            Align2::RIGHT_BOTTOM,
+            format!("{rounds}"),
+            FontId::monospace(7.0),
+            theme::TEXT_DIM,
+        );
+    }
+
+    // Draw one line per player
+    for (player_id, player_color) in players_info {
+        let color = player_color_to_egui(*player_color);
+
+        let points: Vec<egui::Pos2> = history
+            .iter()
+            .enumerate()
+            .filter_map(|(round_idx, snap)| {
+                snap.iter()
+                    .find(|(id, _)| id == player_id)
+                    .map(|(_, count)| {
+                        let x = if rounds <= 1 {
+                            ox
+                        } else {
+                            ox + (round_idx as f32 / (rounds - 1) as f32) * W
+                        };
+                        let y = oy + H - (*count as f32 / max_cities as f32) * H;
+                        egui::pos2(x, y)
+                    })
+            })
+            .collect();
+
+        // Draw line segments
+        for pair in points.windows(2) {
+            painter.line_segment([pair[0], pair[1]], Stroke::new(1.5, color));
+        }
+
+        // Draw dots
+        for pt in &points {
+            painter.circle_filled(*pt, DOT_R, color);
+        }
+    }
 }
 
 fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {

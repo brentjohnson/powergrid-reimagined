@@ -9,6 +9,9 @@ use powergrid_core::{
 };
 use std::collections::{HashMap, HashSet};
 
+/// A snapshot of every player's city count at the end of a round.
+pub type CitySnapshot = Vec<(PlayerId, usize)>;
+
 // ---------------------------------------------------------------------------
 // AppState resource
 // ---------------------------------------------------------------------------
@@ -52,6 +55,10 @@ pub struct AppState {
 
     // Auction
     pub bid_amount: u32,
+
+    // City count history: one CitySnapshot per round recorded so far.
+    pub city_history: Vec<CitySnapshot>,
+    last_recorded_round: u32,
 }
 
 impl AppState {
@@ -87,6 +94,8 @@ impl AppState {
             resource_cart: HashMap::new(),
             resource_cart_cost: None,
             bid_amount: 0,
+            city_history: Vec::new(),
+            last_recorded_round: 0,
         }
     }
 
@@ -116,6 +125,14 @@ impl AppState {
         if !still_my_buy {
             self.resource_cart.clear();
             self.resource_cart_cost = None;
+        }
+
+        // Record city counts when the round number advances (or on first state).
+        if self.city_history.is_empty() || gs.round > self.last_recorded_round {
+            let snapshot: CitySnapshot =
+                gs.players.iter().map(|p| (p.id, p.city_count())).collect();
+            self.city_history.push(snapshot);
+            self.last_recorded_round = gs.round;
         }
 
         // Move to game screen on first state.
