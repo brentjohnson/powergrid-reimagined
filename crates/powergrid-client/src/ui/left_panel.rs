@@ -1,6 +1,9 @@
 use bevy_egui::egui;
 use egui::{RichText, Ui};
-use powergrid_core::{types::PlayerId, GameState};
+use powergrid_core::{
+    types::{Phase, PlayerId},
+    GameState,
+};
 
 use crate::{card_painter, state::player_color_to_egui, theme};
 
@@ -49,6 +52,34 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameState, my_id: PlayerId) 
                             );
                         });
                     });
+
+                    // Auction status row
+                    if let Phase::Auction {
+                        bought,
+                        passed,
+                        active_bid,
+                        ..
+                    } = &gs.phase
+                    {
+                        let status: Option<(String, egui::Color32)> = if bought.contains(&p.id) {
+                            Some(("PURCHASED".into(), theme::NEON_GREEN))
+                        } else if passed.contains(&p.id) {
+                            Some(("PASSED".into(), theme::TEXT_DIM))
+                        } else if let Some(bid) = active_bid {
+                            if bid.highest_bidder == p.id {
+                                Some((format!("BID: ${}", bid.amount), theme::NEON_AMBER))
+                            } else if !bid.remaining_bidders.contains(&p.id) {
+                                Some(("passed bid".into(), theme::TEXT_DIM))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        if let Some((text, color)) = status {
+                            ui.label(RichText::new(text).color(color).small().monospace());
+                        }
+                    }
 
                     // Resources + cities row
                     ui.horizontal(|ui| {
