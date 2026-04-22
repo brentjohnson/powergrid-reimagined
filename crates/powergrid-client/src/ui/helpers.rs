@@ -46,9 +46,10 @@ pub(super) fn is_active_player(gs: &GameState, pid: PlayerId) -> bool {
                 gs.player_order.get(*current_bidder_idx) == Some(&pid)
             }
         }
-        Phase::BuyResources { remaining }
-        | Phase::BuildCities { remaining }
-        | Phase::Bureaucracy { remaining } => remaining.first() == Some(&pid),
+        Phase::BuyResources { remaining } | Phase::BuildCities { remaining } => {
+            remaining.first() == Some(&pid)
+        }
+        Phase::Bureaucracy { remaining } => remaining.contains(&pid),
         _ => false,
     }
 }

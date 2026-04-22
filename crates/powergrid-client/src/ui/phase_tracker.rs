@@ -67,9 +67,10 @@ pub(super) fn phase_tracker(ui: &mut Ui, gs: &GameState) {
                 Phase::Auction {
                     current_bidder_idx, ..
                 } => gs.player_order.get(*current_bidder_idx).copied(),
-                Phase::BuyResources { remaining }
-                | Phase::BuildCities { remaining }
-                | Phase::Bureaucracy { remaining } => remaining.first().copied(),
+                Phase::BuyResources { remaining } | Phase::BuildCities { remaining } => {
+                    remaining.first().copied()
+                }
+                Phase::Bureaucracy { .. } => None,
                 _ => None,
             }
         };

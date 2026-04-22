@@ -291,7 +291,7 @@ pub(super) fn action_panel(
         }
 
         Phase::Bureaucracy { remaining } => {
-            if remaining.first() == Some(&my_id) {
+            if remaining.contains(&my_id) {
                 ui.label(
                     RichText::new("Fire all plants you can to power cities.")
                         .color(theme::TEXT_BRIGHT)

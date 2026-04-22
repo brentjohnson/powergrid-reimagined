@@ -723,7 +723,7 @@ fn handle_power_cities(
         _ => return Err(ActionError::WrongPhase),
     };
 
-    if remaining.first().copied() != Some(actor) {
+    if !remaining.contains(&actor) {
         return Err(ActionError::NotYourTurn);
     }
 
@@ -831,7 +831,9 @@ fn handle_power_cities(
 
     // Advance.
     let mut remaining = remaining;
-    remaining.remove(0);
+    if let Some(pos) = remaining.iter().position(|&id| id == actor) {
+        remaining.remove(pos);
+    }
 
     if remaining.is_empty() {
         end_of_round(state);
@@ -2037,6 +2039,67 @@ mod tests {
             player.resources.coal, 2,
             "coal should be conserved when wind covers all cities; got {}",
             player.resources.coal
+        );
+    }
+
+    /// Players can submit PowerCities in any order during Bureaucracy.
+    #[test]
+    fn test_bureaucracy_out_of_order_submission() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        // Force bureaucracy with p1 listed first, but have p2 act first.
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1, p2],
+        };
+
+        // Give both players a wind plant and one city.
+        for &pid in &[p1, p2] {
+            let player = state.player_mut(pid).unwrap();
+            player.cities = vec!["a".into()];
+            player.plants = vec![PowerPlant {
+                number: 13,
+                kind: PlantKind::Wind,
+                cost: 0,
+                cities: 2,
+            }];
+            player.resources = PlayerResources {
+                coal: 0,
+                oil: 0,
+                garbage: 0,
+                uranium: 0,
+            };
+        }
+
+        // p2 acts before p1 — should succeed.
+        apply_action(
+            &mut state,
+            p2,
+            Action::PowerCities {
+                plant_numbers: vec![13],
+            },
+        )
+        .unwrap();
+
+        // Phase still has p1 remaining.
+        assert!(matches!(&state.phase, Phase::Bureaucracy { remaining } if remaining == &vec![p1]));
+
+        // p1 now acts.
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![13],
+            },
+        )
+        .unwrap();
+
+        // Both players submitted — round should have ended.
+        assert!(
+            !matches!(state.phase, Phase::Bureaucracy { .. }),
+            "expected phase to advance after both players submitted"
         );
     }
 }
