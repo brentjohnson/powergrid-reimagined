@@ -145,15 +145,15 @@ fn plant_tooltip(ui: &mut Ui, plant: &powergrid_core::types::PowerPlant) {
 }
 
 fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {
-    const SQ: f32 = 8.0; // square size (height and base width)
-    const INNER_GAP: f32 = 1.0; // gap between squares within a COG price group
-    const GROUP_GAP: f32 = 5.0; // gap between price groups (COG) or uranium slots
-    const URAN_W: f32 = 11.0; // uranium slot width (slightly wider to fit price labels)
-    const LABEL_W: f32 = 30.0; // width of row labels (COAL, OIL, etc.)
-    const HEADER_H: f32 = 12.0; // height of price label header row
+    const SQ: f32 = 14.0; // square size (height and base width)
+    const INNER_GAP: f32 = 2.0; // gap between squares within a COG price group
+    const GROUP_GAP: f32 = 8.0; // gap between price groups (COG) or uranium slots
+    const URAN_W: f32 = 24.0; // uranium slot width (slightly wider to fit price labels)
+    const LABEL_W: f32 = 36.0; // width of row labels (COAL, OIL, etc.)
+    const HEADER_H: f32 = 20.0; // height of price label header row
     const ROW_H: f32 = SQ;
-    const ROW_GAP: f32 = 2.0; // gap between resource rows
-    const SECTION_GAP: f32 = 6.0; // gap between COG section and uranium section
+    const ROW_GAP: f32 = 4.0; // gap between resource rows
+    const SECTION_GAP: f32 = 12.0; // gap between COG section and uranium section
 
     // COG: 8 price groups × 3 slots each
     let cog_group_w = 3.0 * SQ + 2.0 * INNER_GAP; // 26px per group
@@ -202,7 +202,7 @@ fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {
             egui::pos2(cx, oy + HEADER_H / 2.0),
             Align2::CENTER_CENTER,
             format!("${price}"),
-            FontId::monospace(9.0),
+            FontId::monospace(10.0),
             theme::TEXT_DIM,
         );
     }
@@ -225,7 +225,7 @@ fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {
             egui::pos2(ox + LABEL_W - 2.0, row_y + ROW_H / 2.0),
             Align2::RIGHT_CENTER,
             *label,
-            FontId::monospace(9.0),
+            FontId::monospace(10.0),
             *color,
         );
 
@@ -260,7 +260,7 @@ fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {
             egui::pos2(cx, usec_y + HEADER_H / 2.0),
             Align2::CENTER_CENTER,
             format!("${price}"),
-            FontId::monospace(8.0),
+            FontId::monospace(9.0),
             theme::TEXT_DIM,
         );
     }
@@ -271,7 +271,7 @@ fn resource_market_grid(ui: &mut Ui, market: &ResourceMarket) {
         egui::pos2(ox + LABEL_W - 2.0, uran_row_y + ROW_H / 2.0),
         Align2::RIGHT_CENTER,
         "URAN",
-        FontId::monospace(9.0),
+        FontId::monospace(10.0),
         uran_color,
     );
 

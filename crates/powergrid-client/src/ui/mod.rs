@@ -71,7 +71,7 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
 
     // Top panel — phase info and resource market
     egui::TopBottomPanel::top("top_panel")
-        .exact_height(220.0)
+        .exact_height(180.0)
         .frame(
             egui::Frame::NONE
                 .fill(theme::BG_DEEP)
