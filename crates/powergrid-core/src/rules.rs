@@ -426,7 +426,10 @@ fn handle_buy_resources(
         .player(actor)
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    state.log(format!("{name} bought {amount} {resource:?} for ${cost}"));
+    state.log(format!(
+        "{name} bought {amount} {:?} for ${cost}",
+        format!("{resource:?}").to_lowercase()
+    ));
 
     // Don't advance — player may buy more resources.
     Ok(())
@@ -501,7 +504,7 @@ fn handle_buy_resource_batch(
             .unwrap_or_default();
         let summary: Vec<String> = purchases
             .iter()
-            .map(|(r, a)| format!("{a} {r:?}"))
+            .map(|(r, a)| format!("{a} {}", format!("{r:?}").to_lowercase()))
             .collect();
         state.log(format!(
             "{name} bought {} for ${total_cost}",
