@@ -302,11 +302,6 @@ to = "kiel"
 cost = 4
 
 [[connections]]
-from = "flensburg"
-to = "hamburg"
-cost = 8
-
-[[connections]]
 from = "kiel"
 to = "hamburg"
 cost = 8
@@ -342,11 +337,6 @@ to = "berlin"
 cost = 18
 
 [[connections]]
-from = "rostock"
-to = "berlin"
-cost = 18
-
-[[connections]]
 from = "bremen"
 to = "hannover"
 cost = 10
@@ -360,11 +350,6 @@ cost = 11
 from = "hannover"
 to = "magdeburg"
 cost = 15
-
-[[connections]]
-from = "hannover"
-to = "dortmund"
-cost = 18
 
 [[connections]]
 from = "hannover"
@@ -383,28 +368,13 @@ cost = 2
 
 [[connections]]
 from = "dortmund"
-to = "duisburg"
-cost = 4
-
-[[connections]]
-from = "dortmund"
 to = "essen"
-cost = 2
-
-[[connections]]
-from = "dortmund"
-to = "duesseldorf"
-cost = 6
+cost = 4
 
 [[connections]]
 from = "duisburg"
 to = "essen"
 cost = 0
-
-[[connections]]
-from = "duisburg"
-to = "duesseldorf"
-cost = 2
 
 [[connections]]
 from = "essen"
@@ -430,11 +400,6 @@ cost = 7
 from = "koeln"
 to = "trier"
 cost = 20
-
-[[connections]]
-from = "koeln"
-to = "frankfurt"
-cost = 21
 
 [[connections]]
 from = "aachen"
@@ -477,11 +442,6 @@ to = "wuerzburg"
 cost = 13
 
 [[connections]]
-from = "frankfurt"
-to = "mannheim"
-cost = 14
-
-[[connections]]
 from = "wiesbaden"
 to = "mannheim"
 cost = 11
@@ -492,11 +452,6 @@ to = "stuttgart"
 cost = 6
 
 [[connections]]
-from = "mannheim"
-to = "nuernberg"
-cost = 22
-
-[[connections]]
 from = "stuttgart"
 to = "freiburg"
 cost = 16
@@ -504,7 +459,7 @@ cost = 16
 [[connections]]
 from = "stuttgart"
 to = "augsburg"
-cost = 16
+cost = 15
 
 [[connections]]
 from = "freiburg"
@@ -532,11 +487,6 @@ to = "regensburg"
 cost = 10
 
 [[connections]]
-from = "muenchen"
-to = "nuernberg"
-cost = 21
-
-[[connections]]
 from = "regensburg"
 to = "nuernberg"
 cost = 12
@@ -547,29 +497,14 @@ to = "wuerzburg"
 cost = 8
 
 [[connections]]
-from = "wuerzburg"
-to = "erfurt"
-cost = 19
-
-[[connections]]
 from = "kassel"
 to = "erfurt"
 cost = 15
 
 [[connections]]
-from = "kassel"
-to = "magdeburg"
-cost = 21
-
-[[connections]]
 from = "erfurt"
 to = "halle"
 cost = 6
-
-[[connections]]
-from = "erfurt"
-to = "leipzig"
-cost = 8
 
 [[connections]]
 from = "halle"
@@ -592,19 +527,9 @@ to = "berlin"
 cost = 10
 
 [[connections]]
-from = "berlin"
-to = "dresden"
-cost = 16
-
-[[connections]]
 from = "wilhelmshaven"
 to = "bremen"
 cost = 11
-
-[[connections]]
-from = "wilhelmshaven"
-to = "cuxhaven"
-cost = 10
 
 [[connections]]
 from = "cuxhaven"
@@ -624,17 +549,17 @@ cost = 6
 [[connections]]
 from = "luebeck"
 to = "kiel"
-cost = 8
+cost = 4
 
 [[connections]]
 from = "torgelow"
 to = "rostock"
-cost = 14
+cost = 19
 
 [[connections]]
 from = "torgelow"
 to = "schwerin"
-cost = 11
+cost = 19
 
 [[connections]]
 from = "frankfurt_oder"
@@ -642,32 +567,159 @@ to = "berlin"
 cost = 6
 
 [[connections]]
-from = "frankfurt_oder"
-to = "cottbus"
+from = "kiel"
+to = "lubeck"
+cost = 4
+
+[[connections]]
+from = "cuxhaven"
+to = "bremen"
+cost = 8
+
+[[connections]]
+from = "wilhelmshaven"
+to = "osnabrueck"
+cost = 14
+
+[[connections]]
+from = "muenster"
+to = "essen"
 cost = 6
 
 [[connections]]
-from = "cottbus"
-to = "dresden"
+from = "essen"
+to = "dortmund"
+cost = 4
+
+[[connections]]
+from = "dortmund"
+to = "koeln"
+cost = 10
+
+[[connections]]
+from = "osnabrueck"
+to = "hannover"
+cost = 16
+
+[[connections]]
+from = "osnabrueck"
+to = "kassel"
+cost = 20
+
+[[connections]]
+from = "dortmund"
+to = "kassel"
+cost = 18
+
+[[connections]]
+from = "dortmund"
+to = "frankfurt"
+cost = 20
+
+[[connections]]
+from = "koeln"
+to = "wiesbaden"
+cost = 21
+
+[[connections]]
+from = "wiesbaden"
+to = "saarbruecken"
+cost = 10
+
+[[connections]]
+from = "stuttgart"
+to = "konstanz"
+cost = 16
+
+[[connections]]
+from = "muenchen"
+to = "passau"
+cost = 14
+
+[[connections]]
+from = "passau"
+to = "regensburg"
+cost = 12
+
+[[connections]]
+from = "regensburg"
+to = "augsburg"
 cost = 13
 
 [[connections]]
-from = "cottbus"
+from = "augsburg"
+to = "wuerzburg"
+cost = 19
+
+[[connections]]
+from = "wuerzburg"
+to = "stuttgart"
+cost = 12
+
+[[connections]]
+from = "wuerzburg"
+to = "mannheim"
+cost = 10
+
+[[connections]]
+from = "nuernberg"
+to = "erfurt"
+cost = 21
+
+[[connections]]
+from = "wuerzburg"
+to = "fulda"
+cost = 11
+
+[[connections]]
+from = "fulda"
+to = "frankfurt"
+cost = 8
+
+[[connections]]
+from = "fulda"
+to = "kassel"
+cost = 8
+
+[[connections]]
+from = "fulda"
+to = "erfurt"
+cost = 13
+
+[[connections]]
+from = "erfurt"
+to = "hannover"
+cost = 19
+
+[[connections]]
+from = "hannover"
+to = "schwerin"
+cost = 19
+
+[[connections]]
+from = "erfurt"
+to = "dresden"
+cost = 19
+
+[[connections]]
+from = "dresden"
+to = "frankfurt_oder"
+cost = 16
+
+[[connections]]
+from = "frankfurt_oder"
 to = "leipzig"
 cost = 21
 
 [[connections]]
-from = "gera"
-to = "erfurt"
-cost = 8
+from = "halle"
+to = "berlin"
+cost = 17
 
 [[connections]]
-from = "gera"
-to = "leipzig"
-cost = 8
+from = "berlin"
+to = "torgelow"
+cost = 15
 
-[[connections]]
-from = "gera"
-to = "dresden"
-cost = 19
+
 
