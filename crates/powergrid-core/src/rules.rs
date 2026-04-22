@@ -761,18 +761,27 @@ fn handle_power_cities(
                 powered += plant.cities;
             }
 
-            if ok && powered > best_powered {
-                best_powered = powered;
-                best_res = PlayerResources {
-                    coal,
-                    oil,
-                    garbage,
-                    uranium,
-                };
+            if ok {
+                let capped = powered.min(cities_owned);
+                let remaining = coal as u16 + oil as u16 + garbage as u16 + uranium as u16;
+                let best_remaining = best_res.coal as u16
+                    + best_res.oil as u16
+                    + best_res.garbage as u16
+                    + best_res.uranium as u16;
+                // Prefer more cities powered; break ties by fewer resources consumed.
+                if capped > best_powered || (capped == best_powered && remaining > best_remaining) {
+                    best_powered = capped;
+                    best_res = PlayerResources {
+                        coal,
+                        oil,
+                        garbage,
+                        uranium,
+                    };
+                }
             }
         }
 
-        (best_powered.min(cities_owned), best_res)
+        (best_powered, best_res)
     };
 
     // Apply the resource state from the best allocation.
@@ -1943,5 +1952,61 @@ mod tests {
         // Resources: plant 21 consumed 2 coal.
         let player = state.player(p1).unwrap();
         assert_eq!(player.resources.coal, 0, "2 coal should have been consumed");
+    }
+
+    /// When a player can power more cities than they own, only fire enough plants
+    /// to cover the owned cities and conserve resources.
+    #[test]
+    fn test_bureaucracy_caps_at_cities_owned() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+
+        let player = state.player_mut(p1).unwrap();
+        // Only 2 cities owned.
+        player.cities = vec!["a".into(), "b".into()];
+        // Wind plant (free, 2 cities) + Coal plant (cost 2, 2 cities).
+        player.plants = vec![
+            PowerPlant {
+                number: 13,
+                kind: PlantKind::Wind,
+                cost: 0,
+                cities: 2,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 2,
+            },
+        ];
+        player.resources = PlayerResources {
+            coal: 2,
+            oil: 0,
+            garbage: 0,
+            uranium: 0,
+        };
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![13, 10],
+            },
+        )
+        .unwrap();
+
+        // Wind alone covers 2 cities (== cities owned), so coal should NOT be consumed.
+        let player = state.player(p1).unwrap();
+        assert_eq!(
+            player.resources.coal, 2,
+            "coal should be conserved when wind covers all cities; got {}",
+            player.resources.coal
+        );
     }
 }
