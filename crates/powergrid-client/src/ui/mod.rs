@@ -110,10 +110,19 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
                 .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(6.0);
-                right_panel::right_panel_contents(ui, state, channels, &gs, my_id);
-            });
+            let half_height = ui.available_height() / 2.0;
+
+            // Top half: action console, scrollable, pinned to half height
+            egui::ScrollArea::vertical()
+                .max_height(half_height)
+                .show(ui, |ui| {
+                    ui.set_min_height(half_height);
+                    ui.add_space(6.0);
+                    right_panel::action_console_contents(ui, state, channels, &gs, my_id);
+                });
+
+            // Bottom half: event log at fixed midpoint
+            right_panel::event_log_contents(ui, &gs);
         });
 
     // Central map
