@@ -7,7 +7,7 @@
   * ~~NOTE: The cause of this was the invalid resource after losing a plant (two bugs, one prompt)~~
 * ~~BUG: When losing a powerplant, check for invalid resources~~
 * ~~BUG: Step 2 started too soon (during city building)~~
-* BUG: Step 3.  Is the card in there?  Does it work?  Will power plant market adjust?
+* ~~BUG: Step 3.  Is the card in there?  Does it work?  Will power plant market adjust?~~
 * BUG: Choose which plant to discard
 * BUG: Player should be able to choose resource to lose when discarding plant
 * BUG: Player should be able to choose resources for powering (hybrid!)

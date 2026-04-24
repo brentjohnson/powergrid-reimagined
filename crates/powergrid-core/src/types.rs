@@ -424,11 +424,13 @@ pub struct ActiveBid {
 }
 
 /// The power plant market has an "actual" (lower 4) and "future" (upper 4) section.
+/// In Step 3, `future` is always empty and `actual` holds all 6 available plants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlantMarket {
-    /// The 4 plants available for auction this round (sorted by number).
+    /// The plants available for auction (sorted by number).
+    /// Steps 1/2: lower 4. Step 3: all 6.
     pub actual: Vec<PowerPlant>,
-    /// The 4 plants in the future market (sorted by number).
+    /// The future market plants (sorted by number). Always empty in Step 3.
     pub future: Vec<PowerPlant>,
     /// Draw deck (face down). Index 0 is the bottom; `pop()` draws from the top.
     pub deck: Vec<PowerPlant>,
@@ -438,6 +440,14 @@ pub struct PlantMarket {
     /// Whether the Step 3 trigger card is at the bottom of the deck.
     #[serde(default)]
     pub step3_at_bottom: bool,
+    /// Set to true by `refill()` when the Step 3 card is drawn. Cleared by rules.rs
+    /// after the Step 3 transition is applied.
+    #[serde(default)]
+    pub step3_triggered: bool,
+    /// True once Step 3 is active. Changes market fill target to 6 and removes
+    /// the actual/future split.
+    #[serde(default)]
+    pub in_step3: bool,
 }
 
 impl PlantMarket {
@@ -452,19 +462,34 @@ impl PlantMarket {
         }
     }
 
-    /// Draw from deck into actual+future until both are full (4 each).
+    /// Draw from deck into market until full.
+    /// Steps 1/2: fill to 8, split 4 actual / 4 future.
+    /// Step 3: fill to 6, all in actual, future empty.
+    /// Sets `step3_triggered` if the Step 3 card is reached (deck empties and
+    /// `step3_at_bottom` was true). Caller must handle the transition.
     pub fn refill(&mut self) {
+        let target = if self.in_step3 { 6 } else { 8 };
         let mut all: Vec<PowerPlant> = self.actual.drain(..).chain(self.future.drain(..)).collect();
-        while all.len() < 8 {
+        while all.len() < target {
             if let Some(card) = self.deck.pop() {
                 all.push(card);
             } else {
                 break;
             }
         }
+        // If we drained the deck and the Step 3 card was at the bottom, flag it.
+        if self.deck.is_empty() && self.step3_at_bottom {
+            self.step3_triggered = true;
+            self.step3_at_bottom = false;
+        }
         all.sort_by_key(|p| p.number);
-        self.actual = all.iter().take(4).cloned().collect();
-        self.future = all.iter().skip(4).cloned().collect();
+        if self.in_step3 {
+            self.actual = all;
+            self.future = Vec::new();
+        } else {
+            self.actual = all.iter().take(4).cloned().collect();
+            self.future = all.iter().skip(4).cloned().collect();
+        }
     }
 
     /// Remove the lowest-numbered plant from the actual market (used at end of round).
@@ -480,6 +505,15 @@ impl PlantMarket {
     pub fn cycle_highest_to_bottom(&mut self) {
         if let Some(plant) = self.future.pop() {
             self.deck.insert(0, plant);
+            self.refill();
+        }
+    }
+
+    /// Remove the highest-numbered plant from the market entirely.
+    /// Used at end of Bureaucracy in Step 3 (replaces cycling to deck bottom).
+    pub fn remove_highest_from_game(&mut self) {
+        if !self.actual.is_empty() {
+            self.actual.pop(); // actual is sorted ascending, last = highest
             self.refill();
         }
     }

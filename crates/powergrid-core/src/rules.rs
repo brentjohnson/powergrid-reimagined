@@ -368,6 +368,9 @@ fn award_plant(
         cost
     ));
 
+    // Check if purchasing this plant triggered the Step 3 card.
+    check_step3_trigger(state);
+
     bought.push(winner);
 
     advance_auction(state, bought, passed);
@@ -382,6 +385,7 @@ fn advance_auction(state: &mut GameState, bought: Vec<PlayerId>, passed: Vec<Pla
     if all_done.len() >= total {
         // End of auction — remove lowest plant, transition to buy resources.
         state.market.remove_lowest();
+        check_step3_trigger(state);
         begin_buy_resources(state);
         return;
     }
@@ -394,6 +398,7 @@ fn advance_auction(state: &mut GameState, bought: Vec<PlayerId>, passed: Vec<Pla
         iterations += 1;
         if iterations > total {
             state.market.remove_lowest();
+            check_step3_trigger(state);
             begin_buy_resources(state);
             return;
         }
@@ -655,8 +660,37 @@ fn check_step2_trigger(state: &mut GameState) {
     if max_cities >= 7 {
         state.step = 2;
         state.market.remove_lowest();
+        check_step3_trigger(state);
         state.log("Step 2 begins!".to_string());
     }
+}
+
+/// If the Step 3 card was drawn during the last market refill, apply the transition:
+/// set step = 3, remove the lowest plant, shuffle the deck, restructure to 6 plants.
+fn check_step3_trigger(state: &mut GameState) {
+    if !state.market.step3_triggered {
+        return;
+    }
+    state.market.step3_triggered = false;
+    state.step = 3;
+
+    // Remove the lowest plant directly (remove_lowest() would call refill() prematurely).
+    if !state.market.actual.is_empty() {
+        state.market.actual.remove(0);
+    }
+
+    // Shuffle remaining deck.
+    let mut rng = match state.rng_seed {
+        Some(seed) => rand::rngs::SmallRng::seed_from_u64(seed),
+        None => rand::rngs::SmallRng::from_entropy(),
+    };
+    state.market.deck.shuffle(&mut rng);
+
+    // Switch to Step 3 mode and restructure market to 6 plants.
+    state.market.in_step3 = true;
+    state.market.refill();
+
+    state.log("Step 3 begins!".to_string());
 }
 
 fn handle_build_city(
@@ -890,8 +924,15 @@ fn end_of_round(state: &mut GameState) {
         return;
     }
 
-    // Cycle the highest future-market plant to the bottom of the draw deck (Steps 1 & 2).
-    state.market.cycle_highest_to_bottom();
+    // End-of-round market update.
+    if state.step >= 3 {
+        // Step 3: remove the highest plant from the game entirely.
+        state.market.remove_highest_from_game();
+    } else {
+        // Steps 1 & 2: cycle the highest future-market plant to the bottom of the draw deck.
+        state.market.cycle_highest_to_bottom();
+        check_step3_trigger(state);
+    }
 
     // Replenish resource market (simplified: add back a fixed amount per resource).
     replenish_resources(state);
@@ -942,23 +983,29 @@ fn recalculate_player_order(state: &mut GameState) {
 
 fn replenish_resources(state: &mut GameState) {
     let n = state.players.len();
-    let (coal, oil, garbage, uranium) = if state.step == 1 {
-        match n {
+    let (coal, oil, garbage, uranium) = match state.step {
+        1 => match n {
             2 => (3, 2, 1, 1),
             3 => (4, 2, 1, 1),
             4 => (5, 3, 2, 1),
             5 => (5, 4, 3, 2),
             _ => (7, 5, 3, 2),
-        }
-    } else {
-        // Step 2 replenishment rates
-        match n {
+        },
+        2 => match n {
             2 => (4, 2, 1, 1),
             3 => (5, 3, 2, 1),
             4 => (6, 4, 3, 2),
             5 => (7, 5, 3, 3),
             _ => (9, 6, 5, 3),
-        }
+        },
+        _ => match n {
+            // Step 3 replenishment rates
+            2 => (3, 4, 3, 1),
+            3 => (3, 4, 3, 1),
+            4 => (4, 5, 4, 2),
+            5 => (5, 6, 5, 3),
+            _ => (7, 7, 6, 3),
+        },
     };
     let before = state.resources.clone();
     state.resources.replenish(Resource::Coal, coal);
@@ -1264,6 +1311,8 @@ pub fn build_plant_deck() -> PlantMarket {
         deck,
         plant_13,
         step3_at_bottom: false,
+        step3_triggered: false,
+        in_step3: false,
     }
 }
 
