@@ -50,6 +50,7 @@ pub(super) fn is_active_player(gs: &GameState, pid: PlayerId) -> bool {
             remaining.first() == Some(&pid)
         }
         Phase::Bureaucracy { remaining } => remaining.contains(&pid),
+        Phase::DiscardPlant { player, .. } => *player == pid,
         _ => false,
     }
 }

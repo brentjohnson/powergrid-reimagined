@@ -402,6 +402,17 @@ pub enum Phase {
         /// Players who have passed this auction round.
         passed: Vec<PlayerId>,
     },
+    /// Waiting for a player to choose which of their existing plants to discard after winning a 4th.
+    DiscardPlant {
+        /// The player who must discard.
+        player: PlayerId,
+        /// The newly-won plant (not yet in player's hand).
+        new_plant: PowerPlant,
+        /// Auction bought list (to resume after discard).
+        bought: Vec<PlayerId>,
+        /// Auction passed list (to resume after discard).
+        passed: Vec<PlayerId>,
+    },
     /// Buy resources phase: players buy in reverse order.
     BuyResources {
         remaining: Vec<PlayerId>, // players yet to act, in order

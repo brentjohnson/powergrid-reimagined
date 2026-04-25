@@ -9,7 +9,9 @@
 * ~~BUG: Step 2 started too soon (during city building)~~
 * ~~BUG: Step 3.  Is the card in there?  Does it work?  Will power plant market adjust?~~
 * ~~BUG: Limit the number of regions~~
-* BUG: Choose which plant to discard
+* ~~BUG: Choose which plant to discard~~
+* BUG: Step 3, power plant market not reloaded
+* BUG: Owned 20,29,42. 15 cities. 5 coal, 2 oil.  It only powered 11 cities???
 * BUG: Player should be able to choose resource to lose when discarding plant
 * BUG: Player should be able to choose resources for powering (hybrid!)
 * BUG: Two people pick same color, can't start game
@@ -25,4 +27,7 @@
 * IMPROVEMENT: Add "capacity" to player card (how many you could power)
 * IMPROVEMENT: Show remaining money when doing resources or cities?
 * IMPROVEMENT: Exit game besides ALT-F4 (ESC menu: what other menu things?)
+* DEBUG: log more info
+* DEBUG: dump state for diagnostics
+* DEBUG: view hidden info (deck)
 * FUTURE: Random maps? or use Google maps? 

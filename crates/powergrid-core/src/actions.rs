@@ -34,6 +34,8 @@ pub enum Action {
         /// Numbers of plants the player is firing this round.
         plant_numbers: Vec<u8>,
     },
+    /// During discard phase: choose which existing plant to discard after winning a 4th.
+    DiscardPlant { plant_number: u8 },
 }
 
 /// Errors returned when an action is invalid.
@@ -83,6 +85,8 @@ pub enum ActionError {
     UnknownPlayer,
     #[error("you must buy a power plant in the first round")]
     MustBuyPlantInRoundOne,
+    #[error("cannot discard the plant you just acquired")]
+    CannotDiscardNewPlant,
 }
 
 /// Messages sent from the server to clients.

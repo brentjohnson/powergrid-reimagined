@@ -189,6 +189,53 @@ pub(super) fn action_panel(
             }
         }
 
+        Phase::DiscardPlant {
+            player, new_plant, ..
+        } => {
+            if *player == my_id {
+                ui.label(
+                    RichText::new(
+                        "You won a 4th plant! Choose one of your existing plants to discard:",
+                    )
+                    .color(theme::NEON_AMBER)
+                    .monospace(),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("Incoming: plant #{}", new_plant.number))
+                        .color(theme::NEON_GREEN)
+                        .monospace(),
+                );
+                card_painter::draw_plant_card(ui, new_plant);
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Click a plant to discard it:")
+                        .color(theme::TEXT_BRIGHT)
+                        .monospace(),
+                );
+                if let Some(player_data) = gs.player(my_id) {
+                    for plant in &player_data.plants {
+                        let resp = card_painter::draw_plant_card(ui, plant);
+                        if resp.clicked() {
+                            send(
+                                Action::DiscardPlant {
+                                    plant_number: plant.number,
+                                },
+                                channels,
+                            );
+                        }
+                    }
+                }
+            } else {
+                let name = gs.player(*player).map(|p| p.name.as_str()).unwrap_or("???");
+                ui.label(
+                    RichText::new(format!("● Waiting for {} to discard a plant…", name))
+                        .color(theme::TEXT_DIM)
+                        .monospace(),
+                );
+            }
+        }
+
         Phase::BuyResources { remaining } => {
             if remaining.first() == Some(&my_id) {
                 let my_money = gs.player(my_id).map(|p| p.money).unwrap_or(0);

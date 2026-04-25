@@ -28,6 +28,7 @@ pub fn apply_action(
         Action::BuildCities { city_ids } => handle_build_cities(state, actor, city_ids),
         Action::DoneBuilding => handle_done_building(state, actor),
         Action::PowerCities { plant_numbers } => handle_power_cities(state, actor, plant_numbers),
+        Action::DiscardPlant { plant_number } => handle_discard_plant(state, actor, plant_number),
     }
 }
 
@@ -338,18 +339,83 @@ fn award_plant(
     let player = state.player_mut(winner).ok_or(ActionError::UnknownPlayer)?;
     player.money -= cost;
 
-    // Discard lowest plant if player already has 3.
     if player.plants.len() >= 3 {
-        player.plants.sort_by_key(|p| p.number);
-        player.plants.remove(0);
+        // Player already has 3 plants — pause and ask them which to discard.
+        bought.push(winner);
+        state.log(format!(
+            "{} bought plant {} for {} — choose a plant to discard",
+            state.player(winner).map(|p| p.name.as_str()).unwrap_or("?"),
+            plant_number,
+            cost
+        ));
+        // Check if purchasing this plant triggered the Step 3 card.
+        check_step3_trigger(state);
+        state.phase = Phase::DiscardPlant {
+            player: winner,
+            new_plant: plant,
+            bought,
+            passed,
+        };
+        return Ok(());
     }
+
+    // Normal path: player has fewer than 3 plants.
     player.plants.push(plant.clone());
     player.plants.sort_by_key(|p| p.number);
 
-    // Clamp resources to new capacity — the discarded plant may have held resources
-    // that no longer fit. Return excess to the market (Power Grid rules).
+    state.log(format!(
+        "{} bought plant {} for {}",
+        state.player(winner).map(|p| p.name.as_str()).unwrap_or("?"),
+        plant_number,
+        cost
+    ));
+
+    // Check if purchasing this plant triggered the Step 3 card.
+    check_step3_trigger(state);
+
+    bought.push(winner);
+
+    advance_auction(state, bought, passed);
+    Ok(())
+}
+
+fn handle_discard_plant(
+    state: &mut GameState,
+    actor: PlayerId,
+    plant_number: u8,
+) -> Result<(), ActionError> {
+    let (player_id, new_plant, bought, passed) = match &state.phase {
+        Phase::DiscardPlant {
+            player,
+            new_plant,
+            bought,
+            passed,
+        } => (*player, new_plant.clone(), bought.clone(), passed.clone()),
+        _ => return Err(ActionError::WrongPhase),
+    };
+
+    if actor != player_id {
+        return Err(ActionError::NotYourTurn);
+    }
+
+    if plant_number == new_plant.number {
+        return Err(ActionError::CannotDiscardNewPlant);
+    }
+
+    let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
+
+    if !player.plants.iter().any(|p| p.number == plant_number) {
+        return Err(ActionError::PlantNotOwned(plant_number));
+    }
+
+    // Remove the chosen plant and add the new one.
+    player.plants.retain(|p| p.number != plant_number);
+    player.plants.push(new_plant);
+    player.plants.sort_by_key(|p| p.number);
+
+    // Clamp resources — the discarded plant may have held resources that no longer fit.
     let excesses: Vec<(Resource, u8)> = {
-        let player = state.player_mut(winner).ok_or(ActionError::UnknownPlayer)?;
+        let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
         [
             Resource::Coal,
             Resource::Oil,
@@ -370,23 +436,17 @@ fn award_plant(
     };
     for (resource, excess) in excesses {
         {
-            let player = state.player_mut(winner).ok_or(ActionError::UnknownPlayer)?;
+            let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
             player.resources.remove(resource, excess);
         }
         state.resources.replenish(resource, excess);
     }
 
     state.log(format!(
-        "{} bought plant {} for {}",
-        state.player(winner).map(|p| p.name.as_str()).unwrap_or("?"),
-        plant_number,
-        cost
+        "{} discarded plant {}",
+        state.player(actor).map(|p| p.name.as_str()).unwrap_or("?"),
+        plant_number
     ));
-
-    // Check if purchasing this plant triggered the Step 3 card.
-    check_step3_trigger(state);
-
-    bought.push(winner);
 
     advance_auction(state, bought, passed);
     Ok(())
@@ -2257,8 +2317,17 @@ mod tests {
 
         let oil_before = state.resources.oil;
 
-        // Award the 4th plant — this triggers the discard of plant 5 (lowest).
+        // Award the 4th plant — should enter DiscardPlant phase.
         award_plant(&mut state, p1, 24, 24, vec![], vec![]).unwrap();
+
+        // Verify we're in DiscardPlant phase waiting for the player.
+        assert!(
+            matches!(state.phase, Phase::DiscardPlant { player, .. } if player == p1),
+            "should be in DiscardPlant phase"
+        );
+
+        // Player chooses to discard plant 5 (the hybrid).
+        apply_action(&mut state, p1, Action::DiscardPlant { plant_number: 5 }).unwrap();
 
         let player = state.player(p1).unwrap();
 
@@ -2286,6 +2355,199 @@ mod tests {
             player.can_add_resource(Resource::Coal, 1),
             "can_add_resource(Coal) must succeed after hybrid plant is discarded"
         );
+    }
+
+    #[test]
+    fn test_discard_plant_choice_non_lowest() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        let player = state.player_mut(p1).unwrap();
+        player.money = 1000;
+        player.plants = vec![
+            PowerPlant {
+                number: 5,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 14,
+                kind: PlantKind::Coal,
+                cost: 3,
+                cities: 2,
+            },
+        ];
+
+        let new_plant = PowerPlant {
+            number: 24,
+            kind: PlantKind::Coal,
+            cost: 4,
+            cities: 3,
+        };
+        state.market.actual.push(new_plant);
+
+        award_plant(&mut state, p1, 24, 24, vec![], vec![]).unwrap();
+
+        assert!(
+            matches!(state.phase, Phase::DiscardPlant { player, .. } if player == p1),
+            "should be in DiscardPlant phase"
+        );
+
+        // Player chooses to discard plant 10 (not the lowest).
+        apply_action(&mut state, p1, Action::DiscardPlant { plant_number: 10 }).unwrap();
+
+        let plant_numbers: Vec<u8> = state
+            .player(p1)
+            .unwrap()
+            .plants
+            .iter()
+            .map(|p| p.number)
+            .collect();
+        assert_eq!(
+            plant_numbers,
+            vec![5, 14, 24],
+            "plant 10 should have been discarded"
+        );
+    }
+
+    #[test]
+    fn test_discard_plant_wrong_player_rejected() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        let player = state.player_mut(p1).unwrap();
+        player.money = 1000;
+        player.plants = vec![
+            PowerPlant {
+                number: 5,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 14,
+                kind: PlantKind::Coal,
+                cost: 3,
+                cities: 2,
+            },
+        ];
+        let new_plant = PowerPlant {
+            number: 24,
+            kind: PlantKind::Coal,
+            cost: 4,
+            cities: 3,
+        };
+        state.market.actual.push(new_plant);
+
+        award_plant(&mut state, p1, 24, 24, vec![], vec![]).unwrap();
+
+        let result = apply_action(&mut state, p2, Action::DiscardPlant { plant_number: 5 });
+        assert!(matches!(result, Err(ActionError::NotYourTurn)));
+    }
+
+    #[test]
+    fn test_discard_new_plant_rejected() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        let player = state.player_mut(p1).unwrap();
+        player.money = 1000;
+        player.plants = vec![
+            PowerPlant {
+                number: 5,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 14,
+                kind: PlantKind::Coal,
+                cost: 3,
+                cities: 2,
+            },
+        ];
+        let new_plant = PowerPlant {
+            number: 24,
+            kind: PlantKind::Coal,
+            cost: 4,
+            cities: 3,
+        };
+        state.market.actual.push(new_plant);
+
+        award_plant(&mut state, p1, 24, 24, vec![], vec![]).unwrap();
+
+        // Try to discard the newly won plant — should be rejected.
+        let result = apply_action(&mut state, p1, Action::DiscardPlant { plant_number: 24 });
+        assert!(matches!(result, Err(ActionError::CannotDiscardNewPlant)));
+    }
+
+    #[test]
+    fn test_discard_unowned_plant_rejected() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        let player = state.player_mut(p1).unwrap();
+        player.money = 1000;
+        player.plants = vec![
+            PowerPlant {
+                number: 5,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 1,
+            },
+            PowerPlant {
+                number: 14,
+                kind: PlantKind::Coal,
+                cost: 3,
+                cities: 2,
+            },
+        ];
+        let new_plant = PowerPlant {
+            number: 24,
+            kind: PlantKind::Coal,
+            cost: 4,
+            cities: 3,
+        };
+        state.market.actual.push(new_plant);
+
+        award_plant(&mut state, p1, 24, 24, vec![], vec![]).unwrap();
+
+        // Try to discard a plant the player doesn't own.
+        let result = apply_action(&mut state, p1, Action::DiscardPlant { plant_number: 99 });
+        assert!(matches!(result, Err(ActionError::PlantNotOwned(99))));
     }
 
     // -----------------------------------------------------------------------

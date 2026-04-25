@@ -19,7 +19,7 @@ pub(super) fn phase_tracker(ui: &mut Ui, gs: &GameState) {
     }
 
     let current = match &gs.phase {
-        Phase::Auction { .. } => Some(Dp::Auction),
+        Phase::Auction { .. } | Phase::DiscardPlant { .. } => Some(Dp::Auction),
         Phase::BuyResources { .. } => Some(Dp::Resource),
         Phase::BuildCities { .. } => Some(Dp::Build),
         Phase::Bureaucracy { .. } => Some(Dp::Bureaucracy),
