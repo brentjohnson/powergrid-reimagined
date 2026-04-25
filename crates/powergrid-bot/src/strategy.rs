@@ -409,12 +409,6 @@ fn resources_needed(
 fn decide_build_cities(state: &GameState, me: PlayerId) -> Option<Action> {
     let player = state.player(me)?;
 
-    // How many cities can we eventually power?  Don't build far beyond that.
-    let max_powerable = player.plants.iter().map(|p| p.cities).sum::<u8>() as usize;
-
-    // How many cities do we already have?
-    let current_cities = player.cities.len();
-
     let mut budget = player.money;
 
     // Enumerate all cities in active regions that we could build in.
@@ -437,15 +431,13 @@ fn decide_build_cities(state: &GameState, me: PlayerId) -> Option<Action> {
     // Sort cheapest first.
     candidates.sort_by_key(|(_, cost)| *cost);
 
-    // Greedily build cheapest cities while affordable, up to what we can power.
+    // Greedily build cheapest affordable cities. Budget is the only constraint —
+    // building ahead of current powering capacity is correct since income tracks
+    // cities owned and claiming spots early denies them to opponents.
     let mut city_ids: Vec<String> = Vec::new();
     let mut simulated_cities: Vec<String> = player.cities.clone();
 
     for (city_id, _) in &candidates {
-        if current_cities + city_ids.len() >= max_powerable.max(1) {
-            break;
-        }
-
         // Recompute cost using the growing simulated network (batch routing).
         let route_cost = state
             .map
