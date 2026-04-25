@@ -458,8 +458,10 @@ fn advance_auction(state: &mut GameState, bought: Vec<PlayerId>, passed: Vec<Pla
 
     // Check if everyone has acted.
     if all_done.len() >= total {
-        // End of auction — remove lowest plant, transition to buy resources.
-        state.market.remove_lowest();
+        // End of auction — remove lowest plant only if no one purchased.
+        if bought.is_empty() {
+            state.market.remove_lowest();
+        }
         check_step3_trigger(state);
         begin_buy_resources(state);
         return;
@@ -472,7 +474,9 @@ fn advance_auction(state: &mut GameState, bought: Vec<PlayerId>, passed: Vec<Pla
         next_idx = (next_idx + 1) % total;
         iterations += 1;
         if iterations > total {
-            state.market.remove_lowest();
+            if bought.is_empty() {
+                state.market.remove_lowest();
+            }
             check_step3_trigger(state);
             begin_buy_resources(state);
             return;
