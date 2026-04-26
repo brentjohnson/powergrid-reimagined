@@ -180,7 +180,7 @@ y = 0.7487
 [[cities]]
 id = "nuernberg"
 name = "Nürnberg"
-region = "southeast"
+region = "east"
 x = 0.5787
 y = 0.6913
 
@@ -292,7 +292,7 @@ y = 0.5564
 [[cities]]
 id = "passau"
 name = "Passau"
-region = "east"
+region = "southeast"
 x = 0.8043
 y = 0.7968
 
@@ -565,11 +565,6 @@ cost = 19
 from = "frankfurt_oder"
 to = "berlin"
 cost = 6
-
-[[connections]]
-from = "kiel"
-to = "lubeck"
-cost = 4
 
 [[connections]]
 from = "cuxhaven"
