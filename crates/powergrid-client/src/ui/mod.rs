@@ -28,9 +28,9 @@ pub fn ui_system(
     mut state: ResMut<AppState>,
     channels: Option<Res<WsChannels>>,
     mut commands: Commands,
-    mut exit_writer: EventWriter<AppExit>,
-) {
-    let ctx = contexts.ctx_mut();
+    mut exit_writer: MessageWriter<AppExit>,
+) -> bevy::prelude::Result {
+    let ctx = contexts.ctx_mut()?;
 
     // Re-apply theme every frame so settings survive window resize etc.
     // (cheap — just copies a struct)
@@ -66,6 +66,8 @@ pub fn ui_system(
                 ui.add_space(4.0);
             });
     }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

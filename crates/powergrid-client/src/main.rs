@@ -8,7 +8,7 @@ mod ws;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, WindowMode};
 use bevy::winit::{UpdateMode, WinitSettings};
-use bevy_egui::{EguiContextPass, EguiPlugin};
+use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use state::{AppState, CliArgs};
 use std::time::Duration;
 
@@ -31,26 +31,29 @@ fn main() {
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
             title: "Power Grid: Reimagined".into(),
-            resolution: (1600.0, 900.0).into(),
+            resolution: (1600_u32, 900_u32).into(),
             mode: window_mode,
             ..default()
         }),
         ..default()
     }))
-    .add_plugins(EguiPlugin {
-        enable_multipass_for_primary_context: true,
-    })
+    .add_plugins(EguiPlugin::default())
     .insert_resource(WinitSettings {
         focused_mode: UpdateMode::reactive(Duration::from_millis(100)),
         unfocused_mode: UpdateMode::reactive_low_power(Duration::from_millis(1000)),
     })
     .insert_resource(app_state)
+    .add_systems(Startup, spawn_camera)
     .add_systems(Update, ws::process_ws_events)
-    .add_systems(EguiContextPass, ui::ui_system);
+    .add_systems(EguiPrimaryContextPass, ui::ui_system);
 
     if let Some(channels) = channels {
         app.insert_resource(channels);
     }
 
     app.run();
+}
+
+fn spawn_camera(mut commands: Commands) {
+    commands.spawn(Camera2d);
 }

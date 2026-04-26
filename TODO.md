@@ -30,6 +30,9 @@
 * IMPROVEMENT: Exit game besides ALT-F4 (ESC menu: what other menu things?)
 * BUG: Client just closes at end of game. No time to review results.
 
+# v0.3.2
+
+* TECH DEBT: Upgrade to Bevy 0.17
 
 # To do...
 
@@ -39,7 +42,7 @@
 * IMPROVEMENT: Randomize initial order
 * IMPROVEMENT: Do not reorder players on left (that should remain bidding order) DEBATABLE!?
 * IMPROVEMENT: Ding on your turn
-* IMPROVEMENT: Show replanishment on resource market
+* IMPROVEMENT: Show replenishment on resource market
 * IMPROVEMENT: Add "capacity" to player card (how many you could power)
 * IMPROVEMENT: Show remaining money when doing resources or cities?
 * IMPROVEMENT: Implement dependabot on the repo

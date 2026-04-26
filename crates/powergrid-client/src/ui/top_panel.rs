@@ -159,16 +159,9 @@ fn plant_column(
                     channels,
                 );
             }
-            if resp.hovered() {
-                egui::show_tooltip_at_pointer(
-                    ui.ctx(),
-                    ui.layer_id(),
-                    egui::Id::new(plant.number),
-                    |ui| {
-                        plant_tooltip(ui, plant);
-                    },
-                );
-            }
+            egui::Tooltip::for_enabled(&resp).show(|ui| {
+                plant_tooltip(ui, plant);
+            });
         }
     });
 }

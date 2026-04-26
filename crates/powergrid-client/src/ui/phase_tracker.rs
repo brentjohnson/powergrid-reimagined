@@ -37,7 +37,7 @@ pub(super) fn phase_tracker(ui: &mut Ui, gs: &GameState) {
     let col_width = phases
         .iter()
         .map(|(_, label)| {
-            ui.fonts(|f| {
+            ui.fonts_mut(|f| {
                 f.layout_no_wrap(
                     label.to_string(),
                     egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Small].size),
