@@ -3528,12 +3528,7 @@ mod tests {
         assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
 
         // Player spends 0 coal + 2 oil for hybrid (preserves coal).
-        apply_action(
-            &mut state,
-            p1,
-            Action::PowerCitiesFuel { coal: 0, oil: 2 },
-        )
-        .unwrap();
+        apply_action(&mut state, p1, Action::PowerCitiesFuel { coal: 0, oil: 2 }).unwrap();
 
         // Phase should have advanced.
         assert!(
@@ -3592,11 +3587,7 @@ mod tests {
         assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
 
         // coal(1) + oil(0) = 1 but hybrid_cost == 2 → rejected.
-        let result = apply_action(
-            &mut state,
-            p1,
-            Action::PowerCitiesFuel { coal: 1, oil: 0 },
-        );
+        let result = apply_action(&mut state, p1, Action::PowerCitiesFuel { coal: 1, oil: 0 });
         assert!(
             matches!(result, Err(ActionError::InvalidFuelSplit)),
             "expected InvalidFuelSplit"

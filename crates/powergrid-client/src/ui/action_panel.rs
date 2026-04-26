@@ -9,7 +9,7 @@ use powergrid_core::{
 
 use crate::{card_painter, state::player_color_to_egui, state::AppState, theme, ws::WsChannels};
 
-use super::helpers::{neon_button, resource_name, send};
+use super::helpers::{neon_button, resource_counter_row, resource_name, send};
 
 pub(super) fn action_panel(
     ui: &mut Ui,
@@ -249,7 +249,6 @@ pub(super) fn action_panel(
                     .player(my_id)
                     .map(|p| (p.resources.coal, p.resources.oil))
                     .unwrap_or((0, 0));
-                let selected = state.discard_coal + state.discard_oil;
 
                 ui.label(
                     RichText::new(format!(
@@ -261,62 +260,37 @@ pub(super) fn action_panel(
                 );
                 ui.add_space(4.0);
 
-                // Coal row
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("    COAL: {:>2}", state.discard_coal))
-                            .color(theme::TEXT_BRIGHT)
-                            .monospace(),
-                    );
-                    let can_remove = state.discard_coal > 0;
-                    if ui
-                        .add_enabled(can_remove, neon_button("[-]", theme::NEON_AMBER))
-                        .clicked()
-                    {
-                        state.discard_coal -= 1;
-                    }
-                    let can_add = state.discard_coal < coal_held && selected < drop_total;
-                    if ui
-                        .add_enabled(can_add, neon_button("[+]", theme::NEON_GREEN))
-                        .clicked()
-                    {
-                        state.discard_coal += 1;
-                    }
-                    ui.label(
-                        RichText::new(format!("held: {}", coal_held))
-                            .color(theme::TEXT_DIM)
-                            .monospace(),
-                    );
-                });
+                // Cap each counter at min(held, drop_total - other_selection) so
+                // coal+oil cannot exceed the required total.
+                let coal_max = coal_held.min(drop_total - state.discard_oil);
+                match resource_counter_row(
+                    ui,
+                    "    COAL",
+                    state.discard_coal,
+                    0,
+                    coal_max,
+                    &format!("held: {}", coal_held),
+                ) {
+                    d if d < 0 => state.discard_coal -= 1,
+                    d if d > 0 => state.discard_coal += 1,
+                    _ => {}
+                }
 
-                // Oil row
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("     OIL: {:>2}", state.discard_oil))
-                            .color(theme::TEXT_BRIGHT)
-                            .monospace(),
-                    );
-                    let can_remove = state.discard_oil > 0;
-                    if ui
-                        .add_enabled(can_remove, neon_button("[-]", theme::NEON_AMBER))
-                        .clicked()
-                    {
-                        state.discard_oil -= 1;
-                    }
-                    let can_add = state.discard_oil < oil_held && selected < drop_total;
-                    if ui
-                        .add_enabled(can_add, neon_button("[+]", theme::NEON_GREEN))
-                        .clicked()
-                    {
-                        state.discard_oil += 1;
-                    }
-                    ui.label(
-                        RichText::new(format!("held: {}", oil_held))
-                            .color(theme::TEXT_DIM)
-                            .monospace(),
-                    );
-                });
+                let oil_max = oil_held.min(drop_total - state.discard_coal);
+                match resource_counter_row(
+                    ui,
+                    "     OIL",
+                    state.discard_oil,
+                    0,
+                    oil_max,
+                    &format!("held: {}", oil_held),
+                ) {
+                    d if d < 0 => state.discard_oil -= 1,
+                    d if d > 0 => state.discard_oil += 1,
+                    _ => {}
+                }
 
+                let selected = state.discard_coal + state.discard_oil;
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!("{} / {} selected", selected, drop_total))
@@ -411,20 +385,18 @@ pub(super) fn action_panel(
                         format!("{owned}/{cap_lo}-{cap_hi}")
                     };
 
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{:>8}: {:>2}", resource_name(resource), count))
-                                .color(theme::TEXT_BRIGHT)
-                                .monospace(),
-                        );
-                        if ui.add(neon_button("[-]", theme::NEON_AMBER)).clicked() {
-                            state.remove_from_cart(resource);
-                        }
-                        if ui.add(neon_button("[+]", theme::NEON_GREEN)).clicked() {
-                            state.add_to_cart(resource);
-                        }
-                        ui.label(RichText::new(cap_str).color(theme::TEXT_DIM).monospace());
-                    });
+                    match resource_counter_row(
+                        ui,
+                        &format!("{:>8}", resource_name(resource)),
+                        count,
+                        0,
+                        u8::MAX,
+                        &cap_str,
+                    ) {
+                        d if d < 0 => state.remove_from_cart(resource),
+                        d if d > 0 => state.add_to_cart(resource),
+                        _ => {}
+                    }
                 }
 
                 if let Some(cost) = state.resource_cart_cost {
@@ -610,36 +582,18 @@ pub(super) fn action_panel(
                 );
                 ui.add_space(4.0);
 
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("    COAL: {:>2}", state.power_fuel_coal))
-                            .color(theme::TEXT_BRIGHT)
-                            .monospace(),
-                    );
-                    if ui
-                        .add_enabled(
-                            state.power_fuel_coal > min_coal,
-                            neon_button("[-]", theme::NEON_AMBER),
-                        )
-                        .clicked()
-                    {
-                        state.power_fuel_coal -= 1;
-                    }
-                    if ui
-                        .add_enabled(
-                            state.power_fuel_coal < max_coal,
-                            neon_button("[+]", theme::NEON_GREEN),
-                        )
-                        .clicked()
-                    {
-                        state.power_fuel_coal += 1;
-                    }
-                    ui.label(
-                        RichText::new(format!("avail: {}", coal_avail))
-                            .color(theme::TEXT_DIM)
-                            .monospace(),
-                    );
-                });
+                match resource_counter_row(
+                    ui,
+                    "    COAL",
+                    state.power_fuel_coal,
+                    min_coal,
+                    max_coal,
+                    &format!("avail: {}", coal_avail),
+                ) {
+                    d if d < 0 => state.power_fuel_coal -= 1,
+                    d if d > 0 => state.power_fuel_coal += 1,
+                    _ => {}
+                }
 
                 ui.horizontal(|ui| {
                     ui.label(

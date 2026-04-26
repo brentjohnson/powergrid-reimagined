@@ -82,3 +82,39 @@ pub(super) fn send(action: Action, channels: &Option<Res<WsChannels>>) {
         ch.action_tx.send(action).ok();
     }
 }
+
+/// Renders one `[label: value] [-] [+] [trailing]` row used by the three batch-resource
+/// prompts (BuyResources, DiscardResource, PowerCitiesFuel).  Returns -1 if the minus
+/// button was clicked, +1 if plus was clicked, 0 otherwise.  Buttons are auto-disabled
+/// at the `min`/`max` bounds.
+pub(super) fn resource_counter_row(
+    ui: &mut Ui,
+    label: &str,
+    value: u8,
+    min: u8,
+    max: u8,
+    trailing: &str,
+) -> i8 {
+    let mut delta = 0i8;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{label}: {value:>2}"))
+                .color(theme::TEXT_BRIGHT)
+                .monospace(),
+        );
+        if ui
+            .add_enabled(value > min, neon_button("[-]", theme::NEON_AMBER))
+            .clicked()
+        {
+            delta = -1;
+        }
+        if ui
+            .add_enabled(value < max, neon_button("[+]", theme::NEON_GREEN))
+            .clicked()
+        {
+            delta = 1;
+        }
+        ui.label(RichText::new(trailing).color(theme::TEXT_DIM).monospace());
+    });
+    delta
+}

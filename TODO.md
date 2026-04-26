@@ -40,6 +40,7 @@
 * IMPROVEMENT: Add "capacity" to player card (how many you could power)
 * IMPROVEMENT: Show remaining money when doing resources or cities?
 * IMPROVEMENT: Exit game besides ALT-F4 (ESC menu: what other menu things?)
+* TECH DEBT: Optimize selecting discard resources. Seems like lots of code for the two times its used.  Maybe shared code?
 * DEBUG: log more info
 * DEBUG: dump state for diagnostics
 * DEBUG: view hidden info (deck)
