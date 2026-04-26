@@ -555,6 +555,128 @@ pub(super) fn action_panel(
             }
         }
 
+        Phase::PowerCitiesFuel {
+            player,
+            hybrid_cost,
+            plant_numbers,
+            ..
+        } => {
+            if *player == my_id {
+                let hybrid_cost = *hybrid_cost;
+                let (coal_held, oil_held) = gs
+                    .player(my_id)
+                    .map(|p| (p.resources.coal, p.resources.oil))
+                    .unwrap_or((0, 0));
+
+                // Compute how much pure-fuel pure plants in the chosen subset need.
+                let (pure_coal, pure_oil) = gs
+                    .player(my_id)
+                    .map(|p| {
+                        plant_numbers.iter().fold((0u8, 0u8), |(pc, po), &num| {
+                            if let Some(pl) = p.plants.iter().find(|pl| pl.number == num) {
+                                match pl.kind {
+                                    PlantKind::Coal => (pc + pl.cost, po),
+                                    PlantKind::Oil => (pc, po + pl.cost),
+                                    _ => (pc, po),
+                                }
+                            } else {
+                                (pc, po)
+                            }
+                        })
+                    })
+                    .unwrap_or((0, 0));
+
+                let coal_avail = coal_held.saturating_sub(pure_coal);
+                let oil_avail = oil_held.saturating_sub(pure_oil);
+
+                // Clamp coal selection to valid range.
+                let min_coal = hybrid_cost.saturating_sub(oil_avail);
+                let max_coal = hybrid_cost.min(coal_avail);
+                if state.power_fuel_coal < min_coal {
+                    state.power_fuel_coal = min_coal;
+                }
+                if state.power_fuel_coal > max_coal {
+                    state.power_fuel_coal = max_coal;
+                }
+                let oil_used = hybrid_cost - state.power_fuel_coal;
+
+                ui.label(
+                    RichText::new(format!(
+                        "Hybrid plants need {} fuel — choose coal/oil split:",
+                        hybrid_cost
+                    ))
+                    .color(theme::NEON_AMBER)
+                    .monospace(),
+                );
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("    COAL: {:>2}", state.power_fuel_coal))
+                            .color(theme::TEXT_BRIGHT)
+                            .monospace(),
+                    );
+                    if ui
+                        .add_enabled(
+                            state.power_fuel_coal > min_coal,
+                            neon_button("[-]", theme::NEON_AMBER),
+                        )
+                        .clicked()
+                    {
+                        state.power_fuel_coal -= 1;
+                    }
+                    if ui
+                        .add_enabled(
+                            state.power_fuel_coal < max_coal,
+                            neon_button("[+]", theme::NEON_GREEN),
+                        )
+                        .clicked()
+                    {
+                        state.power_fuel_coal += 1;
+                    }
+                    ui.label(
+                        RichText::new(format!("avail: {}", coal_avail))
+                            .color(theme::TEXT_DIM)
+                            .monospace(),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("     OIL: {:>2}", oil_used))
+                            .color(theme::TEXT_BRIGHT)
+                            .monospace(),
+                    );
+                    ui.label(
+                        RichText::new(format!("avail: {}", oil_avail))
+                            .color(theme::TEXT_DIM)
+                            .monospace(),
+                    );
+                });
+
+                ui.add_space(4.0);
+                if ui
+                    .add(neon_button("[ CONFIRM ]", theme::NEON_CYAN))
+                    .clicked()
+                {
+                    send(
+                        Action::PowerCitiesFuel {
+                            coal: state.power_fuel_coal,
+                            oil: oil_used,
+                        },
+                        channels,
+                    );
+                }
+            } else {
+                let name = gs.player(*player).map(|p| p.name.as_str()).unwrap_or("???");
+                ui.label(
+                    RichText::new(format!("● Waiting for {} to choose fuel split…", name))
+                        .color(theme::TEXT_DIM)
+                        .monospace(),
+                );
+            }
+        }
+
         Phase::GameOver { winner } => {
             let name = gs
                 .player(*winner)

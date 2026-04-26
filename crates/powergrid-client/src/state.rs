@@ -62,6 +62,9 @@ pub struct AppState {
     pub discard_coal: u8,
     pub discard_oil: u8,
 
+    // PowerCitiesFuel phase (hybrid fuel split during bureaucracy)
+    pub power_fuel_coal: u8,
+
     // City count history: one CitySnapshot per round recorded so far.
     pub city_history: Vec<CitySnapshot>,
     last_recorded_round: u32,
@@ -105,6 +108,7 @@ impl AppState {
             bid_plant_number: None,
             discard_coal: 0,
             discard_oil: 0,
+            power_fuel_coal: 0,
             city_history: Vec::new(),
             last_recorded_round: 0,
         }
@@ -150,6 +154,15 @@ impl AppState {
         if !still_my_discard {
             self.discard_coal = 0;
             self.discard_oil = 0;
+        }
+
+        // Clear power-fuel counter once we leave that phase.
+        let still_my_fuel = self
+            .my_id
+            .map(|id| matches!(&gs.phase, Phase::PowerCitiesFuel { player, .. } if *player == id))
+            .unwrap_or(false);
+        if !still_my_fuel {
+            self.power_fuel_coal = 0;
         }
 
         // Record city counts when the round number advances (or on first state).

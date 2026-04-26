@@ -61,6 +61,17 @@ pub fn decide(state: &GameState, me: PlayerId) -> Option<Action> {
             }
             decide_power_cities(state, me)
         }
+
+        Phase::PowerCitiesFuel {
+            player,
+            hybrid_cost,
+            ..
+        } => {
+            if *player != me {
+                return None;
+            }
+            decide_power_cities_fuel(state, me, *hybrid_cost)
+        }
     }
 }
 
@@ -522,6 +533,42 @@ fn decide_power_cities(state: &GameState, me: PlayerId) -> Option<Action> {
     );
 
     Some(Action::PowerCities { plant_numbers })
+}
+
+fn decide_power_cities_fuel(state: &GameState, me: PlayerId, hybrid_cost: u8) -> Option<Action> {
+    use powergrid_core::types::Phase;
+    let player = state.player(me)?;
+
+    if let Phase::PowerCitiesFuel { plant_numbers, .. } = &state.phase {
+        // Compute pure-fuel obligations so we know what's left for hybrids.
+        let pure_coal: u8 = plant_numbers
+            .iter()
+            .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+            .filter(|p| p.kind == PlantKind::Coal)
+            .map(|p| p.cost)
+            .sum();
+        let pure_oil: u8 = plant_numbers
+            .iter()
+            .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+            .filter(|p| p.kind == PlantKind::Oil)
+            .map(|p| p.cost)
+            .sum();
+
+        let _coal_avail = player.resources.coal.saturating_sub(pure_coal);
+        let oil_avail = player.resources.oil.saturating_sub(pure_oil);
+
+        // Prefer oil for hybrids (conserves coal for future pure-Coal plants).
+        let oil = hybrid_cost.min(oil_avail);
+        let coal = hybrid_cost - oil;
+
+        info!(
+            "PowerCitiesFuel: using {} coal + {} oil for hybrids (hybrid_cost={})",
+            coal, oil, hybrid_cost
+        );
+        Some(Action::PowerCitiesFuel { coal, oil })
+    } else {
+        None
+    }
 }
 
 fn can_fire(plant: &PowerPlant, resources: &powergrid_core::types::PlayerResources) -> bool {

@@ -519,6 +519,20 @@ pub enum Phase {
     BuildCities { remaining: Vec<PlayerId> },
     /// Bureaucracy: power cities, collect income, restock market.
     Bureaucracy { remaining: Vec<PlayerId> },
+    /// Waiting for a player to choose the coal/oil split when firing hybrid (CoalOrOil)
+    /// plants — only entered when the split is genuinely ambiguous (the player has both
+    /// coal and oil available beyond what their pure-fuel plants need, with slack to
+    /// spend either).
+    PowerCitiesFuel {
+        /// The player who must choose.
+        player: PlayerId,
+        /// The chosen subset of plants to fire (the optimal one selected server-side).
+        plant_numbers: Vec<u8>,
+        /// Total fuel needed by the hybrid plants in `plant_numbers`.
+        hybrid_cost: u8,
+        /// Bureaucracy `remaining` list to restore once the split is applied.
+        remaining: Vec<PlayerId>,
+    },
     /// Game over.
     GameOver { winner: PlayerId },
 }

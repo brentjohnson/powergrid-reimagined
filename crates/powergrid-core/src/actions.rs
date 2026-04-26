@@ -39,6 +39,9 @@ pub enum Action {
     /// During resource-discard phase: choose how many coal and oil to drop to resolve
     /// hybrid shared-slot overflow.  `coal + oil` must equal `Phase::DiscardResource::drop_total`.
     DiscardResource { coal: u8, oil: u8 },
+    /// During power-cities fuel phase: choose how to split a hybrid plant's fuel cost
+    /// between coal and oil.  `coal + oil` must equal `Phase::PowerCitiesFuel::hybrid_cost`.
+    PowerCitiesFuel { coal: u8, oil: u8 },
 }
 
 /// Errors returned when an action is invalid.
@@ -92,6 +95,8 @@ pub enum ActionError {
     CannotDiscardNewPlant,
     #[error("coal + oil must equal the required drop total, and neither may exceed what you hold")]
     InvalidDiscardSplit,
+    #[error("coal + oil must equal the hybrid fuel cost, and neither may exceed what you hold after pure-fuel plants are paid")]
+    InvalidFuelSplit,
 }
 
 /// Messages sent from the server to clients.

@@ -30,6 +30,7 @@ pub fn apply_action(
         Action::PowerCities { plant_numbers } => handle_power_cities(state, actor, plant_numbers),
         Action::DiscardPlant { plant_number } => handle_discard_plant(state, actor, plant_number),
         Action::DiscardResource { coal, oil } => handle_discard_resource(state, actor, coal, oil),
+        Action::PowerCitiesFuel { coal, oil } => handle_power_cities_fuel(state, actor, coal, oil),
     }
 }
 
@@ -989,18 +990,15 @@ fn handle_power_cities(
         }
     }
 
-    // Find the optimal subset of plants to fire and how to consume resources.
-    // With at most 3 plants there are only 8 subsets — enumerate all of them.
-    // For each subset simulate firing using proper mixed-resource logic and keep
-    // the allocation that maximises cities powered.
-    let (powered, best_resources) = {
+    // Find the optimal subset of plants to fire.  Track the chosen subset's numbers.
+    let (best_subset_numbers, best_powered, best_resources) = {
         let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
         let cities_owned = player.city_count() as u8;
         let n = plant_numbers.len();
         let mut best_powered = 0u8;
         let mut best_res = player.resources.clone();
+        let mut best_subset: Vec<u8> = Vec::new();
 
-        // Try every non-empty subset (bit mask over plant_numbers indices).
         for mask in 1u8..(1u8 << n) {
             let subset: Vec<&PowerPlant> = plant_numbers
                 .iter()
@@ -1011,24 +1009,80 @@ fn handle_power_cities(
 
             if let Some((powered, res)) = check_plant_feasibility(&subset, &player.resources) {
                 let capped = powered.min(cities_owned);
-                let remaining =
+                let leftover =
                     res.coal as u16 + res.oil as u16 + res.garbage as u16 + res.uranium as u16;
-                let best_remaining = best_res.coal as u16
+                let best_leftover = best_res.coal as u16
                     + best_res.oil as u16
                     + best_res.garbage as u16
                     + best_res.uranium as u16;
-                // Prefer more cities powered; break ties by fewer resources consumed.
-                if capped > best_powered || (capped == best_powered && remaining > best_remaining) {
+                if capped > best_powered || (capped == best_powered && leftover > best_leftover) {
                     best_powered = capped;
                     best_res = res;
+                    best_subset = plant_numbers
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| mask & (1 << i) != 0)
+                        .map(|(_, &num)| num)
+                        .collect();
                 }
             }
         }
 
-        (best_powered, best_res)
+        (best_subset, best_powered, best_res)
     };
 
-    // Apply the resource state from the best allocation.
+    // Check whether the hybrid fuel split is ambiguous for the chosen subset.
+    let hybrid_cost = {
+        let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
+        best_subset_numbers
+            .iter()
+            .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+            .filter(|p| p.kind == PlantKind::CoalOrOil)
+            .map(|p| p.cost)
+            .sum::<u8>()
+    };
+
+    if hybrid_cost > 0 {
+        let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
+        let pure_coal: u8 = best_subset_numbers
+            .iter()
+            .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+            .filter(|p| p.kind == PlantKind::Coal)
+            .map(|p| p.cost)
+            .sum();
+        let pure_oil: u8 = best_subset_numbers
+            .iter()
+            .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+            .filter(|p| p.kind == PlantKind::Oil)
+            .map(|p| p.cost)
+            .sum();
+        let coal_after_pure = player.resources.coal.saturating_sub(pure_coal);
+        let oil_after_pure = player.resources.oil.saturating_sub(pure_oil);
+        let min_coal = hybrid_cost.saturating_sub(oil_after_pure);
+        let max_coal = hybrid_cost.min(coal_after_pure);
+        if min_coal < max_coal {
+            // Split is genuinely ambiguous — pause and ask the player.
+            state.phase = Phase::PowerCitiesFuel {
+                player: actor,
+                plant_numbers: best_subset_numbers,
+                hybrid_cost,
+                remaining,
+            };
+            return Ok(());
+        }
+    }
+
+    // Unambiguous: apply the deterministic allocation.
+    apply_power_result(state, actor, best_powered, best_resources, remaining)
+}
+
+fn apply_power_result(
+    state: &mut GameState,
+    actor: PlayerId,
+    powered: u8,
+    best_resources: PlayerResources,
+    remaining: Vec<PlayerId>,
+) -> Result<(), ActionError> {
     {
         let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
         player.resources = best_resources;
@@ -1046,7 +1100,6 @@ fn handle_power_cities(
         income
     ));
 
-    // Advance.
     let mut remaining = remaining;
     if let Some(pos) = remaining.iter().position(|&id| id == actor) {
         remaining.remove(pos);
@@ -1058,6 +1111,83 @@ fn handle_power_cities(
         state.phase = Phase::Bureaucracy { remaining };
     }
     Ok(())
+}
+
+fn handle_power_cities_fuel(
+    state: &mut GameState,
+    actor: PlayerId,
+    coal: u8,
+    oil: u8,
+) -> Result<(), ActionError> {
+    let (player_id, plant_numbers, hybrid_cost, remaining) = match &state.phase {
+        Phase::PowerCitiesFuel {
+            player,
+            plant_numbers,
+            hybrid_cost,
+            remaining,
+        } => (
+            *player,
+            plant_numbers.clone(),
+            *hybrid_cost,
+            remaining.clone(),
+        ),
+        _ => return Err(ActionError::WrongPhase),
+    };
+
+    if actor != player_id {
+        return Err(ActionError::NotYourTurn);
+    }
+
+    if coal + oil != hybrid_cost {
+        return Err(ActionError::InvalidFuelSplit);
+    }
+
+    let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
+
+    // Compute per-type costs from the chosen subset.
+    let mut pure_coal_cost: u8 = 0;
+    let mut pure_oil_cost: u8 = 0;
+    let mut pure_garbage_cost: u8 = 0;
+    let mut pure_uranium_cost: u8 = 0;
+    let mut powered: u8 = 0;
+
+    for &num in &plant_numbers {
+        let plant = player
+            .plants
+            .iter()
+            .find(|p| p.number == num)
+            .ok_or(ActionError::PlantNotOwned(num))?;
+        match plant.kind {
+            PlantKind::Coal => pure_coal_cost += plant.cost,
+            PlantKind::Oil => pure_oil_cost += plant.cost,
+            PlantKind::Garbage => pure_garbage_cost += plant.cost,
+            PlantKind::Uranium => pure_uranium_cost += plant.cost,
+            PlantKind::CoalOrOil | PlantKind::Wind | PlantKind::Fusion => {}
+        }
+        powered += plant.cities;
+    }
+
+    let cities_owned = player.city_count() as u8;
+    let powered = powered.min(cities_owned);
+
+    // Validate the split is feasible.
+    if pure_coal_cost + coal > player.resources.coal
+        || pure_oil_cost + oil > player.resources.oil
+        || pure_garbage_cost > player.resources.garbage
+        || pure_uranium_cost > player.resources.uranium
+    {
+        return Err(ActionError::InvalidFuelSplit);
+    }
+
+    // Build the resulting resource state and apply it.
+    let new_resources = PlayerResources {
+        coal: player.resources.coal - pure_coal_cost - coal,
+        oil: player.resources.oil - pure_oil_cost - oil,
+        garbage: player.resources.garbage - pure_garbage_cost,
+        uranium: player.resources.uranium - pure_uranium_cost,
+    };
+
+    apply_power_result(state, actor, powered, new_resources, remaining)
 }
 
 // ---------------------------------------------------------------------------
@@ -3088,12 +3218,7 @@ mod tests {
         let oil_market_before = state.resources.oil;
 
         // Drop 2 coal + 2 oil (sum = drop_total 4).
-        apply_action(
-            &mut state,
-            p1,
-            Action::DiscardResource { coal: 2, oil: 2 },
-        )
-        .unwrap();
+        apply_action(&mut state, p1, Action::DiscardResource { coal: 2, oil: 2 }).unwrap();
 
         // Phase must have advanced out of DiscardResource.
         assert!(
@@ -3158,11 +3283,7 @@ mod tests {
         assert!(matches!(state.phase, Phase::DiscardResource { .. }));
 
         // coal(1) + oil(2) = 3, but drop_total == 4 → rejected.
-        let result = apply_action(
-            &mut state,
-            p1,
-            Action::DiscardResource { coal: 1, oil: 2 },
-        );
+        let result = apply_action(&mut state, p1, Action::DiscardResource { coal: 1, oil: 2 });
         assert!(
             matches!(result, Err(ActionError::InvalidDiscardSplit)),
             "expected InvalidDiscardSplit"
@@ -3221,11 +3342,7 @@ mod tests {
         assert!(matches!(state.phase, Phase::DiscardResource { .. }));
 
         // Asking for 7 coal but only holds 6 — rejected even though sum == 4 (7 > 6).
-        let result = apply_action(
-            &mut state,
-            p1,
-            Action::DiscardResource { coal: 7, oil: 0 },
-        );
+        let result = apply_action(&mut state, p1, Action::DiscardResource { coal: 7, oil: 0 });
         assert!(matches!(result, Err(ActionError::InvalidDiscardSplit)));
     }
 
@@ -3292,7 +3409,248 @@ mod tests {
         );
 
         let player = state.player(p1).unwrap();
-        assert_eq!(player.resources.oil, 10, "expected 10 oil after per-resource clamp");
+        assert_eq!(
+            player.resources.oil, 10,
+            "expected 10 oil after per-resource clamp"
+        );
         assert_eq!(player.resources.coal, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // PowerCitiesFuel phase tests
+    // -----------------------------------------------------------------------
+
+    /// When a player fires a hybrid plant and has both coal and oil available
+    /// beyond what pure plants need, the server enters Phase::PowerCitiesFuel.
+    ///
+    /// Setup: Hybrid #5 (cost 2, 2 cities), pure-Coal #10 (cost 2, 2 cities).
+    /// Resources: 4 coal + 4 oil.  Pure coal needs 2 → remaining: 2 coal + 4 oil.
+    /// Hybrid cost 2: min_coal=0, max_coal=2 → ambiguous.
+    #[test]
+    fn test_power_cities_triggers_fuel_prompt_on_hybrid_ambiguity() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+
+        let player = state.player_mut(p1).unwrap();
+        player.cities = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        player.plants = vec![
+            PowerPlant {
+                number: 5,
+                kind: PlantKind::CoalOrOil,
+                cost: 2,
+                cities: 2,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 2,
+            },
+        ];
+        player.resources = PlayerResources {
+            coal: 4,
+            oil: 4,
+            garbage: 0,
+            uranium: 0,
+        };
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5, 10],
+            },
+        )
+        .unwrap();
+
+        assert!(
+            matches!(state.phase, Phase::PowerCitiesFuel { player, hybrid_cost, .. } if player == p1 && hybrid_cost == 2),
+            "expected Phase::PowerCitiesFuel with hybrid_cost=2, got {:?}",
+            state.phase
+        );
+        // Resources untouched until the player submits the split.
+        let player = state.player(p1).unwrap();
+        assert_eq!(player.resources.coal, 4);
+        assert_eq!(player.resources.oil, 4);
+    }
+
+    /// A valid fuel split is applied: resources consumed, income awarded, phase advances.
+    #[test]
+    fn test_power_cities_fuel_applies_split() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+
+        let player = state.player_mut(p1).unwrap();
+        player.cities = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        player.plants = vec![
+            PowerPlant {
+                number: 5,
+                kind: PlantKind::CoalOrOil,
+                cost: 2,
+                cities: 2,
+            },
+            PowerPlant {
+                number: 10,
+                kind: PlantKind::Coal,
+                cost: 2,
+                cities: 2,
+            },
+        ];
+        player.resources = PlayerResources {
+            coal: 4,
+            oil: 4,
+            garbage: 0,
+            uranium: 0,
+        };
+        let money_before = player.money;
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5, 10],
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
+
+        // Player spends 0 coal + 2 oil for hybrid (preserves coal).
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCitiesFuel { coal: 0, oil: 2 },
+        )
+        .unwrap();
+
+        // Phase should have advanced.
+        assert!(
+            !matches!(state.phase, Phase::PowerCitiesFuel { .. }),
+            "expected phase to advance; got {:?}",
+            state.phase
+        );
+
+        let player = state.player(p1).unwrap();
+        // 4 coal − 2 (pure-coal #10) − 0 (hybrid) = 2
+        assert_eq!(player.resources.coal, 2, "expected 2 coal remaining");
+        // 4 oil − 0 (pure-oil) − 2 (hybrid) = 2
+        assert_eq!(player.resources.oil, 2, "expected 2 oil remaining");
+        // Both plants fire (4 cities), income for 4 cities.
+        assert_eq!(player.last_cities_powered, 4);
+        let expected_income = income_for(4);
+        assert_eq!(player.money, money_before + expected_income);
+    }
+
+    /// Sending an incorrect split total is rejected.
+    #[test]
+    fn test_power_cities_fuel_rejects_wrong_total() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+
+        let player = state.player_mut(p1).unwrap();
+        player.cities = vec!["a".into(), "b".into()];
+        player.plants = vec![PowerPlant {
+            number: 5,
+            kind: PlantKind::CoalOrOil,
+            cost: 2,
+            cities: 2,
+        }];
+        player.resources = PlayerResources {
+            coal: 3,
+            oil: 3,
+            garbage: 0,
+            uranium: 0,
+        };
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5],
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
+
+        // coal(1) + oil(0) = 1 but hybrid_cost == 2 → rejected.
+        let result = apply_action(
+            &mut state,
+            p1,
+            Action::PowerCitiesFuel { coal: 1, oil: 0 },
+        );
+        assert!(
+            matches!(result, Err(ActionError::InvalidFuelSplit)),
+            "expected InvalidFuelSplit"
+        );
+        // Phase and resources unchanged.
+        assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
+        assert_eq!(state.player(p1).unwrap().resources.coal, 3);
+    }
+
+    /// When only coal is available for hybrids the choice is forced and no prompt appears.
+    #[test]
+    fn test_power_cities_forced_split_no_prompt() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+
+        let player = state.player_mut(p1).unwrap();
+        player.cities = vec!["a".into(), "b".into()];
+        player.plants = vec![PowerPlant {
+            number: 5,
+            kind: PlantKind::CoalOrOil,
+            cost: 2,
+            cities: 2,
+        }];
+        // Only coal available → split is forced.
+        player.resources = PlayerResources {
+            coal: 3,
+            oil: 0,
+            garbage: 0,
+            uranium: 0,
+        };
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5],
+            },
+        )
+        .unwrap();
+
+        // No prompt — phase should advance without PowerCitiesFuel.
+        assert!(
+            !matches!(state.phase, Phase::PowerCitiesFuel { .. }),
+            "expected phase to advance directly; got {:?}",
+            state.phase
+        );
+        let player = state.player(p1).unwrap();
+        assert_eq!(player.resources.coal, 1, "expected 1 coal remaining");
+        assert_eq!(player.resources.oil, 0);
     }
 }
