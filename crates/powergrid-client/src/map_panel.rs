@@ -199,18 +199,18 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
 
     // City markers — always show 3 slots (one per game step).
     // Slot states: filled (owner color), available (outline), locked (faint dot).
-    // Inactive region cities render as a single dim dot with no slots.
+    // Inactive region cities render as a single dim house with no slots.
     for (city_id, city) in &game_state.map.cities {
         if let (Some(cx), Some(cy)) = (city.x, city.y) {
             let center = to_screen(cx, cy);
 
-            // Inactive region: single dim dot, no interaction.
+            // Inactive region: single dim house, no interaction.
             if !game_state.is_city_active(city_id) {
-                painter.circle_filled(
-                    center,
-                    city_r * 0.5,
+                painter.add(egui::Shape::convex_polygon(
+                    house_points(center, city_r * 0.5),
                     Color32::from_rgba_unmultiplied(60, 60, 60, 100),
-                );
+                    Stroke::NONE,
+                ));
                 continue;
             }
 
@@ -232,37 +232,60 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
                 let pos = Pos2::new(x, center.y);
 
                 if slot < city.owners.len() {
-                    // Filled: white border ring + player color.
+                    // Filled: white border + player color house.
                     let color = player_colors
                         .get(&city.owners[slot])
                         .copied()
                         .map(player_color_to_egui)
                         .unwrap_or(theme::NEON_GREEN);
-                    painter.circle_filled(pos, city_r + 1.5, Color32::WHITE);
-                    painter.circle_filled(pos, city_r, color);
+                    painter.add(egui::Shape::convex_polygon(
+                        house_points(pos, city_r),
+                        color,
+                        Stroke::new(2.0, Color32::WHITE),
+                    ));
                 } else if slot < game_state.step as usize {
-                    // Available this step: outline ring, brighter during build turn.
+                    // Available this step: outline house, brighter during build turn.
                     let (r, g, b) = if is_my_build_turn {
                         (120, 180, 165) // TEXT_MID
                     } else {
                         (60, 100, 90) // TEXT_DIM
                     };
-                    painter.circle_stroke(
-                        pos,
-                        city_r,
+                    painter.add(egui::Shape::convex_polygon(
+                        house_points(pos, city_r),
+                        Color32::TRANSPARENT,
                         Stroke::new(1.2, Color32::from_rgb(r, g, b)),
-                    );
+                    ));
                 } else {
-                    // Locked: tiny faint dot indicating the slot exists.
-                    painter.circle_filled(
-                        pos,
-                        city_r * 0.45,
+                    // Locked: tiny faint house indicating the slot exists.
+                    painter.add(egui::Shape::convex_polygon(
+                        house_points(pos, city_r * 0.45),
                         Color32::from_rgba_unmultiplied(60, 100, 90, 40),
-                    );
+                        Stroke::NONE,
+                    ));
                 }
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// House shape helper
+// ---------------------------------------------------------------------------
+
+/// Returns the 5 vertices of a house shape (square body + triangular roof)
+/// centered at `center` with approximate half-width `r`.
+fn house_points(center: Pos2, r: f32) -> Vec<Pos2> {
+    let hw = r * 0.9; // half-width of walls
+    let bottom = center.y + r * 0.7;
+    let wall_top = center.y - r * 0.1;
+    let peak = center.y - r * 1.1;
+    vec![
+        Pos2::new(center.x - hw, bottom),   // bottom-left
+        Pos2::new(center.x + hw, bottom),   // bottom-right
+        Pos2::new(center.x + hw, wall_top), // top-right of wall
+        Pos2::new(center.x, peak),          // roof peak
+        Pos2::new(center.x - hw, wall_top), // top-left of wall
+    ]
 }
 
 // ---------------------------------------------------------------------------

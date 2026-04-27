@@ -44,9 +44,15 @@
 * IMPROVEMENT: Auction mode... List each player in a column and show status/bids.
 * IMPROVEMENT: Smarter bots
 
+# v0.3.5
+
+* IMPROVEMENT: House shape rather than circles for cities.
+
+
 
 # To do...
 
+* IMPROVEMENT: Square rather than circle hit-shape for city.  Add city name. Cover connection lines.
 * BUG: Two people pick same color, can't start game
 * COMPLAINT: Less reading for Nick
 * IMPROVEMENT: Randomize initial order
