@@ -153,12 +153,11 @@ fn should_skip_auction(player: &Player, candidate: &PowerPlant) -> bool {
     false
 }
 
-/// Max we are willing to pay for a plant (bid ceiling).  Round 1 caps strictly
-/// at the listed price — bidding wars there starve the rest of the early game
-/// of cash for fuel and city builds.  Later rounds accept a small premium only
-/// when the plant materially boosts cities-powered capacity (counting the
-/// 4th-plant discard).
-fn max_bid(plant: &PowerPlant, player: &Player, round: u32) -> u32 {
+/// Deterministic bid ceiling.  Round 1 caps strictly at the listed price —
+/// bidding wars there starve the rest of the early game of cash for fuel and
+/// city builds.  Later rounds accept a small premium only when the plant
+/// materially boosts cities-powered capacity (counting the 4th-plant discard).
+fn bid_ceiling(plant: &PowerPlant, player: &Player, round: u32) -> u32 {
     let listed = plant.number as u32;
 
     let raw_ceiling = if round == 1 {
@@ -171,6 +170,23 @@ fn max_bid(plant: &PowerPlant, player: &Player, round: u32) -> u32 {
     };
 
     raw_ceiling.min(player.money)
+}
+
+/// Max we are willing to pay for a plant.  Built on top of `bid_ceiling` with
+/// a small upward jitter applied periodically so opponents can't read the
+/// ceiling exactly — but capped tightly enough that round 1 still rarely
+/// exceeds the listed price.
+fn max_bid(plant: &PowerPlant, player: &Player, round: u32) -> u32 {
+    use rand::Rng;
+    let base = bid_ceiling(plant, player, round);
+    let mut rng = rand::thread_rng();
+    // ~30% of the time, add a small premium of 1-3 elektro on top.
+    let jitter = if rng.gen_bool(0.3) {
+        rng.gen_range(1..=3)
+    } else {
+        0
+    };
+    base.saturating_add(jitter).min(player.money)
 }
 
 // ---------------------------------------------------------------------------
@@ -822,7 +838,7 @@ mod tests {
         let player = bot_with_money(50);
         // Round 1: never pay above the listed price, regardless of how many
         // cities the plant powers or how much money we have.
-        assert_eq!(max_bid(&plant, &player, 1), 15);
+        assert_eq!(bid_ceiling(&plant, &player, 1), 15);
     }
 
     #[test]
@@ -834,7 +850,7 @@ mod tests {
         player.plants.push(coal_plant(7, 2, 2));
         player.plants.push(coal_plant(10, 2, 2));
         let candidate = coal_plant(20, 2, 1);
-        assert_eq!(max_bid(&candidate, &player, 3), 20);
+        assert_eq!(bid_ceiling(&candidate, &player, 3), 20);
     }
 
     #[test]
@@ -843,7 +859,7 @@ mod tests {
         // on top of listed 15 = ceiling 21 (capped by affordability).
         let player = bot_with_money(100);
         let candidate = coal_plant(15, 2, 3);
-        let ceiling = max_bid(&candidate, &player, 2);
+        let ceiling = bid_ceiling(&candidate, &player, 2);
         assert!(
             ceiling > 15 && ceiling <= 21,
             "expected a small premium above 15, got {}",
@@ -856,8 +872,42 @@ mod tests {
         let plant = coal_plant(15, 2, 3);
         let player = bot_with_money(10);
         // Even though listed is 15, the bot only has 10. Cap result at 10.
-        assert_eq!(max_bid(&plant, &player, 1), 10);
-        assert_eq!(max_bid(&plant, &player, 2), 10);
+        assert_eq!(bid_ceiling(&plant, &player, 1), 10);
+        assert_eq!(bid_ceiling(&plant, &player, 2), 10);
+        // The randomised wrapper must also respect the money cap.
+        for _ in 0..50 {
+            assert!(max_bid(&plant, &player, 1) <= 10);
+            assert!(max_bid(&plant, &player, 2) <= 10);
+        }
+    }
+
+    #[test]
+    fn jitter_sometimes_lifts_the_ceiling() {
+        // Run max_bid many times — jitter is ~30% probability with +1..=+3, so
+        // we should observe at least one bid above the deterministic ceiling.
+        let plant = coal_plant(15, 2, 2);
+        let player = bot_with_money(100);
+        let base = bid_ceiling(&plant, &player, 1);
+        let mut saw_jitter = false;
+        let mut saw_no_jitter = false;
+        for _ in 0..200 {
+            let bid = max_bid(&plant, &player, 1);
+            if bid > base {
+                saw_jitter = true;
+                assert!(bid <= base + 3, "jitter should never exceed +3");
+            } else {
+                assert_eq!(bid, base);
+                saw_no_jitter = true;
+            }
+        }
+        assert!(
+            saw_jitter,
+            "expected at least one jittered bid in 200 trials"
+        );
+        assert!(
+            saw_no_jitter,
+            "expected at least one non-jittered bid in 200 trials"
+        );
     }
 
     #[test]
