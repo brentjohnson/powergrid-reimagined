@@ -99,16 +99,20 @@ fn plant_score(plant: &PowerPlant) -> i32 {
     city_value + fuel_bonus + efficiency
 }
 
-/// How much a plant is intrinsically worth, based on its listed price + city capacity.
-fn plant_value_ceiling(plant: &PowerPlant) -> u32 {
-    let base = plant.number as u32;
-    let city_premium = plant.cities as u32 * 4;
-    let no_fuel_bonus = if matches!(plant.kind, PlantKind::Wind | PlantKind::Fusion) {
-        5
-    } else {
-        0
-    };
-    base + city_premium + no_fuel_bonus
+/// Net cities-powered capacity gained by acquiring `plant`.  When the rack is
+/// already full (3 plants) we'd discard the lowest-scored plant — mirroring
+/// `decide_discard` — so the bump is `plant.cities - worst.cities`.
+fn capacity_bump(plant: &PowerPlant, player: &Player) -> i32 {
+    if player.plants.len() < 3 {
+        return plant.cities as i32;
+    }
+    let worst_cities = player
+        .plants
+        .iter()
+        .min_by_key(|p| plant_score(p))
+        .map(|p| p.cities as i32)
+        .unwrap_or(0);
+    plant.cities as i32 - worst_cities
 }
 
 /// How much cash to keep after winning an auction: fuel for all owned plants
@@ -149,11 +153,24 @@ fn should_skip_auction(player: &Player, candidate: &PowerPlant) -> bool {
     false
 }
 
-/// Max we are willing to pay for a plant (bid ceiling).
-fn max_bid(plant: &PowerPlant, player: &Player) -> u32 {
-    let value = plant_value_ceiling(plant);
-    let affordable = player.money.saturating_sub(auction_reserve(plant, player));
-    value.min(affordable).max(plant.number as u32)
+/// Max we are willing to pay for a plant (bid ceiling).  Round 1 caps strictly
+/// at the listed price — bidding wars there starve the rest of the early game
+/// of cash for fuel and city builds.  Later rounds accept a small premium only
+/// when the plant materially boosts cities-powered capacity (counting the
+/// 4th-plant discard).
+fn max_bid(plant: &PowerPlant, player: &Player, round: u32) -> u32 {
+    let listed = plant.number as u32;
+
+    let raw_ceiling = if round == 1 {
+        listed
+    } else {
+        let bump = capacity_bump(plant, player);
+        let premium = if bump > 0 { (bump as u32) * 2 } else { 0 };
+        let affordable = player.money.saturating_sub(auction_reserve(plant, player));
+        (listed + premium).min(affordable).max(listed)
+    };
+
+    raw_ceiling.min(player.money)
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +200,7 @@ fn decide_auction(
             .iter()
             .find(|p| p.number == bid.plant_number)?;
 
-        let ceiling = max_bid(plant, my_player);
+        let ceiling = max_bid(plant, my_player, state.round);
         if bid.amount < ceiling {
             let raise = bid.amount + 1;
             info!(
@@ -797,6 +814,50 @@ mod tests {
             "should not buy oil when coal is cheaper (got {} oil)",
             oil_bought
         );
+    }
+
+    #[test]
+    fn round_one_caps_bid_at_listed_price() {
+        let plant = coal_plant(15, 2, 2);
+        let player = bot_with_money(50);
+        // Round 1: never pay above the listed price, regardless of how many
+        // cities the plant powers or how much money we have.
+        assert_eq!(max_bid(&plant, &player, 1), 15);
+    }
+
+    #[test]
+    fn later_round_no_capacity_bump_means_no_premium() {
+        // Rack is full of 2-city plants; candidate is a 1-city plant — replacing
+        // the worst would not improve total capacity.
+        let mut player = bot_with_money(100);
+        player.plants.push(coal_plant(5, 2, 2));
+        player.plants.push(coal_plant(7, 2, 2));
+        player.plants.push(coal_plant(10, 2, 2));
+        let candidate = coal_plant(20, 2, 1);
+        assert_eq!(max_bid(&candidate, &player, 3), 20);
+    }
+
+    #[test]
+    fn later_round_significant_bump_allows_small_premium() {
+        // Empty rack, candidate adds 3 cities of capacity → premium = 3 * 2 = 6
+        // on top of listed 15 = ceiling 21 (capped by affordability).
+        let player = bot_with_money(100);
+        let candidate = coal_plant(15, 2, 3);
+        let ceiling = max_bid(&candidate, &player, 2);
+        assert!(
+            ceiling > 15 && ceiling <= 21,
+            "expected a small premium above 15, got {}",
+            ceiling
+        );
+    }
+
+    #[test]
+    fn never_bids_above_player_money() {
+        let plant = coal_plant(15, 2, 3);
+        let player = bot_with_money(10);
+        // Even though listed is 15, the bot only has 10. Cap result at 10.
+        assert_eq!(max_bid(&plant, &player, 1), 10);
+        assert_eq!(max_bid(&plant, &player, 2), 10);
     }
 
     #[test]
