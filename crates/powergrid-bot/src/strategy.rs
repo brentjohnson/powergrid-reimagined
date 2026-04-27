@@ -1,7 +1,10 @@
 use powergrid_core::{
     actions::Action,
     state::GameState,
-    types::{connection_cost, income_for, PlantKind, Player, PlayerId, PowerPlant, Resource},
+    types::{
+        connection_cost, income_for, PlantKind, Player, PlayerId, PowerPlant, Resource,
+        ResourceMarket,
+    },
 };
 use tracing::{debug, info};
 
@@ -322,73 +325,51 @@ fn city_build_reserve(state: &GameState, me: PlayerId) -> u32 {
 
 fn decide_buy_resources(state: &GameState, me: PlayerId) -> Option<Action> {
     let player = state.player(me)?;
-    let market = &state.resources;
 
-    // Build a purchase list: for each plant, how much fuel do we still need?
     let mut purchases: Vec<(Resource, u8)> = Vec::new();
-    let mut simulated_market = market.clone();
-    let city_reserve = city_build_reserve(state, me);
-    let mut budget = player.money.saturating_sub(city_reserve);
+    let mut sim_market = state.resources.clone();
+    let mut sim_player = player.clone();
+    let mut budget = player.money;
 
-    // Process plants ordered by most cities powered first (fill the best plants first).
-    let mut plants_sorted = player.plants.clone();
-    plants_sorted.sort_by(|a, b| b.cities.cmp(&a.cities));
+    // Most cities first; break ties by plant number (smaller = cheaper to fuel).
+    let mut plants = player.plants.clone();
+    plants.sort_by(|a, b| b.cities.cmp(&a.cities).then(a.number.cmp(&b.number)));
 
-    for plant in &plants_sorted {
-        if !plant.kind.needs_resources() {
-            continue;
-        }
-
-        let resources_for_plant = resources_needed(plant, &player.resources);
-
-        for (resource, needed) in resources_for_plant {
-            if needed == 0 {
-                continue;
-            }
-
-            // Don't exceed capacity.
-            let can_store = if player.can_add_resource(resource, needed) {
-                needed
-            } else {
-                // Find how much we can actually fit.
-                (1..=needed)
-                    .rev()
-                    .find(|&n| player.can_add_resource(resource, n))
-                    .unwrap_or(0)
-            };
-            if can_store == 0 {
-                continue;
-            }
-
-            let available = simulated_market.available(resource);
-            let amount = can_store.min(available);
-            if amount == 0 {
-                continue;
-            }
-
-            if let Some(cost) = simulated_market.price(resource, amount) {
-                if cost <= budget {
-                    debug!("Buying {} {:?} for {} elektro", amount, resource, cost);
-                    purchases.push((resource, amount));
-                    simulated_market.take(resource, amount);
-                    budget -= cost;
-                } else {
-                    debug!(
-                        "Cannot afford {} {:?} (costs {}, have {})",
-                        amount, resource, cost, budget
-                    );
-                }
-            }
-        }
+    // Pass 1 — essential: ensure each plant can fire at least once this round.
+    // Use the full money budget so the city-build reserve does not starve fuel.
+    for plant in &plants {
+        buy_for_plant(
+            plant,
+            plant.cost,
+            &mut sim_market,
+            &mut sim_player,
+            &mut budget,
+            &mut purchases,
+        );
     }
 
-    // Log what we're buying.
+    // Pass 2 — subtract city-build reserve from whatever remains after essential fuel.
+    let city_reserve = city_build_reserve(state, me);
+    budget = budget.saturating_sub(city_reserve);
+
+    // Pass 3 — top-up: fill remaining storage capacity with leftover cash.
+    for plant in &plants {
+        buy_for_plant(
+            plant,
+            plant.cost * 2,
+            &mut sim_market,
+            &mut sim_player,
+            &mut budget,
+            &mut purchases,
+        );
+    }
+
     if purchases.is_empty() {
         info!("Buy resources: nothing to buy, done");
     } else {
-        let total = market.batch_price(&purchases).unwrap_or(0);
+        let total = state.resources.batch_price(&purchases).unwrap_or(0);
         info!(
-            "Buy resources: {:?} for {} total elektro (have {})",
+            "Buy resources: {:?} for ~{} elektro (have {})",
             purchases, total, player.money
         );
     }
@@ -396,46 +377,99 @@ fn decide_buy_resources(state: &GameState, me: PlayerId) -> Option<Action> {
     Some(Action::BuyResourceBatch { purchases })
 }
 
-/// How many additional resources does this plant need to be fully fuelled?
-fn resources_needed(
+/// Bring `plant`'s fuel level up to `target` by purchasing from the simulated
+/// market.  Hybrid plants try oil first, then fall back to coal when oil is
+/// unavailable or won't fit in storage.  Commits all changes to `sim_market`,
+/// `sim_player`, `budget`, and `purchases`.
+fn buy_for_plant(
     plant: &PowerPlant,
-    stored: &powergrid_core::types::PlayerResources,
-) -> Vec<(Resource, u8)> {
+    target: u8,
+    market: &mut ResourceMarket,
+    player: &mut Player,
+    budget: &mut u32,
+    purchases: &mut Vec<(Resource, u8)>,
+) {
     match plant.kind {
         PlantKind::Coal => {
-            let have = stored.coal;
-            let cap = plant.cost * 2;
-            vec![(Resource::Coal, cap.saturating_sub(have))]
+            let want = target.saturating_sub(player.resources.coal);
+            if want > 0 {
+                try_buy(Resource::Coal, want, market, player, budget, purchases);
+            }
         }
         PlantKind::Oil => {
-            let have = stored.oil;
-            let cap = plant.cost * 2;
-            vec![(Resource::Oil, cap.saturating_sub(have))]
+            let want = target.saturating_sub(player.resources.oil);
+            if want > 0 {
+                try_buy(Resource::Oil, want, market, player, budget, purchases);
+            }
         }
         PlantKind::CoalOrOil => {
-            // For hybrids, prefer oil when buying (conserves coal for pure-coal plants).
-            // Buy oil up to cap, then fall back to coal.
-            let cap = plant.cost * 2;
-            let have_oil = stored.oil;
-            let oil_needed = cap.saturating_sub(have_oil);
-            if oil_needed > 0 {
-                vec![(Resource::Oil, oil_needed)]
-            } else {
-                vec![]
+            // The plant can fire on any mix of coal and oil; compare combined total.
+            let combined = player.resources.coal.saturating_add(player.resources.oil);
+            let want = target.saturating_sub(combined);
+            if want == 0 {
+                return;
+            }
+            // Oil first to conserve coal for pure-coal plants.
+            try_buy(Resource::Oil, want, market, player, budget, purchases);
+            // Re-check shortfall after oil purchase — oil may have been exhausted.
+            let combined = player.resources.coal.saturating_add(player.resources.oil);
+            let remaining = target.saturating_sub(combined);
+            if remaining > 0 {
+                try_buy(Resource::Coal, remaining, market, player, budget, purchases);
             }
         }
         PlantKind::Garbage => {
-            let have = stored.garbage;
-            let cap = plant.cost * 2;
-            vec![(Resource::Garbage, cap.saturating_sub(have))]
+            let want = target.saturating_sub(player.resources.garbage);
+            if want > 0 {
+                try_buy(Resource::Garbage, want, market, player, budget, purchases);
+            }
         }
         PlantKind::Uranium => {
-            let have = stored.uranium;
-            let cap = plant.cost * 2;
-            vec![(Resource::Uranium, cap.saturating_sub(have))]
+            let want = target.saturating_sub(player.resources.uranium);
+            if want > 0 {
+                try_buy(Resource::Uranium, want, market, player, budget, purchases);
+            }
         }
-        PlantKind::Wind | PlantKind::Fusion => vec![],
+        PlantKind::Wind | PlantKind::Fusion => {}
     }
+}
+
+/// Attempt to purchase up to `want` units of `resource`, degrading gracefully
+/// to smaller amounts when the full quantity is too expensive or would exceed
+/// storage capacity.  Commits a successful purchase to all mutable state.
+fn try_buy(
+    resource: Resource,
+    want: u8,
+    market: &mut ResourceMarket,
+    player: &mut Player,
+    budget: &mut u32,
+    purchases: &mut Vec<(Resource, u8)>,
+) {
+    let available = market.available(resource);
+    let cap = want.min(available);
+    if cap == 0 {
+        return;
+    }
+    // Find the largest affordable amount that also fits in storage.
+    for n in (1..=cap).rev() {
+        if !player.can_add_resource(resource, n) {
+            continue;
+        }
+        if let Some(cost) = market.price(resource, n) {
+            if cost <= *budget {
+                debug!("Buying {} {:?} for {} elektro", n, resource, cost);
+                purchases.push((resource, n));
+                market.take(resource, n);
+                player.resources.add(resource, n);
+                *budget -= cost;
+                return;
+            }
+        }
+    }
+    debug!(
+        "Cannot afford any {:?} (want {}, budget {})",
+        resource, want, budget
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -579,5 +613,169 @@ fn can_fire(plant: &PowerPlant, resources: &powergrid_core::types::PlayerResourc
         PlantKind::CoalOrOil => resources.coal + resources.oil >= plant.cost,
         PlantKind::Garbage => resources.garbage >= plant.cost,
         PlantKind::Uranium => resources.uranium >= plant.cost,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use powergrid_core::types::{Player, PlayerColor, PowerPlant};
+
+    fn coal_plant(number: u8, cost: u8, cities: u8) -> PowerPlant {
+        PowerPlant {
+            number,
+            kind: PlantKind::Coal,
+            cost,
+            cities,
+        }
+    }
+
+    fn hybrid_plant(number: u8, cost: u8, cities: u8) -> PowerPlant {
+        PowerPlant {
+            number,
+            kind: PlantKind::CoalOrOil,
+            cost,
+            cities,
+        }
+    }
+
+    fn bot_with_money(money: u32) -> Player {
+        let mut p = Player::new("bot".into(), PlayerColor::Red);
+        p.money = money;
+        p
+    }
+
+    #[test]
+    fn buys_minimum_fuel_when_money_tight() {
+        let plant = coal_plant(5, 2, 1);
+        let mut player = bot_with_money(20);
+        player.plants.push(plant.clone());
+
+        let mut market = ResourceMarket::initial();
+        let mut purchases = vec![];
+        let mut budget = player.money;
+
+        buy_for_plant(
+            &plant,
+            plant.cost,
+            &mut market,
+            &mut player,
+            &mut budget,
+            &mut purchases,
+        );
+
+        let coal_bought: u8 = purchases
+            .iter()
+            .filter(|(r, _)| *r == Resource::Coal)
+            .map(|(_, n)| n)
+            .sum();
+        assert!(
+            coal_bought >= plant.cost,
+            "expected >= {} coal, got {}",
+            plant.cost,
+            coal_bought
+        );
+    }
+
+    #[test]
+    fn falls_back_to_coal_for_hybrid_when_oil_empty() {
+        let plant = hybrid_plant(10, 3, 2);
+        let mut player = bot_with_money(50);
+        player.plants.push(plant.clone());
+
+        // Drain oil market completely.
+        let mut market = ResourceMarket::initial();
+        market.oil = 0;
+
+        let mut purchases = vec![];
+        let mut budget = player.money;
+
+        buy_for_plant(
+            &plant,
+            plant.cost,
+            &mut market,
+            &mut player,
+            &mut budget,
+            &mut purchases,
+        );
+
+        let coal_bought: u8 = purchases
+            .iter()
+            .filter(|(r, _)| *r == Resource::Coal)
+            .map(|(_, n)| n)
+            .sum();
+        assert!(
+            coal_bought >= plant.cost,
+            "expected >= {} coal as fallback, got {}",
+            plant.cost,
+            coal_bought
+        );
+    }
+
+    #[test]
+    fn degrades_gracefully_when_full_topup_unaffordable() {
+        // Plant cost=4, so full top-up = 8 coal. Player only has $5 — can still
+        // afford 1 coal at the market's cheapest slot (1 elektro each).
+        let plant = coal_plant(15, 4, 3);
+        let mut player = bot_with_money(5);
+        player.plants.push(plant.clone());
+
+        let mut market = ResourceMarket::initial(); // 24 coal at 1 elektro each
+        let mut purchases = vec![];
+        let mut budget = player.money;
+
+        // Top-up target: cost * 2 = 8; should buy as much as $5 allows.
+        buy_for_plant(
+            &plant,
+            plant.cost * 2,
+            &mut market,
+            &mut player,
+            &mut budget,
+            &mut purchases,
+        );
+
+        let coal_bought: u8 = purchases
+            .iter()
+            .filter(|(r, _)| *r == Resource::Coal)
+            .map(|(_, n)| n)
+            .sum();
+        assert!(coal_bought > 0, "expected some coal to be bought, got none");
+        assert!(coal_bought <= 5, "spent more than budget allows");
+    }
+
+    #[test]
+    fn essential_pass_ignores_city_reserve() {
+        // Bot has $22. City reserve would be 15, leaving only $7 with old logic.
+        // With new logic the essential pass gets the full $22, so it can buy 2
+        // coal at 1 elektro each (cost 2) easily.
+        let plant = coal_plant(5, 2, 1);
+        let mut player = bot_with_money(22);
+        player.plants.push(plant.clone());
+
+        let mut market = ResourceMarket::initial();
+        let mut purchases = vec![];
+        // Simulate pass-1 budget = full money (no reserve yet).
+        let mut budget = player.money;
+
+        buy_for_plant(
+            &plant,
+            plant.cost,
+            &mut market,
+            &mut player,
+            &mut budget,
+            &mut purchases,
+        );
+
+        let coal_bought: u8 = purchases
+            .iter()
+            .filter(|(r, _)| *r == Resource::Coal)
+            .map(|(_, n)| n)
+            .sum();
+        assert!(
+            coal_bought >= plant.cost,
+            "essential pass should buy at least {} coal (got {})",
+            plant.cost,
+            coal_bought
+        );
     }
 }
