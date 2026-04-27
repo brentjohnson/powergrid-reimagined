@@ -42,6 +42,7 @@
 # v0.3.4
 
 * IMPROVEMENT: Auction mode... List each player in a column and show status/bids.
+* IMPROVEMENT: Smarter bots
 
 
 # To do...
