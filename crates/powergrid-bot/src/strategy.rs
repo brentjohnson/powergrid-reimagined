@@ -116,7 +116,9 @@ fn capacity_bump(plant: &PowerPlant, player: &Player) -> i32 {
 }
 
 /// How much cash to keep after winning an auction: fuel for all owned plants
-/// (including the new one) plus enough for at least one city build.
+/// (including the new one) plus enough for two city builds.  Cities are the
+/// scoring resource, so we bias the reserve toward affording them rather than
+/// pouring cash into plant auctions.
 fn auction_reserve(plant: &PowerPlant, player: &Player) -> u32 {
     let mut reserve = 0u32;
     for p in &player.plants {
@@ -127,20 +129,21 @@ fn auction_reserve(plant: &PowerPlant, player: &Player) -> u32 {
     if plant.kind.needs_resources() {
         reserve += plant.cost as u32 * 4;
     }
-    reserve += 15; // at least one city build
+    reserve += 30; // ~2 city builds
     reserve += 5; // safety buffer
     reserve
 }
 
 /// True when acquiring a new plant would give little or no benefit.
 ///
-/// Two cases: (1) we already have excess generation capacity relative to the
-/// cities we own, or (2) we have a full rack (3 plants) and the candidate is
-/// not a meaningful upgrade over our worst plant.
+/// Two cases: (1) we already have any surplus generation capacity over the
+/// cities we own — building cities is more valuable than stockpiling plants —
+/// or (2) we have a full rack (3 plants) and the candidate is not a meaningful
+/// upgrade over our worst plant.
 fn should_skip_auction(player: &Player, candidate: &PowerPlant) -> bool {
     let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
     let owned = player.cities.len() as u8;
-    if powerable > owned.saturating_add(2) {
+    if powerable > owned {
         return true;
     }
     if player.plants.len() >= 3 {
@@ -262,9 +265,12 @@ fn decide_auction(
     match best {
         Some(plant) => {
             let score = plant_score(plant);
-            // In round 1 we must buy; otherwise only buy if the plant is worth it
-            // and we actually need more generation capacity.
-            if is_round_one || (score >= 20 && !should_skip_auction(my_player, plant)) {
+            // In round 1 we must buy; otherwise only open an auction when the
+            // plant is worthwhile, we actually need more capacity, and it would
+            // materially boost cities-powered (counting the 4th-plant discard).
+            let bump = capacity_bump(plant, my_player);
+            if is_round_one || (score >= 20 && !should_skip_auction(my_player, plant) && bump >= 1)
+            {
                 info!(
                     "Selecting plant {} (kind={:?}, cities={}, score={})",
                     plant.number, plant.kind, plant.cities, score
@@ -879,6 +885,45 @@ mod tests {
             assert!(max_bid(&plant, &player, 1) <= 10);
             assert!(max_bid(&plant, &player, 2) <= 10);
         }
+    }
+
+    #[test]
+    fn skip_auction_when_any_surplus_capacity() {
+        // Bot owns 2 cities, plants power 3 — already 1 surplus, so any new
+        // plant auction should be skipped to save cash for city builds.
+        let mut player = bot_with_money(50);
+        player.plants.push(coal_plant(5, 2, 3));
+        player.cities.push("a".into());
+        player.cities.push("b".into());
+        let candidate = coal_plant(20, 2, 3);
+        assert!(
+            should_skip_auction(&player, &candidate),
+            "expected to skip auction with surplus capacity (powerable=3, owned=2)"
+        );
+    }
+
+    #[test]
+    fn dont_skip_when_at_capacity() {
+        // Bot owns exactly as many cities as plants can power — needs more
+        // capacity to grow further.
+        let mut player = bot_with_money(50);
+        player.plants.push(coal_plant(5, 2, 2));
+        player.cities.push("a".into());
+        player.cities.push("b".into());
+        let candidate = coal_plant(20, 2, 3);
+        assert!(
+            !should_skip_auction(&player, &candidate),
+            "expected to participate when at capacity (powerable=2, owned=2)"
+        );
+    }
+
+    #[test]
+    fn auction_reserve_protects_two_city_builds() {
+        // No existing plants, candidate is a basic coal plant cost=2: fuel
+        // reserve = 8, city reserve = 30, safety = 5 → total 43.
+        let player = bot_with_money(100);
+        let candidate = coal_plant(15, 2, 2);
+        assert_eq!(auction_reserve(&candidate, &player), 8 + 30 + 5);
     }
 
     #[test]
