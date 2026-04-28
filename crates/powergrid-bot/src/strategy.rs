@@ -351,17 +351,6 @@ fn decide_discard_resource(state: &GameState, me: PlayerId, drop_total: u8) -> O
 // Buy resources phase
 // ---------------------------------------------------------------------------
 
-/// Reserve enough for ~1-2 city builds so the bot can expand after buying fuel.
-fn city_build_reserve(state: &GameState, me: PlayerId) -> u32 {
-    let Some(player) = state.player(me) else {
-        return 15;
-    };
-    let powerable = player.plants.iter().map(|p| p.cities).sum::<u8>() as usize;
-    let owned = player.cities.len();
-    let want = powerable.saturating_sub(owned).min(2) as u32;
-    (want * 15).max(15)
-}
-
 fn decide_buy_resources(state: &GameState, me: PlayerId) -> Option<Action> {
     let player = state.player(me)?;
 
@@ -380,22 +369,6 @@ fn decide_buy_resources(state: &GameState, me: PlayerId) -> Option<Action> {
         buy_for_plant(
             plant,
             plant.cost,
-            &mut sim_market,
-            &mut sim_player,
-            &mut budget,
-            &mut purchases,
-        );
-    }
-
-    // Pass 2 — subtract city-build reserve from whatever remains after essential fuel.
-    let city_reserve = city_build_reserve(state, me);
-    budget = budget.saturating_sub(city_reserve);
-
-    // Pass 3 — top-up: fill remaining storage capacity with leftover cash.
-    for plant in &plants {
-        buy_for_plant(
-            plant,
-            plant.cost * 2,
             &mut sim_market,
             &mut sim_player,
             &mut budget,
