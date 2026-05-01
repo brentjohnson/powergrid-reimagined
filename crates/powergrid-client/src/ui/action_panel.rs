@@ -21,6 +21,9 @@ pub(super) fn action_panel(
     gs: &GameState,
     my_id: PlayerId,
 ) {
+    // Clone the room name so it can be used inside closures (avoids holding a borrow on state).
+    let room_owned = state.current_room.clone();
+    let room = room_owned.as_deref();
     match &gs.phase {
         Phase::Auction {
             current_bidder_idx,
@@ -158,12 +161,13 @@ pub(super) fn action_panel(
                                 Action::PlaceBid {
                                     amount: state.bid_amount,
                                 },
+                                room,
                                 channels,
                             );
                             state.bid_amount = 0;
                         }
                         if ui.add(neon_button("[ PASS ]", theme::NEON_AMBER)).clicked() {
-                            send(Action::PassAuction, channels);
+                            send(Action::PassAuction, room, channels);
                         }
                     });
                 }
@@ -174,7 +178,7 @@ pub(super) fn action_panel(
                         .monospace(),
                 );
                 if ui.add(neon_button("[ PASS ]", theme::NEON_AMBER)).clicked() {
-                    send(Action::PassAuction, channels);
+                    send(Action::PassAuction, room, channels);
                 }
             }
         }
@@ -211,6 +215,7 @@ pub(super) fn action_panel(
                                 Action::DiscardPlant {
                                     plant_number: plant.number,
                                 },
+                                room,
                                 channels,
                             );
                         }
@@ -300,6 +305,7 @@ pub(super) fn action_panel(
                             coal: state.discard_coal,
                             oil: state.discard_oil,
                         },
+                        room,
                         channels,
                     );
                 }
@@ -415,9 +421,9 @@ pub(super) fn action_panel(
                     {
                         let purchases = state.cart_purchases();
                         if purchases.is_empty() {
-                            send(Action::DoneBuying, channels);
+                            send(Action::DoneBuying, room, channels);
                         } else {
-                            send(Action::BuyResourceBatch { purchases }, channels);
+                            send(Action::BuyResourceBatch { purchases }, room, channels);
                         }
                     }
                 });
@@ -471,10 +477,10 @@ pub(super) fn action_panel(
                         .clicked()
                     {
                         if state.selected_build_cities.is_empty() {
-                            send(Action::DoneBuilding, channels);
+                            send(Action::DoneBuilding, room, channels);
                         } else {
                             let city_ids = state.build_preview.ordered.clone();
-                            send(Action::BuildCities { city_ids }, channels);
+                            send(Action::BuildCities { city_ids }, room, channels);
                         }
                     }
                 });
@@ -501,7 +507,7 @@ pub(super) fn action_panel(
                     if let Some(player) = gs.player(my_id) {
                         let plant_numbers: Vec<u8> =
                             player.plants.iter().map(|p| p.number).collect();
-                        send(Action::PowerCities { plant_numbers }, channels);
+                        send(Action::PowerCities { plant_numbers }, room, channels);
                     }
                 }
             } else {
@@ -604,6 +610,7 @@ pub(super) fn action_panel(
                             coal: state.power_fuel_coal,
                             oil: oil_used,
                         },
+                        room,
                         channels,
                     );
                 }

@@ -1,7 +1,6 @@
 use bevy::prelude::*;
-use crossbeam_channel::Sender;
 use powergrid_core::{
-    actions::Action,
+    actions::RoomSummary,
     connection_cost,
     map::{City, Map},
     types::{Phase, PlayerColor, PlayerId, Resource},
@@ -19,6 +18,7 @@ pub type CitySnapshot = Vec<(PlayerId, usize)>;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
     Connect,
+    RoomBrowser,
     Game,
 }
 
@@ -35,8 +35,19 @@ pub struct AppState {
     // Connection state
     pub connected: bool,
     pub my_id: Option<PlayerId>,
-    /// Name + color to send on first Welcome.
+    /// Name + color to send once we enter a room.
     pub pending_join: Option<(String, PlayerColor)>,
+
+    // Lobby / room state
+    pub current_room: Option<String>,
+    pub room_list: Vec<RoomSummary>,
+    /// Input field used in the room browser to create or join a room.
+    pub room_name_input: String,
+    /// If set, auto-create/join this room name on first Welcome (CLI arg).
+    pub auto_room: Option<String>,
+    /// Bot name + color inputs for the Add Bot form.
+    pub bot_name_input: String,
+    pub bot_color_input: PlayerColor,
 
     // Game state
     pub game_state: Option<GameState>,
@@ -82,16 +93,14 @@ impl AppState {
         let player_name = cli.name.unwrap_or_default();
         let selected_color = cli.color.unwrap_or(PlayerColor::Red);
 
-        // Auto-connect when all three args provided.
-        let (screen, pending_join) =
-            if !player_name.is_empty() && cli.color.is_some() && !server_name.is_empty() {
-                (Screen::Connect, Some((player_name.clone(), selected_color)))
-            } else {
-                (Screen::Connect, None)
-            };
+        let pending_join = if !player_name.is_empty() && cli.color.is_some() {
+            Some((player_name.clone(), selected_color))
+        } else {
+            None
+        };
 
         Self {
-            screen,
+            screen: Screen::Connect,
             server_name,
             port,
             player_name,
@@ -99,6 +108,12 @@ impl AppState {
             connected: false,
             my_id: None,
             pending_join,
+            current_room: None,
+            room_list: Vec::new(),
+            room_name_input: String::new(),
+            auto_room: cli.room,
+            bot_name_input: String::new(),
+            bot_color_input: PlayerColor::Blue,
             game_state: None,
             error_message: None,
             map_zoom: 1.0,
@@ -123,7 +138,7 @@ impl AppState {
     }
 
     /// Called every time a StateUpdate arrives.
-    pub fn handle_state_update(&mut self, gs: GameState, action_tx: &Sender<Action>) {
+    pub fn handle_state_update(&mut self, gs: GameState) {
         // Clear build selection once it's no longer our build turn.
         let still_my_build = self
             .my_id
@@ -185,8 +200,6 @@ impl AppState {
         // Keep build preview fresh after state update.
         self.refresh_build_preview();
         self.refresh_resource_preview();
-
-        let _ = action_tx; // reserved for future auto-actions
     }
 
     // -----------------------------------------------------------------------
@@ -444,6 +457,8 @@ pub struct CliArgs {
     pub color: Option<PlayerColor>,
     pub server: Option<String>,
     pub port: Option<u16>,
+    /// Auto-create/join this room name on connect (for CLI-driven testing).
+    pub room: Option<String>,
     pub auto_connect: bool,
     pub windowed: bool,
 }
@@ -455,6 +470,7 @@ impl CliArgs {
         let mut color = None;
         let mut server = None;
         let mut port = None;
+        let mut room = None;
         let mut windowed = false;
 
         while let Some(arg) = args.next() {
@@ -483,6 +499,7 @@ impl CliArgs {
                         })
                     });
                 }
+                "--room" => room = args.next(),
                 "-w" | "--windowed" => windowed = true,
                 other => eprintln!("Unknown argument: {other}"),
             }
@@ -494,6 +511,7 @@ impl CliArgs {
             color,
             server,
             port,
+            room,
             auto_connect,
             windowed,
         }

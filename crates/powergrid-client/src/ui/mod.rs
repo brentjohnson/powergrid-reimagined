@@ -5,6 +5,7 @@ mod left_panel;
 mod lobby;
 mod phase_tracker;
 mod right_panel;
+mod room_browser;
 mod top_panel;
 
 use bevy::app::AppExit;
@@ -43,6 +44,9 @@ pub fn ui_system(
     match state.screen {
         Screen::Connect => {
             connect::connect_screen(ctx, &mut state, &mut commands);
+        }
+        Screen::RoomBrowser => {
+            room_browser::room_browser_screen(ctx, &mut state, &channels);
         }
         Screen::Game => {
             game_screen(ctx, &mut state, &channels);

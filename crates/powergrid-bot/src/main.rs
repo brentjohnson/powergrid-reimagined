@@ -1,4 +1,4 @@
-mod strategy;
+use powergrid_bot::strategy;
 
 use futures_util::{SinkExt, StreamExt};
 use powergrid_core::{
@@ -218,6 +218,9 @@ async fn bot_session(
             ServerMessage::Event { message } => {
                 info!("Game event: {message}");
             }
+
+            // Lobby-protocol messages — not expected from the legacy single-game server.
+            _ => {}
         }
     }
 

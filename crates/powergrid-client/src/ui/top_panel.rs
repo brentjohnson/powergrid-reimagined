@@ -24,6 +24,7 @@ pub(super) fn top_panel_contents(
     channels: &Option<Res<WsChannels>>,
     my_id: PlayerId,
 ) {
+    let room = state.current_room.as_deref();
     ui.horizontal(|ui| {
         // Round / Step header
         ui.vertical(|ui| {
@@ -55,11 +56,27 @@ pub(super) fn top_panel_contents(
                         let mid = gs.market.actual.len().div_ceil(2);
                         let (left, right) = gs.market.actual.split_at(mid);
                         ui.vertical(|ui| {
-                            plant_column(ui, left, channels, &gs.phase, my_id, &gs.player_order);
+                            plant_column(
+                                ui,
+                                left,
+                                channels,
+                                &gs.phase,
+                                my_id,
+                                &gs.player_order,
+                                room,
+                            );
                         });
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
-                            plant_column(ui, right, channels, &gs.phase, my_id, &gs.player_order);
+                            plant_column(
+                                ui,
+                                right,
+                                channels,
+                                &gs.phase,
+                                my_id,
+                                &gs.player_order,
+                                room,
+                            );
                         });
                     } else {
                         // Steps 1 & 2: ACTUAL and FUTURE columns.
@@ -77,6 +94,7 @@ pub(super) fn top_panel_contents(
                                 &gs.phase,
                                 my_id,
                                 &gs.player_order,
+                                room,
                             );
                         });
                         ui.add_space(8.0);
@@ -94,6 +112,7 @@ pub(super) fn top_panel_contents(
                                 &gs.phase,
                                 my_id,
                                 &gs.player_order,
+                                room,
                             );
                         });
                     }
@@ -140,6 +159,7 @@ fn plant_column(
     phase: &Phase,
     my_id: PlayerId,
     player_order: &[PlayerId],
+    room: Option<&str>,
 ) {
     let is_my_auction_turn = matches!(phase, Phase::Auction { current_bidder_idx, active_bid, .. }
         if active_bid.is_none() && player_order.get(*current_bidder_idx) == Some(&my_id));
@@ -153,6 +173,7 @@ fn plant_column(
                     Action::SelectPlant {
                         plant_number: plant.number,
                     },
+                    room,
                     channels,
                 );
             }

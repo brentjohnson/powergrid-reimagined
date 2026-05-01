@@ -2,7 +2,7 @@ use bevy::prelude::Res;
 use bevy_egui::egui;
 use egui::{Color32, RichText, Ui};
 use powergrid_core::{
-    actions::Action,
+    actions::{Action, LobbyAction},
     types::{Phase, PlayerColor, PlayerId, Resource},
     GameState,
 };
@@ -77,9 +77,19 @@ pub(super) fn color_label(c: PlayerColor) -> &'static str {
     }
 }
 
-pub(super) fn send(action: Action, channels: &Option<Res<WsChannels>>) {
+/// Send an in-game action scoped to the given room name.
+pub(super) fn send(action: Action, room: Option<&str>, channels: &Option<Res<WsChannels>>) {
     if let Some(ch) = channels {
-        ch.action_tx.send(action).ok();
+        if let Some(r) = room {
+            ch.send_room(r, action);
+        }
+    }
+}
+
+/// Send a lobby-level action (room management, bot management).
+pub(super) fn send_lobby(action: LobbyAction, channels: &Option<Res<WsChannels>>) {
+    if let Some(ch) = channels {
+        ch.send_lobby(action);
     }
 }
 

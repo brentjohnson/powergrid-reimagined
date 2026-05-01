@@ -4,6 +4,7 @@ members = [
     "crates/powergrid-server",
     "crates/powergrid-client",
     "crates/powergrid-bot",
+    "crates/powergrid-lobby",
 ]
 resolver = "2"
 

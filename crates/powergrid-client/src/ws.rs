@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 use futures_util::{SinkExt, StreamExt};
-use powergrid_core::actions::{Action, ServerMessage};
+use powergrid_core::actions::{ClientMessage, LobbyAction, ServerMessage};
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use tracing::{debug, warn};
 
@@ -18,7 +18,23 @@ pub enum WsEvent {
 #[derive(Resource)]
 pub struct WsChannels {
     pub event_rx: Receiver<WsEvent>,
-    pub action_tx: Sender<Action>,
+    /// Send any ClientMessage (lobby or room-scoped game action) to the server.
+    pub action_tx: Sender<ClientMessage>,
+}
+
+impl WsChannels {
+    pub fn send_lobby(&self, action: LobbyAction) {
+        self.action_tx.send(ClientMessage::Lobby(action)).ok();
+    }
+
+    pub fn send_room(&self, room: &str, action: powergrid_core::Action) {
+        self.action_tx
+            .send(ClientMessage::Room {
+                room: room.to_string(),
+                action,
+            })
+            .ok();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -27,7 +43,7 @@ pub struct WsChannels {
 
 pub fn spawn_ws(url: String) -> WsChannels {
     let (event_tx, event_rx) = crossbeam_channel::unbounded::<WsEvent>();
-    let (action_tx, action_rx) = crossbeam_channel::unbounded::<Action>();
+    let (action_tx, action_rx) = crossbeam_channel::unbounded::<ClientMessage>();
 
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
@@ -47,7 +63,7 @@ pub fn spawn_ws(url: String) -> WsChannels {
 // Async worker — reconnects forever
 // ---------------------------------------------------------------------------
 
-async fn ws_worker(url: String, event_tx: Sender<WsEvent>, action_rx: Receiver<Action>) {
+async fn ws_worker(url: String, event_tx: Sender<WsEvent>, action_rx: Receiver<ClientMessage>) {
     loop {
         let ws_stream = match connect_async(&url).await {
             Ok((s, _)) => s,
@@ -92,8 +108,8 @@ async fn ws_worker(url: String, event_tx: Sender<WsEvent>, action_rx: Receiver<A
                 }
                 // Poll outbound action queue every 16 ms
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(16)) => {
-                    while let Ok(action) = action_rx.try_recv() {
-                        let json = serde_json::to_string(&action).expect("serialize action");
+                    while let Ok(msg) = action_rx.try_recv() {
+                        let json = serde_json::to_string(&msg).expect("serialize message");
                         if write.send(WsMessage::Text(json)).await.is_err() {
                             break 'inner;
                         }
@@ -122,28 +138,53 @@ pub fn process_ws_events(
         match event {
             WsEvent::Connected => {
                 state.connected = true;
-                // JoinGame will be sent once Welcome arrives (see ServerMessage::Welcome).
             }
             WsEvent::MessageReceived(msg) => match msg {
                 ServerMessage::Welcome { your_id } => {
                     state.my_id = Some(your_id);
-                    if let Some((name, color)) = state.pending_join.take() {
-                        channels
-                            .action_tx
-                            .send(Action::JoinGame { name, color })
-                            .ok();
+                    // Move to room browser so the player can create or join a room.
+                    state.screen = crate::state::Screen::RoomBrowser;
+                    // Request the current room list immediately.
+                    channels.send_lobby(LobbyAction::ListRooms);
+                    // If auto-room is set (CLI), create/join it straight away.
+                    if let Some(room_name) = state.auto_room.clone() {
+                        channels.send_lobby(LobbyAction::CreateRoom { name: room_name });
                     }
                 }
+                ServerMessage::RoomJoined { room, your_id } => {
+                    state.my_id = Some(your_id);
+                    state.current_room = Some(room.clone());
+                    state.error_message = None;
+                    // Auto-join as a player if we have a pending name/color.
+                    if let Some((name, color)) = state.pending_join.take() {
+                        channels.send_room(&room, powergrid_core::Action::JoinGame { name, color });
+                    }
+                }
+                ServerMessage::RoomLeft { .. } => {
+                    state.current_room = None;
+                    state.game_state = None;
+                    state.screen = crate::state::Screen::RoomBrowser;
+                    // Refresh the room list.
+                    channels.send_lobby(LobbyAction::ListRooms);
+                }
+                ServerMessage::RoomList { rooms } => {
+                    state.room_list = rooms;
+                }
                 ServerMessage::StateUpdate(gs) => {
-                    state.handle_state_update(*gs, &channels.action_tx);
+                    state.handle_state_update(*gs);
                 }
                 ServerMessage::ActionError { message } => {
+                    state.error_message = Some(message);
+                }
+                ServerMessage::LobbyError { message } => {
                     state.error_message = Some(message);
                 }
                 ServerMessage::Event { .. } => {}
             },
             WsEvent::Disconnected => {
                 state.connected = false;
+                state.current_room = None;
+                state.game_state = None;
             }
         }
     }

@@ -1,4 +1,4 @@
-use crate::types::{CityId, PlayerColor, Resource};
+use crate::types::{CityId, PlayerColor, PlayerId, Resource};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -111,11 +111,67 @@ pub enum ServerMessage {
     ActionError { message: String },
     /// Informational event (e.g. "Hamburg was built by Red").
     Event { message: String },
+    /// Lobby-level error (room not found, name taken, etc.).
+    LobbyError { message: String },
+    /// Current list of rooms (response to ListRooms).
+    RoomList { rooms: Vec<RoomSummary> },
+    /// Sent to a client when they successfully join or create a room.
+    RoomJoined { room: String, your_id: PlayerId },
+    /// Sent to a client when they leave a room.
+    RoomLeft { room: String },
+}
+
+// ---------------------------------------------------------------------------
+// Lobby protocol
+// ---------------------------------------------------------------------------
+
+/// Top-level envelope for all client→server messages in the lobby server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientMessage {
+    /// Lobby-level actions (room management, bot management).
+    Lobby(LobbyAction),
+    /// In-game action, scoped to a named room.
+    Room { room: String, action: Action },
+}
+
+/// Lobby-level actions not routed through `apply_action`.
+/// Uses `"action"` as the tag field (not `"type"`) so it can be inlined
+/// into the parent `ClientMessage` object without a duplicate `"type"` key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum LobbyAction {
+    /// List all current rooms.
+    ListRooms,
+    /// Create a new room with the given name.
+    CreateRoom { name: String },
+    /// Join an existing room.
+    JoinRoom { name: String },
+    /// Leave the current room.
+    LeaveRoom,
+    /// Add an in-process bot to the current room (host only, lobby phase only).
+    AddBot {
+        bot_name: String,
+        color: PlayerColor,
+    },
+    /// Remove a bot from the current room (host only, lobby phase only).
+    RemoveBot { bot_id: PlayerId },
+}
+
+/// Summary of a room for the room-list response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomSummary {
+    pub name: String,
+    pub player_count: u8,
+    pub max_players: u8,
+    pub in_lobby: bool,
+    pub has_started: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_action_error_serde_roundtrip() {
@@ -127,6 +183,86 @@ mod tests {
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert!(
             matches!(parsed, ServerMessage::ActionError { message } if message == "it is not your turn")
+        );
+    }
+
+    #[test]
+    fn test_lobby_error_serde_roundtrip() {
+        let msg = ServerMessage::LobbyError {
+            message: "room not found".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(parsed, ServerMessage::LobbyError { message } if message == "room not found")
+        );
+    }
+
+    #[test]
+    fn test_room_joined_serde_roundtrip() {
+        let id = Uuid::new_v4();
+        let msg = ServerMessage::RoomJoined {
+            room: "alpha".to_string(),
+            your_id: id,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(parsed, ServerMessage::RoomJoined { room, your_id } if room == "alpha" && your_id == id)
+        );
+    }
+
+    #[test]
+    fn test_room_left_serde_roundtrip() {
+        let msg = ServerMessage::RoomLeft {
+            room: "alpha".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ServerMessage::RoomLeft { room } if room == "alpha"));
+    }
+
+    #[test]
+    fn test_room_list_serde_roundtrip() {
+        let msg = ServerMessage::RoomList {
+            rooms: vec![RoomSummary {
+                name: "friday".to_string(),
+                player_count: 2,
+                max_players: 6,
+                in_lobby: true,
+                has_started: false,
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, ServerMessage::RoomList { rooms } if rooms.len() == 1));
+    }
+
+    #[test]
+    fn test_client_message_lobby_serde_roundtrip() {
+        let msg = ClientMessage::Lobby(LobbyAction::CreateRoom {
+            name: "test-room".to_string(),
+        });
+        let json = serde_json::to_string(&msg).unwrap();
+        // Verify the wire format: type=lobby, action=create_room, name=test-room all in one object.
+        assert!(json.contains("\"type\":\"lobby\""), "json: {json}");
+        assert!(json.contains("\"action\":\"create_room\""), "json: {json}");
+        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(parsed, ClientMessage::Lobby(LobbyAction::CreateRoom { name }) if name == "test-room")
+        );
+    }
+
+    #[test]
+    fn test_client_message_room_serde_roundtrip() {
+        let msg = ClientMessage::Room {
+            room: "my-room".to_string(),
+            action: Action::StartGame,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ClientMessage = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(parsed, ClientMessage::Room { room, action: Action::StartGame } if room == "my-room")
         );
     }
 }

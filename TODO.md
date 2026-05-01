@@ -50,6 +50,7 @@
 * IMPROVEMENT: Smarter bots (don't buy so many resources)
 * IMPROVEMENT: Show replenishment on resource market
 
+# v0.3.6
 
 
 # To do...
