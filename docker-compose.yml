@@ -6,3 +6,13 @@ services:
     environment:
       - PORT=3000
       - RUST_LOG=info
+
+  lobby:
+    build:
+      context: .
+      dockerfile: Dockerfile.lobby
+    ports:
+      - "3001:3000"
+    environment:
+      - PORT=3000
+      - RUST_LOG=info

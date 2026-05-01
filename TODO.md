@@ -50,11 +50,17 @@
 * IMPROVEMENT: Smarter bots (don't buy so many resources)
 * IMPROVEMENT: Show replenishment on resource market
 
-# v0.3.6
+# v0.4.0
+
+* Add lobby to launch games
+
+# v0.4.1
+
 
 
 # To do...
 
+* CHECK: Make sure build successful, lobby dockerfile published.  Set up on server
 * IMPROVEMENT: Square rather than circle hit-shape for city.  Add city name. Cover connection lines.
 * BUG: Two people pick same color, can't start game
 * COMPLAINT: Less reading for Nick

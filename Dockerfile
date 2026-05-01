@@ -8,6 +8,8 @@ RUN mkdir -p crates/powergrid-client/src && echo 'fn main(){}' > crates/powergri
 COPY crates/powergrid-client/Cargo.toml crates/powergrid-client/Cargo.toml
 RUN mkdir -p crates/powergrid-bot/src && echo 'fn main(){}' > crates/powergrid-bot/src/main.rs
 COPY crates/powergrid-bot/Cargo.toml crates/powergrid-bot/Cargo.toml
+RUN mkdir -p crates/powergrid-lobby/src && echo 'fn main(){}' > crates/powergrid-lobby/src/main.rs
+COPY crates/powergrid-lobby/Cargo.toml crates/powergrid-lobby/Cargo.toml
 
 RUN cargo build --release -p powergrid-server
 
