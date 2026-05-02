@@ -50,9 +50,8 @@ pub struct AppState {
 
     // Connection state
     pub connected: bool,
+    pub pending_connect: bool,
     pub my_id: Option<PlayerId>,
-    /// Color to send once we enter a room (username comes from auth).
-    pub pending_join: Option<PlayerColor>,
 
     // Lobby / room state
     pub current_room: Option<String>,
@@ -138,8 +137,8 @@ impl AppState {
             port,
             selected_color,
             connected: false,
+            pending_connect: false,
             my_id: None,
-            pending_join: None,
             current_room: None,
             room_list: Vec::new(),
             room_name_input: String::new(),
@@ -195,6 +194,7 @@ impl AppState {
         self.auth_error = None;
         self.auth_in_flight = false;
         self.connected = false;
+        self.pending_connect = false;
         self.my_id = None;
         self.current_room = None;
         self.game_state = None;

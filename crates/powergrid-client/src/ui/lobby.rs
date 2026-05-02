@@ -23,6 +23,7 @@ pub(super) fn lobby_screen(
     my_id: PlayerId,
 ) {
     let room = state.current_room.as_deref();
+    let already_joined = gs.players.iter().any(|p| p.id == my_id);
     let is_host = gs.host_id() == Some(my_id);
 
     egui::CentralPanel::default()
@@ -55,30 +56,131 @@ pub(super) fn lobby_screen(
                     );
                     ui.add_space(8.0);
 
+                    if gs.players.is_empty() {
+                        ui.label(
+                            RichText::new("No operators have joined yet.")
+                                .color(theme::TEXT_DIM)
+                                .small(),
+                        );
+                    }
+
                     for player in &gs.players {
                         ui.horizontal(|ui| {
                             let c = player_color_to_egui(player.color);
-                            let is_bot = state
-                                .current_room
-                                .as_deref()
-                                .map(|_| false) // bots appear in players list normally
-                                .unwrap_or(false);
-                            let _ = is_bot;
                             ui.colored_label(c, format!("■  {}", player.name));
                             if player.id == my_id {
                                 ui.label(RichText::new("(you)").color(theme::TEXT_DIM).small());
                             }
-                            // Host can remove bots (identified by not having a human sender —
-                            // we approximate by checking if the id is in the bot list; since
-                            // we don't track bot IDs client-side, just show Remove for non-self
-                            // entries when host. The server enforces the restriction.)
                         });
                     }
                 });
 
                 ui.add_space(20.0);
 
-                // Add Bot section (host only)
+                // If not yet joined as a player, show color picker + join button.
+                if !already_joined {
+                    theme::neon_frame().show(ui, |ui| {
+                        ui.set_width(400.0);
+                        ui.label(
+                            RichText::new("PICK YOUR FACTION COLOR")
+                                .color(theme::TEXT_DIM)
+                                .small(),
+                        );
+                        ui.add_space(8.0);
+
+                        let taken: std::collections::HashSet<PlayerColor> =
+                            gs.players.iter().map(|p| p.color).collect();
+
+                        ui.horizontal(|ui| {
+                            for color in [
+                                PlayerColor::Red,
+                                PlayerColor::Blue,
+                                PlayerColor::Green,
+                                PlayerColor::Yellow,
+                                PlayerColor::Purple,
+                                PlayerColor::White,
+                            ] {
+                                let available = !taken.contains(&color);
+                                let egui_color = if available {
+                                    player_color_to_egui(color)
+                                } else {
+                                    // Desaturated for taken colors
+                                    let c = player_color_to_egui(color);
+                                    egui::Color32::from_rgba_unmultiplied(
+                                        (c.r() as f32 * 0.25) as u8,
+                                        (c.g() as f32 * 0.25) as u8,
+                                        (c.b() as f32 * 0.25) as u8,
+                                        120,
+                                    )
+                                };
+                                let selected = state.selected_color == color;
+                                let btn = egui::Button::new(
+                                    RichText::new(color_label(color)).color(if selected {
+                                        egui::Color32::BLACK
+                                    } else {
+                                        egui_color
+                                    }),
+                                )
+                                .fill(if selected {
+                                    egui_color
+                                } else {
+                                    theme::BG_WIDGET
+                                })
+                                .stroke(egui::Stroke::new(
+                                    if selected { 2.0 } else { 1.0 },
+                                    egui_color,
+                                ));
+                                if ui.add_enabled(available, btn).clicked() {
+                                    state.selected_color = color;
+                                }
+                            }
+                        });
+
+                        ui.add_space(8.0);
+
+                        let chosen_free = !taken.contains(&state.selected_color);
+                        let can_join = chosen_free && gs.players.len() < 6;
+                        if ui
+                            .add_enabled(
+                                can_join,
+                                egui::Button::new(
+                                    RichText::new("[ JOIN GAME ]")
+                                        .color(if can_join {
+                                            theme::BG_DEEP
+                                        } else {
+                                            theme::TEXT_DIM
+                                        })
+                                        .monospace(),
+                                )
+                                .fill(if can_join {
+                                    theme::NEON_CYAN
+                                } else {
+                                    theme::BG_WIDGET
+                                })
+                                .stroke(egui::Stroke::new(
+                                    1.5,
+                                    if can_join {
+                                        theme::NEON_CYAN
+                                    } else {
+                                        theme::NEON_CYAN_DARK
+                                    },
+                                )),
+                            )
+                            .clicked()
+                        {
+                            let name = state
+                                .auth_username
+                                .clone()
+                                .unwrap_or_else(|| "Operator".to_string());
+                            let color = state.selected_color;
+                            send(Action::JoinGame { name, color }, room, channels);
+                        }
+                    });
+
+                    ui.add_space(20.0);
+                }
+
+                // Add Bot section (host only, while in lobby phase)
                 if is_host {
                     theme::neon_frame().show(ui, |ui| {
                         ui.set_width(400.0);
@@ -90,6 +192,8 @@ pub(super) fn lobby_screen(
                         });
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Color:").color(theme::TEXT_DIM).small());
+                            let taken: std::collections::HashSet<PlayerColor> =
+                                gs.players.iter().map(|p| p.color).collect();
                             for color in [
                                 PlayerColor::Red,
                                 PlayerColor::Blue,
@@ -98,6 +202,7 @@ pub(super) fn lobby_screen(
                                 PlayerColor::Purple,
                                 PlayerColor::White,
                             ] {
+                                let available = !taken.contains(&color);
                                 let egui_color = player_color_to_egui(color);
                                 let selected = state.bot_color_input == color;
                                 let btn = egui::Button::new(
@@ -116,7 +221,7 @@ pub(super) fn lobby_screen(
                                     if selected { 2.0 } else { 1.0 },
                                     egui_color,
                                 ));
-                                if ui.add(btn).clicked() {
+                                if ui.add_enabled(available, btn).clicked() {
                                     state.bot_color_input = color;
                                 }
                             }
@@ -194,7 +299,7 @@ pub(super) fn lobby_screen(
                     if ui.add_enabled(enough, btn).clicked() {
                         send(Action::StartGame, room, channels);
                     }
-                } else {
+                } else if already_joined {
                     ui.label(
                         RichText::new("● AWAITING HOST INITIALIZATION…")
                             .color(theme::NEON_AMBER)

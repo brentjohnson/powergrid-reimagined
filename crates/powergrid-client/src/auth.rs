@@ -31,8 +31,8 @@ pub fn load_credentials() -> Option<SavedCredentials> {
 }
 
 pub fn save_credentials(c: &SavedCredentials) -> std::io::Result<()> {
-    let path = credentials_path()
-        .ok_or_else(|| std::io::Error::other("could not resolve config dir"))?;
+    let path =
+        credentials_path().ok_or_else(|| std::io::Error::other("could not resolve config dir"))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

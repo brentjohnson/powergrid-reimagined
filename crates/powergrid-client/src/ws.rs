@@ -150,7 +150,7 @@ pub fn process_ws_events(
                 ServerMessage::Authenticated { user_id, username } => {
                     state.my_id = Some(user_id);
                     state.auth_username = Some(username);
-                    // Move to room browser so the player can create or join a room.
+                    state.pending_connect = false;
                     state.screen = crate::state::Screen::RoomBrowser;
                     channels.send_lobby(LobbyAction::ListRooms);
                     if let Some(room_name) = state.auto_room.clone() {
@@ -160,7 +160,6 @@ pub fn process_ws_events(
                 ServerMessage::AuthError { message } => {
                     state.auth_error = Some(message);
                     state.connected = false;
-                    state.pending_join = None;
                     // Saved token is invalid; clear it and send back to login.
                     state.logout();
                 }
@@ -171,14 +170,7 @@ pub fn process_ws_events(
                     state.my_id = Some(your_id);
                     state.current_room = Some(room.clone());
                     state.error_message = None;
-                    // Auto-join as a player if we have a pending color.
-                    if let Some(color) = state.pending_join.take() {
-                        let name = state
-                            .auth_username
-                            .clone()
-                            .unwrap_or_else(|| "Operator".to_string());
-                        channels.send_room(&room, powergrid_core::Action::JoinGame { name, color });
-                    }
+                    // Color is picked in the in-room lobby; no auto-join here.
                 }
                 ServerMessage::RoomLeft { .. } => {
                     state.current_room = None;

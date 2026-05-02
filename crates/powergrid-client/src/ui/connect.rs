@@ -1,15 +1,12 @@
 use bevy::prelude::Commands;
 use bevy_egui::egui;
 use egui::RichText;
-use powergrid_core::types::PlayerColor;
 
 use crate::{
     auth::{do_logout, AuthEvent},
-    state::{player_color_to_egui, AppState},
+    state::AppState,
     theme, ws,
 };
-
-use super::helpers::color_label;
 
 pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands: &mut Commands) {
     egui::CentralPanel::default()
@@ -80,56 +77,9 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                     ui.label(RichText::new("SERVER NAME").color(theme::TEXT_DIM).small());
                     ui.text_edit_singleline(&mut state.server_name);
 
-                    // Color selector
-                    ui.label(
-                        RichText::new("FACTION COLOR")
-                            .color(theme::TEXT_DIM)
-                            .small(),
-                    );
-                    let btn_row_id = ui.id().with("color_btn_row_width");
-                    let row_width: f32 = ui.ctx().data(|d| d.get_temp(btn_row_id).unwrap_or(0.0));
-                    let leading = ((ui.available_width() - row_width) / 2.0).max(0.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(leading);
-                        let x0 = ui.cursor().left();
-                        for color in [
-                            PlayerColor::Red,
-                            PlayerColor::Blue,
-                            PlayerColor::Green,
-                            PlayerColor::Yellow,
-                            PlayerColor::Purple,
-                            PlayerColor::White,
-                        ] {
-                            let egui_color = player_color_to_egui(color);
-                            let selected = state.selected_color == color;
-                            let label = color_label(color);
-
-                            let btn = egui::Button::new(RichText::new(label).color(if selected {
-                                egui::Color32::BLACK
-                            } else {
-                                egui_color
-                            }))
-                            .fill(if selected {
-                                egui_color
-                            } else {
-                                theme::BG_WIDGET
-                            })
-                            .stroke(egui::Stroke::new(
-                                if selected { 2.0 } else { 1.0 },
-                                egui_color,
-                            ));
-
-                            if ui.add(btn).clicked() {
-                                state.selected_color = color;
-                            }
-                        }
-                        let measured = ui.min_rect().right() - x0;
-                        ui.ctx().data_mut(|d| d.insert_temp(btn_row_id, measured));
-                    });
-
                     ui.add_space(8.0);
 
-                    let can_connect = state.auth_token.is_some();
+                    let can_connect = state.auth_token.is_some() && !state.pending_connect;
                     let connect_btn = egui::Button::new(
                         RichText::new("[ CONNECT ]")
                             .color(if can_connect {
@@ -154,15 +104,14 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                     ));
 
                     if ui.add_enabled(can_connect, connect_btn).clicked() {
-                        let color = state.selected_color;
-                        state.pending_join = Some(color);
+                        state.pending_connect = true;
                         let url = state.ws_url();
                         let channels = ws::spawn_ws(url);
                         commands.insert_resource(channels);
                     }
                 });
 
-                if !state.connected && state.pending_join.is_some() {
+                if state.pending_connect {
                     ui.add_space(12.0);
                     ui.label(
                         RichText::new("● CONNECTING…")
