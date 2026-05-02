@@ -65,6 +65,8 @@
 # To do...
 
 * IMPROVEMENT: implement user accounts
+* IMPROVEMENT: don't select color on connect, select for each game
+* IMPROVEMENT: user can save color preferences in account (order of pref)
 * IMPROVEMENT: implement user statistics
 * IMPROVEMENT: implement game statistics
 * IMPROVEMENT: implement game state save

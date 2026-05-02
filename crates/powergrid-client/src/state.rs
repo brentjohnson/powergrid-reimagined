@@ -536,6 +536,21 @@ impl CliArgs {
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
+                "-h" | "--help" => {
+                    println!(
+                        "Usage: powergrid-client [options]
+
+Options:
+  --color <color>   Auto-select player color on connect
+                      Choices: red, blue, green, yellow, purple, white
+  --server <host>   Server hostname to connect to
+  --port <port>     Server port
+  --room <name>     Auto-create/join this room on connect
+  -w, --windowed    Run in windowed mode (default: borderless fullscreen)
+  -h, --help        Show this help message"
+                    );
+                    std::process::exit(0);
+                }
                 "--color" => {
                     color = args.next().and_then(|s| match s.to_lowercase().as_str() {
                         "red" => Some(PlayerColor::Red),

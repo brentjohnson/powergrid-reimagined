@@ -28,6 +28,23 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().any(|a| a == "-h" || a == "--help") {
+        println!(
+            "Usage: powergrid-lobby
+
+Environment variables:
+  PORT          Port to listen on (default: 3000)
+  DATABASE_URL  PostgreSQL connection URL (required)
+  MAP_FILE      Path to a custom map TOML file (default: embedded Germany map)
+  BOT_DELAY_MS  Delay between bot moves in milliseconds (default: 250)
+  RUST_LOG      Log filter, e.g. debug or info (default: info)
+
+Options:
+  -h, --help   Show this help message"
+        );
+        std::process::exit(0);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {

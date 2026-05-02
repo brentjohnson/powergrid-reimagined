@@ -32,6 +32,10 @@ fn parse_args() -> Result<Args, String> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
             "--name" => {
                 i += 1;
                 name = args.get(i).cloned();
@@ -61,6 +65,20 @@ fn parse_args() -> Result<Args, String> {
         server,
         port,
     })
+}
+
+fn print_help() {
+    println!(
+        "Usage: powergrid-bot --name <name> --color <color> [options]
+
+Options:
+  --name <name>    Bot player name (required)
+  --color <color>  Bot player color (required)
+                     Choices: red, blue, green, yellow, purple, white
+  --server <host>  Server hostname (default: localhost)
+  --port <port>    Server port (default: 3000)
+  -h, --help       Show this help message"
+    );
 }
 
 fn parse_color(s: &str) -> Result<PlayerColor, String> {

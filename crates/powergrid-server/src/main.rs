@@ -30,6 +30,21 @@ impl ServerState {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().any(|a| a == "-h" || a == "--help") {
+        println!(
+            "Usage: powergrid-server
+
+Environment variables:
+  PORT       Port to listen on (default: 3000)
+  MAP_FILE   Path to a custom map TOML file (default: embedded Germany map)
+  RUST_LOG   Log filter, e.g. debug or info (default: info)
+
+Options:
+  -h, --help   Show this help message"
+        );
+        std::process::exit(0);
+    }
+
     tracing_subscriber::fmt::init();
 
     const DEFAULT_MAP: &str = include_str!("../maps/germany.toml");
