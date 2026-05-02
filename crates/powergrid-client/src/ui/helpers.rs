@@ -77,12 +77,10 @@ pub(super) fn color_label(c: PlayerColor) -> &'static str {
     }
 }
 
-/// Send an in-game action scoped to the given room name.
+/// Send an in-game action. In Lobby mode uses a room-scoped message; in Legacy mode sends bare.
 pub(super) fn send(action: Action, room: Option<&str>, channels: &Option<Res<WsChannels>>) {
     if let Some(ch) = channels {
-        if let Some(r) = room {
-            ch.send_room(r, action);
-        }
+        ch.send_action(room, action);
     }
 }
 

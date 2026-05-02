@@ -3,7 +3,9 @@ mod connect;
 mod helpers;
 mod left_panel;
 mod lobby;
+mod local_setup;
 mod login;
+mod main_menu;
 mod phase_tracker;
 mod register;
 mod right_panel;
@@ -17,6 +19,7 @@ use egui::{Color32, RichText};
 use powergrid_core::types::Phase;
 
 use crate::{
+    local::LocalHandle,
     state::{AppState, Screen},
     theme,
     ws::WsChannels,
@@ -35,8 +38,6 @@ pub fn ui_system(
 ) -> bevy::prelude::Result {
     let ctx = contexts.ctx_mut()?;
 
-    // Re-apply theme every frame so settings survive window resize etc.
-    // (cheap — just copies a struct)
     theme::apply(ctx);
 
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -44,6 +45,12 @@ pub fn ui_system(
     }
 
     match state.screen {
+        Screen::MainMenu => {
+            main_menu::main_menu_screen(ctx, &mut state, &mut exit_writer);
+        }
+        Screen::LocalSetup => {
+            local_setup::local_setup_screen(ctx, &mut state, &mut commands);
+        }
         Screen::Login => {
             login::login_screen(ctx, &mut state);
         }
@@ -69,6 +76,25 @@ pub fn ui_system(
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.add_space(8.0);
+                if ui
+                    .add(helpers::neon_button(
+                        "[ BACK TO MAIN MENU ]",
+                        theme::NEON_AMBER,
+                    ))
+                    .clicked()
+                {
+                    commands.remove_resource::<LocalHandle>();
+                    commands.remove_resource::<WsChannels>();
+                    state.connected = false;
+                    state.pending_connect = false;
+                    state.my_id = None;
+                    state.current_room = None;
+                    state.game_state = None;
+                    state.error_message = None;
+                    state.screen = Screen::MainMenu;
+                    state.menu_open = false;
+                }
+                ui.add_space(4.0);
                 if ui
                     .add(helpers::neon_button("[ EXIT ]", theme::NEON_RED))
                     .clicked()
@@ -107,7 +133,6 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
         return;
     }
 
-    // Top panel — phase info and resource market
     egui::TopBottomPanel::top("top_panel")
         .exact_height(180.0)
         .frame(
@@ -120,7 +145,6 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
             top_panel::top_panel_contents(ui, gs.clone(), state, channels, my_id);
         });
 
-    // Left panel — player info
     egui::SidePanel::left("player_panel")
         .resizable(false)
         .exact_width(220.0)
@@ -137,7 +161,6 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
             });
         });
 
-    // Right panel — plant market, actions, event log
     egui::SidePanel::right("info_panel")
         .resizable(false)
         .exact_width(400.0)
@@ -150,7 +173,6 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
         .show(ctx, |ui| {
             let half_height = ui.available_height() / 2.0;
 
-            // Top half: action console, scrollable, pinned to half height
             egui::ScrollArea::vertical()
                 .max_height(half_height)
                 .show(ui, |ui| {
@@ -159,11 +181,9 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: &Option<Res<
                     right_panel::action_console_contents(ui, state, channels, &gs, my_id);
                 });
 
-            // Bottom half: event log at fixed midpoint
             right_panel::event_log_contents(ui, &gs);
         });
 
-    // Central map
     egui::CentralPanel::default()
         .frame(
             egui::Frame::NONE

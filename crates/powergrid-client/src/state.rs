@@ -18,6 +18,8 @@ pub type CitySnapshot = Vec<(PlayerId, usize)>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Screen {
+    MainMenu,
+    LocalSetup,
     Login,
     Register,
     Connect,
@@ -97,6 +99,13 @@ pub struct AppState {
 
     // ESC menu overlay
     pub menu_open: bool,
+
+    // Local play setup
+    pub local_name: String,
+    pub local_color: PlayerColor,
+    pub local_bot_count: u8,
+    /// Total expected players (human + bots) for the current local session. 0 = not set.
+    pub local_expected_players: u8,
 }
 
 impl AppState {
@@ -107,18 +116,18 @@ impl AppState {
         let port = cli.port.unwrap_or(3000);
         let selected_color = cli.color.unwrap_or(PlayerColor::Red);
 
-        // Load saved credentials; skip Login screen if they exist.
+        // Load saved credentials; always start on MainMenu but seed auth fields for Online play.
         let saved = crate::auth::load_credentials();
-        let (screen, auth_token, auth_username, auth_user_id) = if let Some(ref c) = saved {
+        let (auth_token, auth_username, auth_user_id) = if let Some(ref c) = saved {
             (
-                Screen::Connect,
                 Some(c.token.clone()),
                 Some(c.username.clone()),
                 Some(c.user_id),
             )
         } else {
-            (Screen::Login, None, None, None)
+            (None, None, None)
         };
+        let screen = Screen::MainMenu;
 
         Self {
             screen,
@@ -161,6 +170,10 @@ impl AppState {
             city_history: Vec::new(),
             last_recorded_round: 0,
             menu_open: false,
+            local_name: "You".to_string(),
+            local_color: PlayerColor::Red,
+            local_bot_count: 3,
+            local_expected_players: 0,
         }
     }
 

@@ -3,6 +3,14 @@ name = "powergrid-server"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "powergrid_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "powergrid-server"
+path = "src/main.rs"
+
 [dependencies]
 powergrid-core = { path = "../powergrid-core" }
 serde = { workspace = true }

@@ -106,7 +106,7 @@ pub(super) fn connect_screen(ctx: &egui::Context, state: &mut AppState, commands
                     if ui.add_enabled(can_connect, connect_btn).clicked() {
                         state.pending_connect = true;
                         let url = state.ws_url();
-                        let channels = ws::spawn_ws(url);
+                        let channels = ws::spawn_ws(url, ws::WsMode::Lobby);
                         commands.insert_resource(channels);
                     }
                 });

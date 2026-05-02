@@ -23,7 +23,7 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      - RUST_LOG=info
+      - RUST_LOG=debug
       - DATABASE_URL=postgres://powergrid:powergrid@postgres:5432/powergrid
     depends_on:
       postgres:

@@ -70,6 +70,7 @@
 * IMPROVEMENT: implement user statistics
 * IMPROVEMENT: implement game statistics
 * IMPROVEMENT: implement game state save
+* IMPROVEMENT: configurable bot speed (in settings menu)
 * IMPROVEMENT: Square rather than circle hit-shape for city.  Add city name. Cover connection lines.
 * BUG: Two people pick same color, can't start game
 * COMPLAINT: Less reading for Nick

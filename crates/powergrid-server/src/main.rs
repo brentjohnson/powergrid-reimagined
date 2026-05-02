@@ -1,32 +1,6 @@
-mod ws;
-
-use axum::{
-    extract::{State, WebSocketUpgrade},
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
-use powergrid_core::{map::Map, GameState};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use powergrid_core::map::Map;
+use powergrid_server::serve_embedded;
 use tracing::info;
-
-pub type SharedState = Arc<Mutex<ServerState>>;
-
-pub struct ServerState {
-    pub game: GameState,
-    /// Senders for all connected clients: (player_id, tx).
-    pub clients: Vec<(uuid::Uuid, tokio::sync::mpsc::UnboundedSender<String>)>,
-}
-
-impl ServerState {
-    pub fn new(map: Map) -> Self {
-        Self {
-            game: GameState::new(map, 6),
-            clients: Vec::new(),
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() {
@@ -58,26 +32,12 @@ Options:
         DEFAULT_MAP.to_string()
     };
     let map = Map::load(&map_str).unwrap_or_else(|e| panic!("Failed to parse map: {e}"));
-
     info!("Loaded map: {}", map.name);
 
-    let state: SharedState = Arc::new(Mutex::new(ServerState::new(map)));
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/ws", get(ws_handler))
-        .with_state(state);
-
     let addr = format!("0.0.0.0:{port}");
-    info!("Listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
-}
-
-async fn health() -> &'static str {
-    "ok"
-}
-
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<SharedState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, state))
+    let (bound_addr, fut) = serve_embedded(map, &addr)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to bind {addr}: {e}"));
+    info!("Listening on {bound_addr}");
+    fut.await.unwrap_or_else(|e| panic!("Server error: {e}"));
 }
