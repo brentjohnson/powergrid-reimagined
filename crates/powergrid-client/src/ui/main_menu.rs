@@ -44,6 +44,15 @@ pub(super) fn main_menu_screen(
                     ui.set_width(300.0);
                     ui.spacing_mut().item_spacing.y = 12.0;
 
+                    if let Some(ref username) = state.auth_username.clone() {
+                        ui.label(
+                            RichText::new(format!("● {username}"))
+                                .color(theme::NEON_CYAN)
+                                .monospace()
+                                .small(),
+                        );
+                    }
+
                     if ui
                         .add(neon_button("[ LOCAL PLAY ]", theme::NEON_GREEN))
                         .clicked()
@@ -55,11 +64,20 @@ pub(super) fn main_menu_screen(
                         .add(neon_button("[ ONLINE PLAY ]", theme::NEON_CYAN))
                         .clicked()
                     {
-                        state.screen = if state.auth_token.is_some() {
-                            Screen::Connect
+                        if state.auth_token.is_some() {
+                            state.pending_connect = true;
+                            state.screen = Screen::RoomBrowser;
                         } else {
-                            Screen::Login
-                        };
+                            state.screen = Screen::Login;
+                        }
+                    }
+
+                    if state.auth_token.is_some()
+                        && ui
+                            .add(neon_button("[ LOG OUT ]", theme::NEON_RED))
+                            .clicked()
+                    {
+                        state.trigger_logout();
                     }
 
                     if ui

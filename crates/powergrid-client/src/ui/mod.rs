@@ -1,5 +1,4 @@
 mod action_panel;
-mod connect;
 mod helpers;
 mod left_panel;
 mod lobby;
@@ -40,6 +39,12 @@ pub fn ui_system(
 
     theme::apply(ctx);
 
+    // Auto-connect when pending_connect is set and no connection exists yet.
+    if state.pending_connect && channels.is_none() {
+        let url = state.ws_url();
+        commands.insert_resource(crate::ws::spawn_ws(url));
+    }
+
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         state.menu_open = !state.menu_open;
     }
@@ -56,9 +61,6 @@ pub fn ui_system(
         }
         Screen::Register => {
             register::register_screen(ctx, &mut state);
-        }
-        Screen::Connect => {
-            connect::connect_screen(ctx, &mut state, &mut commands);
         }
         Screen::RoomBrowser => {
             room_browser::room_browser_screen(ctx, &mut state, &channels);

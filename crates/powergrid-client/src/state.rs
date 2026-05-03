@@ -25,7 +25,6 @@ pub enum Screen {
     LocalSetup,
     Login,
     Register,
-    Connect,
     RoomBrowser,
     Game,
 }
@@ -197,7 +196,26 @@ impl AppState {
         self.port = creds.port;
         self.auth_error = None;
         self.auth_in_flight = false;
-        self.screen = Screen::Connect;
+        self.pending_connect = true;
+        self.screen = Screen::RoomBrowser;
+    }
+
+    /// Fire-and-forget logout: spawns a background thread to hit the auth endpoint,
+    /// then updates state via the shared auth_pending slot.
+    pub fn trigger_logout(&mut self) {
+        use crate::auth::{do_logout, AuthEvent};
+        if let (Some(token), server, port) =
+            (self.auth_token.clone(), self.server_name.clone(), self.port)
+        {
+            let slot = self.auth_pending.0.clone();
+            std::thread::spawn(move || {
+                do_logout(&server, port, &token);
+                *slot.lock().unwrap() = Some(AuthEvent::LoggedOut);
+            });
+            self.auth_in_flight = true;
+        } else {
+            self.logout();
+        }
     }
 
     /// Clear all auth state and return to Login screen.

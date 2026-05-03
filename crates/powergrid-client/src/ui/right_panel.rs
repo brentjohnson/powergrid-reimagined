@@ -44,7 +44,7 @@ pub(super) fn event_log_contents(ui: &mut Ui, gs: &GameStateView) {
         .iter()
         .map(|p| (p.name.as_str(), player_color_to_egui(p.color)))
         .collect();
-    players.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    players.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
     let font = FontId::monospace(egui::TextStyle::Small.resolve(ui.style()).size);
 

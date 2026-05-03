@@ -1,6 +1,4 @@
-cargo build --bin powergrid-server
-cargo build --bin powergrid-client
-cargo build --bin powergrid-bot
+cargo build
 
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
