@@ -1,6 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use powergrid_core::{
     actions::{Action, ServerMessage},
+    map::Map,
     types::{PlayerColor, PlayerId},
 };
 use tokio::net::TcpStream;
@@ -12,11 +13,12 @@ use tracing::{error, info, warn};
 use powergrid_bot_strategy::strategy;
 
 pub async fn run_bot(url: String, name: String, color: PlayerColor) {
+    let map = powergrid_core::default_map();
     loop {
         match connect_async(&url).await {
             Ok((stream, _)) => {
                 info!("Connected to {url}");
-                match bot_session(stream, &name, color).await {
+                match bot_session(stream, &name, color, &map).await {
                     SessionResult::GameOver => {
                         info!("Game over — exiting");
                         return;
@@ -43,6 +45,7 @@ async fn bot_session(
     stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     name: &str,
     color: PlayerColor,
+    map: &Map,
 ) -> SessionResult {
     let (mut write, mut read) = stream.split();
     let mut my_id: Option<PlayerId> = None;
@@ -82,11 +85,11 @@ async fn bot_session(
                 }
             }
 
-            ServerMessage::StateUpdate(gs) => {
+            ServerMessage::StateUpdate(view) => {
                 let Some(id) = my_id else { continue };
 
-                if let powergrid_core::types::Phase::GameOver { winner } = gs.phase {
-                    if let Some(winner_player) = gs.player(winner) {
+                if let powergrid_core::types::Phase::GameOver { winner } = &view.phase {
+                    if let Some(winner_player) = view.player(*winner) {
                         info!(
                             "Game over! Winner: {} ({:?})",
                             winner_player.name, winner_player.color
@@ -97,6 +100,7 @@ async fn bot_session(
 
                 tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
 
+                let gs = view.into_game_state(map);
                 if let Some(action) = strategy::decide(&gs, id) {
                     info!("Sending action: {:?}", action);
                     if write

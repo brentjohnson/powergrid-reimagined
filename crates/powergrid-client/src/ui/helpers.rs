@@ -4,7 +4,7 @@ use egui::{Color32, RichText, Ui};
 use powergrid_core::{
     actions::{Action, LobbyAction},
     types::{Phase, PlayerColor, PlayerId, Resource},
-    GameState,
+    GameStateView,
 };
 
 use crate::{theme, ws::WsChannels};
@@ -33,7 +33,7 @@ pub(super) fn dim_color(c: Color32) -> Color32 {
     )
 }
 
-pub(super) fn is_active_player(gs: &GameState, pid: PlayerId) -> bool {
+pub(super) fn is_active_player(gs: &GameStateView, pid: PlayerId) -> bool {
     match &gs.phase {
         Phase::Auction {
             current_bidder_idx,

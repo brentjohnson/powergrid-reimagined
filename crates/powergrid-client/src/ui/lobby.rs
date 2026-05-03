@@ -4,7 +4,7 @@ use egui::RichText;
 use powergrid_core::{
     actions::{Action, LobbyAction},
     types::{PlayerColor, PlayerId},
-    GameState,
+    GameStateView,
 };
 
 use crate::{
@@ -19,7 +19,7 @@ pub(super) fn lobby_screen(
     ctx: &egui::Context,
     state: &mut AppState,
     channels: &Option<Res<WsChannels>>,
-    gs: &GameState,
+    gs: &GameStateView,
     my_id: PlayerId,
 ) {
     let room = state.current_room.as_deref();

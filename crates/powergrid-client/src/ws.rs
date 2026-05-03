@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 use futures_util::{SinkExt, StreamExt};
 use powergrid_core::actions::{Action, ClientMessage, LobbyAction, ServerMessage};
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
 use tracing::{debug, warn};
@@ -204,9 +205,10 @@ pub fn process_ws_events(
                 ServerMessage::Welcome { .. } => {
                     // Only sent by the legacy standalone server; not used in lobby protocol.
                 }
-                ServerMessage::RoomJoined { room, your_id } => {
+                ServerMessage::RoomJoined { room, your_id, map } => {
                     state.my_id = Some(your_id);
                     state.current_room = Some(room.clone());
+                    state.map = Some(Arc::new(*map));
                     state.error_message = None;
                 }
                 ServerMessage::RoomLeft { .. } => {
@@ -233,6 +235,7 @@ pub fn process_ws_events(
                 state.connected = false;
                 state.current_room = None;
                 state.game_state = None;
+                state.map = None;
             }
         }
     }

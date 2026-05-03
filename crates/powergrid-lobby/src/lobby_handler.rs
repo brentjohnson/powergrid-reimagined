@@ -26,14 +26,16 @@ pub async fn handle_lobby_action(
                     conn.current_room = Some(name.to_lowercase());
                     let mut room = room_arc.lock().await;
                     room.add_human(conn.user_id, conn.tx.clone());
+                    let map = Box::new(room.session.game.map.clone());
                     let state_json = serde_json::to_string(&ServerMessage::StateUpdate(Box::new(
-                        room.session.game.clone(),
+                        room.session.game.view(),
                     )))
                     .unwrap();
                     drop(room);
                     conn.send_msg(&ServerMessage::RoomJoined {
                         room: name.clone(),
                         your_id: conn.user_id,
+                        map,
                     });
                     conn.send_raw(&state_json);
                     info!(
@@ -66,14 +68,16 @@ pub async fn handle_lobby_action(
             if room.humans.iter().any(|(id, _)| *id == conn.user_id) {
                 room.replace_human(conn.user_id, conn.tx.clone());
                 conn.current_room = Some(name.to_lowercase());
+                let map = Box::new(room.session.game.map.clone());
                 let state_json = serde_json::to_string(&ServerMessage::StateUpdate(Box::new(
-                    room.session.game.clone(),
+                    room.session.game.view(),
                 )))
                 .unwrap();
                 drop(room);
                 conn.send_msg(&ServerMessage::RoomJoined {
                     room: name.clone(),
                     your_id: conn.user_id,
+                    map,
                 });
                 conn.send_raw(&state_json);
                 info!(
@@ -85,14 +89,16 @@ pub async fn handle_lobby_action(
 
             room.add_human(conn.user_id, conn.tx.clone());
             conn.current_room = Some(name.to_lowercase());
+            let map = Box::new(room.session.game.map.clone());
             let state_json = serde_json::to_string(&ServerMessage::StateUpdate(Box::new(
-                room.session.game.clone(),
+                room.session.game.view(),
             )))
             .unwrap();
             drop(room);
             conn.send_msg(&ServerMessage::RoomJoined {
                 room: name.clone(),
                 your_id: conn.user_id,
+                map,
             });
             conn.send_raw(&state_json);
             info!(
@@ -142,7 +148,7 @@ pub async fn handle_lobby_action(
                     conn.send_msg(&ServerMessage::LobbyError { message: e });
                 }
                 Ok(_) => {
-                    let msg = ServerMessage::StateUpdate(Box::new(room.session.game.clone()));
+                    let msg = ServerMessage::StateUpdate(Box::new(room.session.game.view()));
                     room.broadcast_msg(&msg);
                 }
             }
@@ -179,7 +185,7 @@ pub async fn handle_lobby_action(
                     conn.send_msg(&ServerMessage::LobbyError { message: e });
                 }
                 Ok(()) => {
-                    let msg = ServerMessage::StateUpdate(Box::new(room.session.game.clone()));
+                    let msg = ServerMessage::StateUpdate(Box::new(room.session.game.view()));
                     room.broadcast_msg(&msg);
                 }
             }
@@ -213,14 +219,12 @@ pub async fn leave_room(conn: &mut ConnState, manager: &Arc<RoomManager>) {
         }
     }
 
-    let left_msg = serde_json::to_string(&ServerMessage::RoomLeft {
+    conn.send_msg(&ServerMessage::RoomLeft {
         room: room.name.clone(),
-    })
-    .unwrap();
-    conn.send_raw(&left_msg);
+    });
 
     if !room.humans.is_empty() {
-        let msg = ServerMessage::StateUpdate(Box::new(room.session.game.clone()));
+        let msg = ServerMessage::StateUpdate(Box::new(room.session.game.view()));
         room.broadcast_msg(&msg);
     }
 

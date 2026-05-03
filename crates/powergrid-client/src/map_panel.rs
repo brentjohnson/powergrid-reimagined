@@ -2,9 +2,8 @@
 /// with zoom/pan and interactive overlays (resource slots, city markers, build edges).
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui};
 use powergrid_core::{
-    map::City,
     types::{Phase, PlayerColor, PlayerId},
-    GameState,
+    GameStateView,
 };
 use std::collections::HashMap;
 
@@ -25,7 +24,12 @@ const CITY_R_FRAC: f32 = 0.011;
 
 /// Draws the full map panel and handles zoom/pan/click input.
 /// Returns `true` if a city was clicked (with city_id via `state.toggle_build_city`).
-pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: PlayerId) {
+pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id: PlayerId) {
+    // Clone the Arc so we can freely call &mut state methods below without borrow conflicts.
+    let Some(map) = state.map.clone() else {
+        return;
+    };
+
     let available = ui.available_rect_before_wrap();
 
     // Reserve the entire available area for map interaction.
@@ -64,19 +68,26 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
             let xp = (lx - ox) / img_w;
             let yp = (ly - oy) / img_h;
 
-            for (city_id, city) in &game_state.map.cities {
-                if !game_state.is_city_active(city_id) {
+            let mut clicked_city: Option<String> = None;
+            for (city_id, city) in &map.cities {
+                if !game_state.is_city_active(city_id, &map) {
                     continue;
                 }
                 if let (Some(cx), Some(cy)) = (city.x, city.y) {
                     let dx = xp - cx;
                     let dy = yp - cy;
                     if dx * dx + dy * dy <= CITY_HIT_FRAC * CITY_HIT_FRAC {
-                        state.toggle_build_city(city_id.clone());
+                        clicked_city = Some(city_id.clone());
                         break;
                     }
                 }
             }
+            // Release the map borrow before the mutable state call.
+            drop(map);
+            if let Some(city_id) = clicked_city {
+                state.toggle_build_city(city_id);
+            }
+            return;
         }
     }
 
@@ -104,7 +115,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
         let conn_color = Color32::from_rgba_unmultiplied(90, 80, 65, 180);
         let conn_glow = Color32::from_rgba_unmultiplied(180, 160, 120, 60);
         let mut drawn = std::collections::HashSet::<(String, String)>::new();
-        for (from_id, neighbors) in &game_state.map.edges {
+        for (from_id, neighbors) in &map.edges {
             for (to_id, cost) in neighbors {
                 let key = if from_id <= to_id {
                     (from_id.clone(), to_id.clone())
@@ -114,15 +125,15 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
                 if !drawn.insert(key) {
                     continue;
                 }
-                let fc = game_state.map.cities.get(from_id);
-                let tc = game_state.map.cities.get(to_id);
+                let fc = map.cities.get(from_id);
+                let tc = map.cities.get(to_id);
                 if let (
-                    Some(City {
+                    Some(powergrid_core::map::City {
                         x: Some(fx),
                         y: Some(fy),
                         ..
                     }),
-                    Some(City {
+                    Some(powergrid_core::map::City {
                         x: Some(tx),
                         y: Some(ty),
                         ..
@@ -167,15 +178,15 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
         let stroke_w = (city_r * 0.6).max(2.0);
         let edge_color = Color32::from_rgba_unmultiplied(0, 220, 255, 220);
         for (from_id, to_id) in &state.build_preview.edges {
-            let fc = game_state.map.cities.get(from_id);
-            let tc = game_state.map.cities.get(to_id);
+            let fc = map.cities.get(from_id);
+            let tc = map.cities.get(to_id);
             if let (
-                Some(City {
+                Some(powergrid_core::map::City {
                     x: Some(fx),
                     y: Some(fy),
                     ..
                 }),
-                Some(City {
+                Some(powergrid_core::map::City {
                     x: Some(tx),
                     y: Some(ty),
                     ..
@@ -200,12 +211,12 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
     // City markers — always show 3 slots (one per game step).
     // Slot states: filled (owner color), available (outline), locked (faint dot).
     // Inactive region cities render as a single dim house with no slots.
-    for (city_id, city) in &game_state.map.cities {
+    for (city_id, city) in &map.cities {
         if let (Some(cx), Some(cy)) = (city.x, city.y) {
             let center = to_screen(cx, cy);
 
             // Inactive region: single dim house, no interaction.
-            if !game_state.is_city_active(city_id) {
+            if !game_state.is_city_active(city_id, &map) {
                 painter.add(egui::Shape::convex_polygon(
                     house_points(center, city_r * 0.5),
                     Color32::from_rgba_unmultiplied(60, 60, 60, 100),
@@ -227,14 +238,21 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameState, my_id: Pl
                 );
             }
 
+            // Owners come from city_owners in the view (map.cities[].owners kept in sync too).
+            let owners = game_state
+                .city_owners
+                .get(city_id)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+
             for slot in 0usize..3 {
                 let x = center.x + (slot as f32 * spacing) - total_w / 2.0;
                 let pos = Pos2::new(x, center.y);
 
-                if slot < city.owners.len() {
+                if slot < owners.len() {
                     // Filled: white border + player color house.
                     let color = player_colors
-                        .get(&city.owners[slot])
+                        .get(&owners[slot])
                         .copied()
                         .map(player_color_to_egui)
                         .unwrap_or(theme::NEON_GREEN);

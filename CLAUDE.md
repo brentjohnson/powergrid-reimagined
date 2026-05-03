@@ -44,6 +44,7 @@ docker compose up --build
 ## Workflow
 
 Before running a build, do "cargo fmt" "cargo check" and run clippy.  Then fix any issues before building.
+When making architectural or structural changes, update CLAUDE.md accordingly.
 
 ## Architecture
 

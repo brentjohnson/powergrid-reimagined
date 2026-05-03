@@ -4,7 +4,7 @@ use egui::{RichText, Ui};
 use powergrid_core::{
     actions::Action,
     types::{Phase, PlantKind, PlayerId, Resource},
-    GameState,
+    GameStateView,
 };
 
 use crate::{card_painter, state::player_color_to_egui, state::AppState, theme, ws::WsChannels};
@@ -18,7 +18,7 @@ pub(super) fn action_panel(
     ui: &mut Ui,
     state: &mut AppState,
     channels: &Option<Res<WsChannels>>,
-    gs: &GameState,
+    gs: &GameStateView,
     my_id: PlayerId,
 ) {
     // Clone the room name so it can be used inside closures (avoids holding a borrow on state).

@@ -90,6 +90,7 @@ pub fn ui_system(
                     state.my_id = None;
                     state.current_room = None;
                     state.game_state = None;
+                    state.map = None;
                     state.error_message = None;
                     state.screen = Screen::MainMenu;
                     state.menu_open = false;

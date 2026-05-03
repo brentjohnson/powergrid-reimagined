@@ -1,6 +1,6 @@
 use bevy::prelude::Res;
 use egui::{text::LayoutJob, Color32, FontId, RichText, TextFormat, Ui};
-use powergrid_core::{types::PlayerId, GameState};
+use powergrid_core::{types::PlayerId, GameStateView};
 
 use crate::{
     state::{player_color_to_egui, AppState},
@@ -15,7 +15,7 @@ pub(super) fn action_console_contents(
     ui: &mut Ui,
     state: &mut AppState,
     channels: &Option<Res<WsChannels>>,
-    gs: &GameState,
+    gs: &GameStateView,
     my_id: PlayerId,
 ) {
     if gs.player(my_id).is_some() {
@@ -35,7 +35,7 @@ pub(super) fn action_console_contents(
     }
 }
 
-pub(super) fn event_log_contents(ui: &mut Ui, gs: &GameState) {
+pub(super) fn event_log_contents(ui: &mut Ui, gs: &GameStateView) {
     section_header(ui, "EVENT LOG");
 
     // Build (name, color) list sorted longest-first so longer names match before prefixes.

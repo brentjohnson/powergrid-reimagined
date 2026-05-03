@@ -3,11 +3,14 @@ use bevy::prelude::*;
 use powergrid_core::{
     actions::RoomSummary,
     connection_cost,
-    map::{City, Map},
+    map::Map,
     types::{Phase, PlayerColor, PlayerId, Resource},
-    GameState,
+    GameStateView,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// A snapshot of every player's city count at the end of a round.
 pub type CitySnapshot = Vec<(PlayerId, usize)>;
@@ -67,7 +70,10 @@ pub struct AppState {
     pub bot_color_input: PlayerColor,
 
     // Game state
-    pub game_state: Option<GameState>,
+    pub game_state: Option<GameStateView>,
+    /// Static map received once on RoomJoined. City owners kept current via
+    /// Arc::make_mut in handle_state_update.
+    pub map: Option<Arc<Map>>,
     pub error_message: Option<String>,
 
     // Map viewport
@@ -153,6 +159,7 @@ impl AppState {
             bot_name_input: String::new(),
             bot_color_input: PlayerColor::Blue,
             game_state: None,
+            map: None,
             error_message: None,
             map_zoom: 1.0,
             map_offset: Vec2::ZERO,
@@ -208,16 +215,30 @@ impl AppState {
         self.my_id = None;
         self.current_room = None;
         self.game_state = None;
+        self.map = None;
         self.screen = Screen::Login;
     }
 
     /// Called every time a StateUpdate arrives.
-    pub fn handle_state_update(&mut self, gs: GameState) {
+    pub fn handle_state_update(&mut self, view: GameStateView) {
+        // Update city owners in the local map from the view.
+        if let Some(map_arc) = &mut self.map {
+            let map = Arc::make_mut(map_arc);
+            for city in map.cities.values_mut() {
+                city.owners.clear();
+            }
+            for (city_id, owners) in &view.city_owners {
+                if let Some(city) = map.cities.get_mut(city_id) {
+                    city.owners = owners.clone();
+                }
+            }
+        }
+
         // Clear build selection once it's no longer our build turn.
         let still_my_build = self
             .my_id
             .map(|id| {
-                matches!(&gs.phase, Phase::BuildCities { remaining }
+                matches!(&view.phase, Phase::BuildCities { remaining }
                     if remaining.first() == Some(&id))
             })
             .unwrap_or(false);
@@ -230,7 +251,7 @@ impl AppState {
         let still_my_buy = self
             .my_id
             .map(|id| {
-                matches!(&gs.phase, Phase::BuyResources { remaining }
+                matches!(&view.phase, Phase::BuyResources { remaining }
                     if remaining.first() == Some(&id))
             })
             .unwrap_or(false);
@@ -242,7 +263,7 @@ impl AppState {
         // Clear discard-resource counters once we leave that phase.
         let still_my_discard = self
             .my_id
-            .map(|id| matches!(&gs.phase, Phase::DiscardResource { player, .. } if *player == id))
+            .map(|id| matches!(&view.phase, Phase::DiscardResource { player, .. } if *player == id))
             .unwrap_or(false);
         if !still_my_discard {
             self.discard_coal = 0;
@@ -252,23 +273,26 @@ impl AppState {
         // Clear power-fuel counter once we leave that phase.
         let still_my_fuel = self
             .my_id
-            .map(|id| matches!(&gs.phase, Phase::PowerCitiesFuel { player, .. } if *player == id))
+            .map(|id| matches!(&view.phase, Phase::PowerCitiesFuel { player, .. } if *player == id))
             .unwrap_or(false);
         if !still_my_fuel {
             self.power_fuel_coal = 0;
         }
 
         // Record city counts when the round number advances (or on first state).
-        if self.city_history.is_empty() || gs.round > self.last_recorded_round {
-            let snapshot: CitySnapshot =
-                gs.players.iter().map(|p| (p.id, p.city_count())).collect();
+        if self.city_history.is_empty() || view.round > self.last_recorded_round {
+            let snapshot: CitySnapshot = view
+                .players
+                .iter()
+                .map(|p| (p.id, p.city_count()))
+                .collect();
             self.city_history.push(snapshot);
-            self.last_recorded_round = gs.round;
+            self.last_recorded_round = view.round;
         }
 
         // Move to game screen on first state.
         self.screen = Screen::Game;
-        self.game_state = Some(gs);
+        self.game_state = Some(view);
         self.error_message = None;
 
         // Keep build preview fresh after state update.
@@ -351,18 +375,26 @@ impl AppState {
     // -----------------------------------------------------------------------
 
     pub fn toggle_build_city(&mut self, city_id: String) {
-        let Some(state) = &self.game_state else {
-            return;
-        };
         let Some(my_id) = self.my_id else { return };
 
-        if !state.is_city_active(&city_id) {
+        let active = self
+            .game_state
+            .as_ref()
+            .zip(self.map.as_deref())
+            .map(|(gs, map)| gs.is_city_active(&city_id, map))
+            .unwrap_or(false);
+        if !active {
             return;
         }
-        if let Some(city) = state.map.cities.get(&city_id) {
-            if city.owners.contains(&my_id) || city.owners.len() >= 3 {
-                return;
-            }
+
+        if self
+            .map
+            .as_deref()
+            .and_then(|m| m.cities.get(&city_id))
+            .map(|city| city.owners.contains(&my_id) || city.owners.len() >= 3)
+            .unwrap_or(false)
+        {
+            return;
         }
 
         if let Some(pos) = self
@@ -383,24 +415,19 @@ impl AppState {
     }
 
     fn refresh_build_preview(&mut self) {
-        let Some(state) = &self.game_state else {
+        let (Some(gs), Some(my_id), Some(map)) =
+            (self.game_state.as_ref(), self.my_id, self.map.as_deref())
+        else {
             self.build_preview = BuildPreview::default();
             return;
         };
-        let Some(my_id) = self.my_id else {
-            self.build_preview = BuildPreview::default();
-            return;
-        };
-        let owned = state
+        let owned = gs
             .player(my_id)
             .map(|p| p.cities.clone())
             .unwrap_or_default();
-        self.build_preview = compute_build_preview(
-            &state.map,
-            &owned,
-            &self.selected_build_cities,
-            &state.map.cities,
-        );
+        let city_owners = &gs.city_owners;
+        let selected = self.selected_build_cities.clone();
+        self.build_preview = compute_build_preview(map, &owned, &selected, city_owners);
     }
 }
 
@@ -421,7 +448,7 @@ fn compute_build_preview(
     map: &Map,
     owned: &[String],
     selected: &[String],
-    cities: &HashMap<String, City>,
+    city_owners: &HashMap<String, Vec<PlayerId>>,
 ) -> BuildPreview {
     if selected.is_empty() {
         return BuildPreview::default();
@@ -440,9 +467,9 @@ fn compute_build_preview(
                 edges.insert(edge);
             }
         }
-        let slot_cost = cities
+        let slot_cost = city_owners
             .get(city_id)
-            .map(|c| connection_cost(c.owners.len()))
+            .map(|owners| connection_cost(owners.len()))
             .unwrap_or(10);
         total_slot_cost = total_slot_cost.saturating_add(slot_cost);
         current_owned.push(city_id.clone());

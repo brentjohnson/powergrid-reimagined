@@ -78,7 +78,7 @@ impl Session {
     /// and prunes disconnected ones. Returns the error without broadcasting on failure.
     pub fn apply(&mut self, actor: PlayerId, action: Action) -> Result<(), ActionError> {
         apply_action(&mut self.game, actor, action)?;
-        let msg = ServerMessage::StateUpdate(Box::new(self.game.clone()));
+        let msg = ServerMessage::StateUpdate(Box::new(self.game.view()));
         self.broadcast(&msg);
         Ok(())
     }

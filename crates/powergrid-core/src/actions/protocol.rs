@@ -11,20 +11,25 @@ pub enum ServerMessage {
     Authenticated { user_id: PlayerId, username: String },
     /// Sent when authentication fails; connection will be closed.
     AuthError { message: String },
-    /// Sent immediately on connection so the client knows its own player ID.
+    /// Sent immediately on connection so the client knows its own player ID (legacy server only).
     Welcome { your_id: PlayerId },
-    /// Full game state broadcast after every valid action.
-    StateUpdate(Box<crate::state::GameState>),
+    /// Wire-safe game state broadcast after every valid action (no hidden deck, no map).
+    StateUpdate(Box<crate::state::GameStateView>),
     /// Sent only to the client whose action was rejected.
     ActionError { message: String },
-    /// Informational event (e.g. "Hamburg was built by Red").
+    /// Incremental event message (e.g. "Hamburg was built by Red").
     Event { message: String },
     /// Lobby-level error (room not found, name taken, etc.).
     LobbyError { message: String },
     /// Current list of rooms (response to ListRooms).
     RoomList { rooms: Vec<RoomSummary> },
     /// Sent to a client when they successfully join or create a room.
-    RoomJoined { room: String, your_id: PlayerId },
+    /// Includes the full static map (sent once; subsequent StateUpdates omit it).
+    RoomJoined {
+        room: String,
+        your_id: PlayerId,
+        map: Box<crate::map::Map>,
+    },
     /// Sent to a client when they leave a room.
     RoomLeft { room: String },
 }
@@ -115,14 +120,16 @@ mod tests {
     #[test]
     fn test_room_joined_serde_roundtrip() {
         let id = Uuid::new_v4();
+        let map = crate::map::default_map();
         let msg = ServerMessage::RoomJoined {
             room: "alpha".to_string(),
             your_id: id,
+            map: Box::new(map),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: ServerMessage = serde_json::from_str(&json).unwrap();
         assert!(
-            matches!(parsed, ServerMessage::RoomJoined { room, your_id } if room == "alpha" && your_id == id)
+            matches!(parsed, ServerMessage::RoomJoined { room, your_id, .. } if room == "alpha" && your_id == id)
         );
     }
 

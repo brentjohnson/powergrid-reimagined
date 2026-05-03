@@ -6,5 +6,5 @@ pub mod types;
 
 pub use actions::{Action, ActionError, ClientMessage, LobbyAction, RoomSummary, ServerMessage};
 pub use map::{default_map, Map, MapData};
-pub use state::GameState;
+pub use state::{GameState, GameStateView, PlantMarketView};
 pub use types::*;

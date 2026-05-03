@@ -61,6 +61,7 @@ pub fn start_local_session(cfg: LocalConfig) -> (WsChannels, LocalHandle) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
     // Build the session synchronously before spawning so errors surface early.
+    let map_for_join = map.clone();
     let (state_tx, state_rx) = crossbeam_channel::unbounded::<ServerMessage>();
     let session = {
         let mut s = Session::new(map, MAX_PLAYERS);
@@ -95,6 +96,7 @@ pub fn start_local_session(cfg: LocalConfig) -> (WsChannels, LocalHandle) {
     let _ = event_tx.send(WsEvent::MessageReceived(ServerMessage::RoomJoined {
         room: "local".to_string(),
         your_id: human_id,
+        map: Box::new(map_for_join),
     }));
     for msg in initial_msgs {
         let _ = event_tx.send(WsEvent::MessageReceived(msg));

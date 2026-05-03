@@ -2,14 +2,14 @@ use bevy_egui::egui;
 use egui::{RichText, Ui};
 use powergrid_core::{
     types::{Phase, PlayerId},
-    GameState,
+    GameStateView,
 };
 
 use crate::{state::player_color_to_egui, theme};
 
 use super::helpers::dim_color;
 
-pub(super) fn phase_tracker(ui: &mut Ui, gs: &GameState) {
+pub(super) fn phase_tracker(ui: &mut Ui, gs: &GameStateView) {
     #[derive(Clone, Copy, PartialEq)]
     enum Dp {
         Auction,

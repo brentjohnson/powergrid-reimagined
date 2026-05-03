@@ -4,7 +4,7 @@ use egui::{Align2, Color32, FontId, Rect, RichText, Sense, Stroke, Ui};
 use powergrid_core::{
     actions::Action,
     types::{Phase, PlayerColor, PlayerId, ResourceMarket},
-    GameState,
+    GameStateView,
 };
 
 use crate::{
@@ -19,7 +19,7 @@ use super::phase_tracker::phase_tracker;
 
 pub(super) fn top_panel_contents(
     ui: &mut Ui,
-    gs: GameState,
+    gs: GameStateView,
     state: &AppState,
     channels: &Option<Res<WsChannels>>,
     my_id: PlayerId,
@@ -447,7 +447,7 @@ fn city_history_graph(
     history: &[CitySnapshot],
     players_info: &[(PlayerId, PlayerColor)],
     end_game_cities: u8,
-    gs: &GameState,
+    gs: &GameStateView,
 ) {
     const PAD_L: f32 = 14.0; // left padding for y-axis label
     const PAD_B: f32 = 10.0; // bottom padding for x-axis label

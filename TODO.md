@@ -62,9 +62,19 @@
 
 * Local (offline) play
 
-# To do...
+# v0.5.1
 
 * IMPROVEMENT: implement user accounts
+
+
+# To do...
+
+* BUG: local game not showing individual bot actions
+* BUG: local game "back to main menu" crashes client
+* IMPROVEMENT: Remove connect screen for on-line. Just use default or command line arg
+* IMPROVEMENT: Dynamically refresh active game list. Remove "refresh" button
+* IMPROVEMENT: Click on "active" game to populate the name
+* IMPROVEMENT: Existing games should be marked started/not started and if you are in them
 * IMPROVEMENT: don't select color on connect, select for each game
 * IMPROVEMENT: user can save color preferences in account (order of pref)
 * IMPROVEMENT: implement user statistics

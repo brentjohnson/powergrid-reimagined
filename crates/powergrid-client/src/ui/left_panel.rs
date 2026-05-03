@@ -2,14 +2,14 @@ use bevy_egui::egui;
 use egui::{RichText, Ui};
 use powergrid_core::{
     types::{Phase, PlayerId},
-    GameState,
+    GameStateView,
 };
 
 use crate::{card_painter, state::player_color_to_egui, theme};
 
 use super::helpers::{dim_color, is_active_player};
 
-pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameState, my_id: PlayerId) {
+pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: PlayerId) {
     for pid in &gs.player_order {
         if let Some(p) = gs.player(*pid) {
             let is_me = p.id == my_id;
