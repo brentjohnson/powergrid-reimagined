@@ -156,6 +156,11 @@ async fn local_session_driver(
 
     info!("Local session driver started");
 
+    // StartGame was applied synchronously in start_local_session; drive the
+    // initial bot turns now so the game isn't stuck waiting on a bot before
+    // the first human action arrives.
+    run_bot_pump(Arc::clone(&session_arc), bot_delay).await;
+
     loop {
         // Forward any pending state updates from the session subscriber.
         for msg in state_rx.try_iter() {
@@ -181,10 +186,9 @@ async fn local_session_driver(
                     let _ = event_tx.send(WsEvent::MessageReceived(msg));
                 }
                 if let Err(e) = result {
-                    let _ =
-                        event_tx.send(WsEvent::MessageReceived(ServerMessage::ActionError {
-                            message: e.to_string(),
-                        }));
+                    let _ = event_tx.send(WsEvent::MessageReceived(ServerMessage::ActionError {
+                        message: e.to_string(),
+                    }));
                 } else {
                     acted = true;
                 }
