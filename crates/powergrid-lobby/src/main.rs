@@ -78,6 +78,7 @@ Options:
         .unwrap_or_else(|e| panic!("Failed to run migrations: {e}"));
     info!("Database ready");
 
+    let db_for_shutdown = db.clone();
     let state = AppState {
         manager: Arc::new(RoomManager::new(map)),
         bot_delay: Duration::from_millis(bot_delay_ms),
@@ -97,7 +98,40 @@ Options:
     let addr = format!("0.0.0.0:{port}");
     info!("Lobby server listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+
+    info!("Closing database pool");
+    db_for_shutdown.pool.close().await;
+    info!("Lobby server stopped");
+}
+
+async fn shutdown_signal() {
+    use tokio::signal;
+
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("received Ctrl+C, shutting down"),
+        _ = terminate => tracing::info!("received SIGTERM, shutting down"),
+    }
 }
 
 async fn health() -> &'static str {
