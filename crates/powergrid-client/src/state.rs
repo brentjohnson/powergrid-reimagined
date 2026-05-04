@@ -123,7 +123,7 @@ impl AppState {
         let selected_color = cli.color.unwrap_or(PlayerColor::Red);
 
         // Load saved credentials; always start on MainMenu but seed auth fields for Online play.
-        let saved = crate::auth::load_credentials();
+        let saved = crate::auth::load_credentials(&server_name, port);
         let (auth_token, auth_username, auth_user_id) = if let Some(ref c) = saved {
             (
                 Some(c.token.clone()),
@@ -224,7 +224,7 @@ impl AppState {
 
     /// Clear all auth state and return to Login screen.
     pub fn logout(&mut self) {
-        if let Err(e) = crate::auth::clear_credentials() {
+        if let Err(e) = crate::auth::clear_credentials(&self.server_name, self.port) {
             tracing::warn!("Failed to clear credentials: {e}");
         }
         self.auth_token = None;

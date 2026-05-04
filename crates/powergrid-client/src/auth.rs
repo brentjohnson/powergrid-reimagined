@@ -19,20 +19,33 @@ pub struct SavedCredentials {
     pub port: u16,
 }
 
-fn credentials_path() -> Option<PathBuf> {
-    ProjectDirs::from("net", "onyxoryx", "powergrid")
-        .map(|d| d.config_dir().join("credentials.json"))
+fn sanitize_host(server: &str) -> String {
+    server
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
-pub fn load_credentials() -> Option<SavedCredentials> {
-    let path = credentials_path()?;
+fn credentials_path(server: &str, port: u16) -> Option<PathBuf> {
+    let filename = format!("credentials_{}_{}.json", sanitize_host(server), port);
+    ProjectDirs::from("net", "onyxoryx", "powergrid").map(|d| d.config_dir().join(filename))
+}
+
+pub fn load_credentials(server: &str, port: u16) -> Option<SavedCredentials> {
+    let path = credentials_path(server, port)?;
     let data = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&data).ok()
 }
 
 pub fn save_credentials(c: &SavedCredentials) -> std::io::Result<()> {
-    let path =
-        credentials_path().ok_or_else(|| std::io::Error::other("could not resolve config dir"))?;
+    let path = credentials_path(&c.server, c.port)
+        .ok_or_else(|| std::io::Error::other("could not resolve config dir"))?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -47,8 +60,8 @@ pub fn save_credentials(c: &SavedCredentials) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn clear_credentials() -> std::io::Result<()> {
-    if let Some(path) = credentials_path() {
+pub fn clear_credentials(server: &str, port: u16) -> std::io::Result<()> {
+    if let Some(path) = credentials_path(server, port) {
         if path.exists() {
             std::fs::remove_file(path)?;
         }
