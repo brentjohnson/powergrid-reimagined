@@ -1,0 +1,910 @@
+name = "USA"
+image = "pg-usa.jpeg"
+regions = [
+    "northwest",
+    "west",
+    "southwest",
+    "central",
+    "south",
+    "east",
+    "northeast",
+]
+
+[[cities]]
+id = "seattle"
+name = "Seattle"
+region = "northwest"
+x = 0.04249999299645424
+y = 0.2434825599193573
+
+[[cities]]
+id = "spokane"
+name = "Spokane"
+region = "northwest"
+x = 0.121799997985363
+y = 0.27379998564720154
+
+[[cities]]
+id = "portland"
+name = "Portland"
+region = "northwest"
+x = 0.04154215380549431
+y = 0.3151930272579193
+
+[[cities]]
+id = "boise"
+name = "Boise"
+region = "northwest"
+x = 0.14000000059604645
+y = 0.3506999909877777
+
+[[cities]]
+id = "helena"
+name = "Helena"
+region = "northwest"
+x = 0.20499999821186066
+y = 0.29490000009536743
+
+[[cities]]
+id = "billings"
+name = "Billings"
+region = "northwest"
+x = 0.2590000033378601
+y = 0.30970001220703125
+
+[[cities]]
+id = "fargo"
+name = "Fargo"
+region = "northwest"
+x = 0.4390000104904175
+y = 0.28870001435279846
+
+[[cities]]
+id = "minneapolis"
+name = "Minneapolis"
+region = "northwest"
+x = 0.49300000071525574
+y = 0.32659998536109924
+
+[[cities]]
+id = "sanfrancisco"
+name = "San Francisco"
+region = "west"
+x = 0.03012000024318695
+y = 0.4602699875831604
+
+[[cities]]
+id = "sacramento"
+name = "Sacramento"
+region = "west"
+x = 0.05849999934434891
+y = 0.44369998574256897
+
+[[cities]]
+id = "reno"
+name = "Reno"
+region = "west"
+x = 0.08479999750852585
+y = 0.4277999997138977
+
+[[cities]]
+id = "losangeles"
+name = "Los Angeles"
+region = "west"
+x = 0.058811575174331665
+y = 0.5979996919631958
+
+[[cities]]
+id = "sandiego"
+name = "San Diego"
+region = "west"
+x = 0.10601163655519485
+y = 0.6632616519927979
+
+[[cities]]
+id = "lasvegas"
+name = "Las Vegas"
+region = "west"
+x = 0.15559999644756317
+y = 0.48919999599456787
+
+[[cities]]
+id = "saltlakecity"
+name = "Salt Lake City"
+region = "west"
+x = 0.19958196580410004
+y = 0.3832823634147644
+
+[[cities]]
+id = "phoenix"
+name = "Phoenix"
+region = "southwest"
+x = 0.20280000567436218
+y = 0.5396000146865845
+
+[[cities]]
+id = "tucson"
+name = "Tucson"
+region = "southwest"
+x = 0.22179999947547913
+y = 0.5641000270843506
+
+[[cities]]
+id = "elpaso"
+name = "El Paso"
+region = "southwest"
+x = 0.2888999879360199
+y = 0.5720999836921692
+
+[[cities]]
+id = "albuquerque"
+name = "Albuquerque"
+region = "southwest"
+x = 0.2872999906539917
+y = 0.5098000168800354
+
+[[cities]]
+id = "amarillo"
+name = "Amarillo"
+region = "southwest"
+x = 0.3617999851703644
+y = 0.5077999830245972
+
+[[cities]]
+id = "sanantonio"
+name = "San Antonio"
+region = "southwest"
+x = 0.41325241327285767
+y = 0.7767609357833862
+
+[[cities]]
+id = "dallas"
+name = "Dallas"
+region = "southwest"
+x = 0.44784015417099
+y = 0.6541352272033691
+
+[[cities]]
+id = "denver"
+name = "Denver"
+region = "central"
+x = 0.3142000138759613
+y = 0.4237000048160553
+
+[[cities]]
+id = "cheyenne"
+name = "Cheyenne"
+region = "central"
+x = 0.3158000111579895
+y = 0.3978999853134155
+
+[[cities]]
+id = "omaha"
+name = "Omaha"
+region = "central"
+x = 0.451200008392334
+y = 0.39410001039505005
+
+[[cities]]
+id = "desmoines"
+name = "Des Moines"
+region = "central"
+x = 0.4878000020980835
+y = 0.387800008058548
+
+[[cities]]
+id = "kansascity"
+name = "Kansas City"
+region = "central"
+x = 0.47279998660087585
+y = 0.4348999857902527
+
+[[cities]]
+id = "wichita"
+name = "Wichita"
+region = "central"
+x = 0.4307999908924103
+y = 0.4611999988555908
+
+[[cities]]
+id = "oklahomacity"
+name = "Oklahoma City"
+region = "central"
+x = 0.4268546998500824
+y = 0.5887960195541382
+
+[[cities]]
+id = "stlouis"
+name = "St. Louis"
+region = "central"
+x = 0.5397999882698059
+y = 0.44369998574256897
+
+[[cities]]
+id = "houston"
+name = "Houston"
+region = "south"
+x = 0.4838770627975464
+y = 0.7121342420578003
+
+[[cities]]
+id = "neworleans"
+name = "New Orleans"
+region = "south"
+x = 0.5900448560714722
+y = 0.7182308435440063
+
+[[cities]]
+id = "memphis"
+name = "Memphis"
+region = "south"
+x = 0.5437999963760376
+y = 0.5098000168800354
+
+[[cities]]
+id = "nashville"
+name = "Nashville"
+region = "south"
+x = 0.5928000211715698
+y = 0.48919999599456787
+
+[[cities]]
+id = "louisville"
+name = "Louisville"
+region = "south"
+x = 0.6078000068664551
+y = 0.45010000467300415
+
+[[cities]]
+id = "birmingham"
+name = "Birmingham"
+region = "south"
+x = 0.5928000211715698
+y = 0.5396000146865845
+
+[[cities]]
+id = "atlanta"
+name = "Atlanta"
+region = "south"
+x = 0.6863847374916077
+y = 0.6544259190559387
+
+[[cities]]
+id = "jacksonville"
+name = "Jacksonville"
+region = "south"
+x = 0.7175719141960144
+y = 0.7321897149085999
+
+[[cities]]
+id = "tampa"
+name = "Tampa"
+region = "south"
+x = 0.6228166818618774
+y = 0.8021310567855835
+
+[[cities]]
+id = "miami"
+name = "Miami"
+region = "south"
+x = 0.725279688835144
+y = 0.8096402287483215
+
+[[cities]]
+id = "chicago"
+name = "Chicago"
+region = "east"
+x = 0.5807999968528748
+y = 0.3847000002861023
+
+[[cities]]
+id = "detroit"
+name = "Detroit"
+region = "east"
+x = 0.6507999897003174
+y = 0.37470000982284546
+
+[[cities]]
+id = "cleveland"
+name = "Cleveland"
+region = "east"
+x = 0.670799970626831
+y = 0.3896999955177307
+
+[[cities]]
+id = "pittsburgh"
+name = "Pittsburgh"
+region = "east"
+x = 0.6977999806404114
+y = 0.4108000099658966
+
+[[cities]]
+id = "cincinnati"
+name = "Cincinnati"
+region = "east"
+x = 0.6277999877929688
+y = 0.4348999857902527
+
+[[cities]]
+id = "columbus"
+name = "Columbus"
+region = "east"
+x = 0.6507999897003174
+y = 0.41780000925064087
+
+[[cities]]
+id = "indianapolis"
+name = "Indianapolis"
+region = "east"
+x = 0.6018000245094299
+y = 0.42179998755455017
+
+[[cities]]
+id = "philadelphia"
+name = "Philadelphia"
+region = "east"
+x = 0.7717999815940857
+y = 0.41780000925064087
+
+[[cities]]
+id = "baltimore"
+name = "Baltimore"
+region = "east"
+x = 0.7498000264167786
+y = 0.4307999908924103
+
+[[cities]]
+id = "washington"
+name = "Washington"
+region = "east"
+x = 0.7437999844551086
+y = 0.43880000710487366
+
+[[cities]]
+id = "newyork"
+name = "New York"
+region = "northeast"
+x = 0.7897999882698059
+y = 0.4047999978065491
+
+[[cities]]
+id = "albany"
+name = "Albany"
+region = "northeast"
+x = 0.7928000092506409
+y = 0.3677999973297119
+
+[[cities]]
+id = "hartford"
+name = "Hartford"
+region = "northeast"
+x = 0.8098000288009644
+y = 0.384799987077713
+
+[[cities]]
+id = "providence"
+name = "Providence"
+region = "northeast"
+x = 0.829800009727478
+y = 0.384799987077713
+
+[[cities]]
+id = "boston"
+name = "Boston"
+region = "northeast"
+x = 0.8348000049591064
+y = 0.37279999256134033
+
+[[cities]]
+id = "portlandme"
+name = "Portland (ME)"
+region = "northeast"
+x = 0.8468000292778015
+y = 0.34880000352859497
+
+[[cities]]
+id = "burlington"
+name = "Burlington"
+region = "northeast"
+x = 0.801800012588501
+y = 0.33379998803138733
+
+[[connections]]
+from = "seattle"
+to = "spokane"
+cost = 5
+
+[[connections]]
+from = "seattle"
+to = "portland"
+cost = 5
+
+[[connections]]
+from = "spokane"
+to = "boise"
+cost = 8
+
+[[connections]]
+from = "spokane"
+to = "helena"
+cost = 10
+
+[[connections]]
+from = "portland"
+to = "boise"
+cost = 15
+
+[[connections]]
+from = "boise"
+to = "helena"
+cost = 12
+
+[[connections]]
+from = "helena"
+to = "billings"
+cost = 5
+
+[[connections]]
+from = "billings"
+to = "fargo"
+cost = 18
+
+[[connections]]
+from = "fargo"
+to = "minneapolis"
+cost = 7
+
+[[connections]]
+from = "portland"
+to = "sanfrancisco"
+cost = 17
+
+[[connections]]
+from = "boise"
+to = "saltlakecity"
+cost = 12
+
+[[connections]]
+from = "billings"
+to = "cheyenne"
+cost = 22
+
+[[connections]]
+from = "minneapolis"
+to = "chicago"
+cost = 15
+
+[[connections]]
+from = "minneapolis"
+to = "desmoines"
+cost = 12
+
+[[connections]]
+from = "fargo"
+to = "omaha"
+cost = 20
+
+[[connections]]
+from = "sanfrancisco"
+to = "sacramento"
+cost = 4
+
+[[connections]]
+from = "sanfrancisco"
+to = "reno"
+cost = 5
+
+[[connections]]
+from = "sanfrancisco"
+to = "losangeles"
+cost = 17
+
+[[connections]]
+from = "sacramento"
+to = "reno"
+cost = 5
+
+[[connections]]
+from = "reno"
+to = "lasvegas"
+cost = 13
+
+[[connections]]
+from = "reno"
+to = "saltlakecity"
+cost = 15
+
+[[connections]]
+from = "losangeles"
+to = "sandiego"
+cost = 3
+
+[[connections]]
+from = "losangeles"
+to = "lasvegas"
+cost = 8
+
+[[connections]]
+from = "lasvegas"
+to = "saltlakecity"
+cost = 10
+
+[[connections]]
+from = "losangeles"
+to = "phoenix"
+cost = 15
+
+[[connections]]
+from = "lasvegas"
+to = "phoenix"
+cost = 15
+
+[[connections]]
+from = "saltlakecity"
+to = "denver"
+cost = 15
+
+[[connections]]
+from = "phoenix"
+to = "tucson"
+cost = 4
+
+[[connections]]
+from = "phoenix"
+to = "albuquerque"
+cost = 14
+
+[[connections]]
+from = "phoenix"
+to = "elpaso"
+cost = 22
+
+[[connections]]
+from = "tucson"
+to = "elpaso"
+cost = 8
+
+[[connections]]
+from = "elpaso"
+to = "albuquerque"
+cost = 10
+
+[[connections]]
+from = "elpaso"
+to = "sanantonio"
+cost = 22
+
+[[connections]]
+from = "albuquerque"
+to = "amarillo"
+cost = 8
+
+[[connections]]
+from = "amarillo"
+to = "dallas"
+cost = 10
+
+[[connections]]
+from = "dallas"
+to = "sanantonio"
+cost = 7
+
+[[connections]]
+from = "sanantonio"
+to = "houston"
+cost = 7
+
+[[connections]]
+from = "dallas"
+to = "houston"
+cost = 8
+
+[[connections]]
+from = "amarillo"
+to = "oklahomacity"
+cost = 8
+
+[[connections]]
+from = "dallas"
+to = "oklahomacity"
+cost = 5
+
+[[connections]]
+from = "houston"
+to = "neworleans"
+cost = 12
+
+[[connections]]
+from = "cheyenne"
+to = "denver"
+cost = 4
+
+[[connections]]
+from = "denver"
+to = "albuquerque"
+cost = 20
+
+[[connections]]
+from = "denver"
+to = "kansascity"
+cost = 20
+
+[[connections]]
+from = "denver"
+to = "wichita"
+cost = 18
+
+[[connections]]
+from = "cheyenne"
+to = "omaha"
+cost = 15
+
+[[connections]]
+from = "omaha"
+to = "desmoines"
+cost = 5
+
+[[connections]]
+from = "omaha"
+to = "kansascity"
+cost = 7
+
+[[connections]]
+from = "desmoines"
+to = "kansascity"
+cost = 10
+
+[[connections]]
+from = "kansascity"
+to = "stlouis"
+cost = 8
+
+[[connections]]
+from = "kansascity"
+to = "wichita"
+cost = 5
+
+[[connections]]
+from = "kansascity"
+to = "oklahomacity"
+cost = 10
+
+[[connections]]
+from = "wichita"
+to = "oklahomacity"
+cost = 5
+
+[[connections]]
+from = "stlouis"
+to = "chicago"
+cost = 11
+
+[[connections]]
+from = "stlouis"
+to = "nashville"
+cost = 12
+
+[[connections]]
+from = "stlouis"
+to = "memphis"
+cost = 7
+
+[[connections]]
+from = "stlouis"
+to = "louisville"
+cost = 10
+
+[[connections]]
+from = "stlouis"
+to = "indianapolis"
+cost = 9
+
+[[connections]]
+from = "desmoines"
+to = "chicago"
+cost = 10
+
+[[connections]]
+from = "neworleans"
+to = "memphis"
+cost = 10
+
+[[connections]]
+from = "neworleans"
+to = "birmingham"
+cost = 10
+
+[[connections]]
+from = "memphis"
+to = "nashville"
+cost = 8
+
+[[connections]]
+from = "memphis"
+to = "birmingham"
+cost = 8
+
+[[connections]]
+from = "nashville"
+to = "louisville"
+cost = 5
+
+[[connections]]
+from = "nashville"
+to = "birmingham"
+cost = 7
+
+[[connections]]
+from = "nashville"
+to = "atlanta"
+cost = 8
+
+[[connections]]
+from = "nashville"
+to = "cincinnati"
+cost = 9
+
+[[connections]]
+from = "louisville"
+to = "cincinnati"
+cost = 4
+
+[[connections]]
+from = "louisville"
+to = "indianapolis"
+cost = 5
+
+[[connections]]
+from = "birmingham"
+to = "atlanta"
+cost = 4
+
+[[connections]]
+from = "atlanta"
+to = "jacksonville"
+cost = 10
+
+[[connections]]
+from = "jacksonville"
+to = "tampa"
+cost = 8
+
+[[connections]]
+from = "jacksonville"
+to = "miami"
+cost = 15
+
+[[connections]]
+from = "tampa"
+to = "miami"
+cost = 7
+
+[[connections]]
+from = "chicago"
+to = "detroit"
+cost = 7
+
+[[connections]]
+from = "chicago"
+to = "indianapolis"
+cost = 7
+
+[[connections]]
+from = "detroit"
+to = "cleveland"
+cost = 5
+
+[[connections]]
+from = "detroit"
+to = "columbus"
+cost = 7
+
+[[connections]]
+from = "cleveland"
+to = "pittsburgh"
+cost = 5
+
+[[connections]]
+from = "cleveland"
+to = "columbus"
+cost = 5
+
+[[connections]]
+from = "pittsburgh"
+to = "columbus"
+cost = 7
+
+[[connections]]
+from = "pittsburgh"
+to = "philadelphia"
+cost = 10
+
+[[connections]]
+from = "pittsburgh"
+to = "baltimore"
+cost = 8
+
+[[connections]]
+from = "columbus"
+to = "cincinnati"
+cost = 4
+
+[[connections]]
+from = "columbus"
+to = "indianapolis"
+cost = 7
+
+[[connections]]
+from = "cincinnati"
+to = "indianapolis"
+cost = 5
+
+[[connections]]
+from = "philadelphia"
+to = "baltimore"
+cost = 5
+
+[[connections]]
+from = "philadelphia"
+to = "washington"
+cost = 5
+
+[[connections]]
+from = "baltimore"
+to = "washington"
+cost = 4
+
+[[connections]]
+from = "philadelphia"
+to = "newyork"
+cost = 5
+
+[[connections]]
+from = "pittsburgh"
+to = "newyork"
+cost = 18
+
+[[connections]]
+from = "newyork"
+to = "albany"
+cost = 5
+
+[[connections]]
+from = "newyork"
+to = "hartford"
+cost = 4
+
+[[connections]]
+from = "albany"
+to = "burlington"
+cost = 8
+
+[[connections]]
+from = "albany"
+to = "hartford"
+cost = 5
+
+[[connections]]
+from = "hartford"
+to = "providence"
+cost = 3
+
+[[connections]]
+from = "hartford"
+to = "boston"
+cost = 5
+
+[[connections]]
+from = "providence"
+to = "boston"
+cost = 4
+
+[[connections]]
+from = "boston"
+to = "portlandme"
+cost = 7
+
+[[connections]]
+from = "burlington"
+to = "portlandme"
+cost = 10
