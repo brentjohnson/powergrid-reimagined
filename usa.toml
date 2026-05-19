@@ -56,15 +56,15 @@ y = 0.30970001220703125
 id = "fargo"
 name = "Fargo"
 region = "northwest"
-x = 0.4390000104904175
-y = 0.28870001435279846
+x = 0.39359763264656067
+y = 0.2893359363079071
 
 [[cities]]
 id = "minneapolis"
 name = "Minneapolis"
 region = "northwest"
-x = 0.49300000071525574
-y = 0.32659998536109924
+x = 0.4723767638206482
+y = 0.3105389475822449
 
 [[cities]]
 id = "sanfrancisco"
@@ -126,22 +126,22 @@ y = 0.5396000146865845
 id = "tucson"
 name = "Tucson"
 region = "southwest"
-x = 0.22179999947547913
-y = 0.5641000270843506
+x = 0.1958165466785431
+y = 0.6266180276870728
 
 [[cities]]
 id = "elpaso"
 name = "El Paso"
 region = "southwest"
-x = 0.2888999879360199
-y = 0.5720999836921692
+x = 0.34489795565605164
+y = 0.6716002821922302
 
 [[cities]]
 id = "albuquerque"
 name = "Albuquerque"
 region = "southwest"
-x = 0.2872999906539917
-y = 0.5098000168800354
+x = 0.268960565328598
+y = 0.6089596152305603
 
 [[cities]]
 id = "amarillo"
@@ -168,8 +168,8 @@ y = 0.6541352272033691
 id = "denver"
 name = "Denver"
 region = "central"
-x = 0.3142000138759613
-y = 0.4237000048160553
+x = 0.27966776490211487
+y = 0.44935864210128784
 
 [[cities]]
 id = "cheyenne"
@@ -196,15 +196,15 @@ y = 0.387800008058548
 id = "kansascity"
 name = "Kansas City"
 region = "central"
-x = 0.47279998660087585
-y = 0.4348999857902527
+x = 0.44534391164779663
+y = 0.47079652547836304
 
 [[cities]]
 id = "wichita"
 name = "Wichita"
 region = "central"
-x = 0.4307999908924103
-y = 0.4611999988555908
+x = 0.38357242941856384
+y = 0.43006810545921326
 
 [[cities]]
 id = "oklahomacity"
@@ -217,8 +217,8 @@ y = 0.5887960195541382
 id = "stlouis"
 name = "St. Louis"
 region = "central"
-x = 0.5397999882698059
-y = 0.44369998574256897
+x = 0.5357940196990967
+y = 0.5006585717201233
 
 [[cities]]
 id = "houston"
@@ -238,29 +238,29 @@ y = 0.7182308435440063
 id = "memphis"
 name = "Memphis"
 region = "south"
-x = 0.5437999963760376
-y = 0.5098000168800354
+x = 0.564373254776001
+y = 0.6114397048950195
 
 [[cities]]
 id = "nashville"
 name = "Nashville"
 region = "south"
-x = 0.5928000211715698
-y = 0.48919999599456787
+x = 0.6287424564361572
+y = 0.5323412418365479
 
 [[cities]]
 id = "louisville"
 name = "Louisville"
 region = "south"
-x = 0.6078000068664551
-y = 0.45010000467300415
+x = 0.5228201746940613
+y = 0.43425700068473816
 
 [[cities]]
 id = "birmingham"
 name = "Birmingham"
 region = "south"
-x = 0.5928000211715698
-y = 0.5396000146865845
+x = 0.6200283765792847
+y = 0.5996562242507935
 
 [[cities]]
 id = "atlanta"
@@ -294,78 +294,78 @@ y = 0.8096402287483215
 id = "chicago"
 name = "Chicago"
 region = "east"
-x = 0.5807999968528748
-y = 0.3847000002861023
+x = 0.5940790176391602
+y = 0.39027321338653564
 
 [[cities]]
 id = "detroit"
 name = "Detroit"
 region = "east"
-x = 0.6507999897003174
-y = 0.37470000982284546
+x = 0.7225696444511414
+y = 0.383143812417984
 
 [[cities]]
 id = "cleveland"
 name = "Cleveland"
 region = "east"
-x = 0.670799970626831
-y = 0.3896999955177307
+x = 0.7449343800544739
+y = 0.41147956252098083
 
 [[cities]]
 id = "pittsburgh"
 name = "Pittsburgh"
 region = "east"
-x = 0.6977999806404114
-y = 0.4108000099658966
+x = 0.7766643762588501
+y = 0.42811012268066406
 
 [[cities]]
 id = "cincinnati"
 name = "Cincinnati"
 region = "east"
-x = 0.6277999877929688
-y = 0.4348999857902527
+x = 0.6846186518669128
+y = 0.5257700681686401
 
 [[cities]]
 id = "columbus"
 name = "Columbus"
 region = "east"
-x = 0.6507999897003174
-y = 0.41780000925064087
+x = 0.715815007686615
+y = 0.4765254259109497
 
 [[cities]]
 id = "indianapolis"
 name = "Indianapolis"
 region = "east"
-x = 0.6018000245094299
-y = 0.42179998755455017
+x = 0.6184796690940857
+y = 0.4507424831390381
 
 [[cities]]
 id = "philadelphia"
 name = "Philadelphia"
 region = "east"
-x = 0.7717999815940857
-y = 0.41780000925064087
+x = 0.8667015433311462
+y = 0.48238471150398254
 
 [[cities]]
 id = "baltimore"
 name = "Baltimore"
 region = "east"
-x = 0.7498000264167786
-y = 0.4307999908924103
+x = 0.7936612367630005
+y = 0.4808591306209564
 
 [[cities]]
 id = "washington"
 name = "Washington"
 region = "east"
-x = 0.7437999844551086
-y = 0.43880000710487366
+x = 0.7975702881813049
+y = 0.5290979146957397
 
 [[cities]]
 id = "newyork"
 name = "New York"
 region = "northeast"
-x = 0.7897999882698059
-y = 0.4047999978065491
+x = 0.8791603446006775
+y = 0.4206883907318115
 
 [[cities]]
 id = "albany"
@@ -378,36 +378,36 @@ y = 0.3677999973297119
 id = "hartford"
 name = "Hartford"
 region = "northeast"
-x = 0.8098000288009644
-y = 0.384799987077713
+x = 0.830694854259491
+y = 0.391086220741272
 
 [[cities]]
 id = "providence"
 name = "Providence"
 region = "northeast"
-x = 0.829800009727478
-y = 0.384799987077713
+x = 0.8644134402275085
+y = 0.35925498604774475
 
 [[cities]]
 id = "boston"
 name = "Boston"
 region = "northeast"
-x = 0.8348000049591064
-y = 0.37279999256134033
+x = 0.9625676274299622
+y = 0.3719552159309387
 
 [[cities]]
 id = "portlandme"
 name = "Portland (ME)"
 region = "northeast"
-x = 0.8468000292778015
-y = 0.34880000352859497
+x = 0.906289279460907
+y = 0.27890095114707947
 
 [[cities]]
 id = "burlington"
 name = "Burlington"
 region = "northeast"
-x = 0.801800012588501
-y = 0.33379998803138733
+x = 0.8348034620285034
+y = 0.3093223571777344
 
 [[connections]]
 from = "seattle"
