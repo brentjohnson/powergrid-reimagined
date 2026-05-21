@@ -99,15 +99,19 @@
 * Show payouts
 * Scrollable event log
 
+# v0.11.0
+
+* Clean up redunant info in server protocol
+* Fix legebility of wind plant when highlighted
+
 
 # To do...
 
 ## Takeaways from multiplayer game
 
-* Can't read wind plant when highlighted
 * sound on your turn
 * one dollar plant not obvious
-* put turn order thing
+* put turn order thing 
 
 ## Client/UI
 

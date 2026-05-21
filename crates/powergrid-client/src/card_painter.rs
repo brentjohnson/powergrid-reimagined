@@ -153,7 +153,11 @@ fn paint_card(
         egui::Align2::RIGHT_CENTER,
         stats,
         FontId::new(9.0, FontFamily::Monospace),
-        theme::TEXT_MID,
+        if nominated {
+            Color32::BLACK
+        } else {
+            theme::TEXT_MID
+        },
     );
 
     // Discount token badge — small cyan "$1" tag in the top-right corner
