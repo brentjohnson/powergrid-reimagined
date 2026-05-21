@@ -63,4 +63,4 @@ POWER_FUEL_BASE      = 127        # 9 actions: gas 0..8 (oil = hybrid_cost - gas
 N_ACTIONS            = 136
 
 # Observation vector size (flat float32).
-OBS_SIZE = 409
+OBS_SIZE = 404

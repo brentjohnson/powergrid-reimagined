@@ -299,16 +299,15 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
             obs[idx + ci] = 1.0
     idx += 42
 
-    # 5. Opponents (5 × 5 = 25)
+    # 5. Opponents (5 × 4 = 20): plants, cities, cap, last_powered (money hidden)
     for i, opp in enumerate(opponents[:5]):
-        base = idx + i * 5
-        obs[base]   = opp["money"] / 500
-        obs[base+1] = len(opp.get("plants", [])) / 3
-        obs[base+2] = len(cities_by_player.get(opp["id"], [])) / 42
+        base = idx + i * 4
+        obs[base]   = len(opp.get("plants", [])) / 3
+        obs[base+1] = len(cities_by_player.get(opp["id"], [])) / 42
         cap = sum(p["cost"] * 2 for p in opp.get("plants", []) if p["kind"] not in ("wind",))
-        obs[base+3] = cap / 30
-        obs[base+4] = opp.get("last_cities_powered", 0) / 21
-    idx += 25
+        obs[base+2] = cap / 30
+        obs[base+3] = opp.get("last_cities_powered", 0) / 21
+    idx += 20
 
     # 6. Opponent cities (5 × 42 = 210)
     for i, opp in enumerate(opponents[:5]):

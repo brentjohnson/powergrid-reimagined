@@ -21,18 +21,51 @@ pub const MAX_PLAYERS: u8 = 6;
 /// A destination for broadcasted `ServerMessage`s.
 pub enum Subscriber {
     /// Serializes to JSON and forwards over a tokio mpsc channel (WS use).
-    Mpsc(tokio::sync::mpsc::UnboundedSender<String>),
+    Mpsc {
+        viewer: Option<PlayerId>,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    },
     /// Sends the typed message directly over a crossbeam channel (in-process use).
-    Local(crossbeam_channel::Sender<ServerMessage>),
+    Local {
+        viewer: Option<PlayerId>,
+        tx: crossbeam_channel::Sender<ServerMessage>,
+    },
 }
 
 impl Subscriber {
+    pub fn mpsc(viewer: Option<PlayerId>, tx: tokio::sync::mpsc::UnboundedSender<String>) -> Self {
+        Subscriber::Mpsc { viewer, tx }
+    }
+
+    pub fn local(viewer: Option<PlayerId>, tx: crossbeam_channel::Sender<ServerMessage>) -> Self {
+        Subscriber::Local { viewer, tx }
+    }
+
+    fn viewer(&self) -> Option<PlayerId> {
+        match self {
+            Subscriber::Mpsc { viewer, .. } | Subscriber::Local { viewer, .. } => *viewer,
+        }
+    }
+
     fn send(&self, msg: &ServerMessage) -> bool {
         match self {
-            Subscriber::Mpsc(tx) => tx
+            Subscriber::Mpsc { tx, .. } => tx
                 .send(serde_json::to_string(msg).expect("serialize ServerMessage"))
                 .is_ok(),
-            Subscriber::Local(tx) => tx.send(msg.clone()).is_ok(),
+            Subscriber::Local { tx, .. } => tx.send(msg.clone()).is_ok(),
+        }
+    }
+
+    fn send_json(&self, json: &str) -> bool {
+        match self {
+            Subscriber::Mpsc { tx, .. } => tx.send(json.to_string()).is_ok(),
+            Subscriber::Local { tx, .. } => {
+                if let Ok(msg) = serde_json::from_str(json) {
+                    tx.send(msg).is_ok()
+                } else {
+                    true
+                }
+            }
         }
     }
 }
@@ -64,13 +97,24 @@ impl Session {
         self.subscribers.len()
     }
 
-    /// Apply `action` from `actor`. On success, broadcasts `StateUpdate` to all subscribers
-    /// and prunes disconnected ones. Returns the error without broadcasting on failure.
+    /// Apply `action` from `actor`. On success, broadcasts per-recipient `StateUpdate` to all
+    /// subscribers (each sees their own money but opponents' money is zeroed).
+    /// Returns the error without broadcasting on failure.
     pub fn apply(&mut self, actor: PlayerId, action: Action) -> Result<(), ActionError> {
         apply_action(&mut self.game, actor, action)?;
-        let msg = ServerMessage::StateUpdate(Box::new(self.game.view()));
-        self.broadcast(&msg);
+        self.broadcast_state_update();
         Ok(())
+    }
+
+    /// Broadcast the current game state. Each subscriber receives a view with opponent
+    /// money zeroed; only their own money is included.
+    pub fn broadcast_state_update(&mut self) {
+        let game = &self.game;
+        self.subscribers.retain(|s| {
+            let view = game.view_for(s.viewer());
+            let msg = ServerMessage::StateUpdate(Box::new(view));
+            s.send(&msg)
+        });
     }
 
     pub fn broadcast(&mut self, msg: &ServerMessage) {
@@ -78,16 +122,7 @@ impl Session {
     }
 
     pub fn broadcast_json(&mut self, json: &str) {
-        self.subscribers.retain(|s| match s {
-            Subscriber::Mpsc(tx) => tx.send(json.to_string()).is_ok(),
-            Subscriber::Local(tx) => {
-                if let Ok(msg) = serde_json::from_str(json) {
-                    tx.send(msg).is_ok()
-                } else {
-                    true
-                }
-            }
-        });
+        self.subscribers.retain(|s| s.send_json(json));
     }
 
     /// Add an in-process bot (Lobby phase only).

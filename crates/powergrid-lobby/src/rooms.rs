@@ -38,7 +38,8 @@ impl Room {
     }
 
     pub fn add_human(&mut self, user_id: PlayerId, tx: mpsc::UnboundedSender<String>) {
-        self.session.add_subscriber(Subscriber::Mpsc(tx.clone()));
+        self.session
+            .add_subscriber(Subscriber::mpsc(Some(user_id), tx.clone()));
         self.humans.push((user_id, tx));
     }
 
@@ -50,7 +51,8 @@ impl Room {
             self.humans.push((user_id, tx.clone()));
         }
         // Add a fresh subscriber (stale ones are pruned on next broadcast).
-        self.session.add_subscriber(Subscriber::Mpsc(tx));
+        self.session
+            .add_subscriber(Subscriber::mpsc(Some(user_id), tx));
     }
 
     pub fn add_bot(

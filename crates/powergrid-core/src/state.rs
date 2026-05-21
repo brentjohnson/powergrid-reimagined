@@ -261,10 +261,25 @@ impl GameState {
     }
 
     /// Produce a wire-safe view: strips hidden information (deck, seed, full map).
-    pub fn view(&self) -> GameStateView {
+    /// Opponent money is zeroed unless `viewer` matches the player's id.
+    pub fn view_for(&self, viewer: Option<PlayerId>) -> GameStateView {
+        let players = self
+            .players
+            .iter()
+            .map(|p| {
+                if viewer == Some(p.id) {
+                    p.clone()
+                } else {
+                    crate::types::Player {
+                        money: 0,
+                        ..p.clone()
+                    }
+                }
+            })
+            .collect();
         GameStateView {
             phase: self.phase.clone(),
-            players: self.players.clone(),
+            players,
             player_order: self.player_order.clone(),
             market: PlantMarketView {
                 actual: self.market.actual.clone(),
@@ -289,6 +304,11 @@ impl GameState {
             step3_pending: self.step3_pending.clone(),
             active_regions: self.active_regions.clone(),
         }
+    }
+
+    /// Produce a wire-safe view with all player money zeroed (spectator view).
+    pub fn view(&self) -> GameStateView {
+        self.view_for(None)
     }
 }
 

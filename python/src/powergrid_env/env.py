@@ -234,7 +234,7 @@ def _render_ansi(state: dict) -> str:
         r = p.get("resources", {})
         res_str = f"C{r.get('coal',0)} O{r.get('oil',0)} G{r.get('gas',0)} U{r.get('uranium',0)}"
         lines.append(
-            f"  {p['name']:12s}  ${p['money']:4d}  "
+            f"  {p['name']:12s}  "
             f"cities={sum(1 for owners in state.get('city_owners', {}).values() if p['id'] in owners):2d}  plants=[{plants_str}]  res={res_str}"
         )
 

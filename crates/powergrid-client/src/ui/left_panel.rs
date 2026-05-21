@@ -43,13 +43,6 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                                     .monospace(),
                             );
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("${}", p.money))
-                                    .color(theme::NEON_GREEN)
-                                    .monospace(),
-                            );
-                        });
                     });
 
                     // Auction status row

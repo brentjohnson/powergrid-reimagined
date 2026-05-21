@@ -64,7 +64,7 @@ pub fn start_local_session(cfg: LocalConfig) -> (WsChannels, LocalHandle) {
     let (state_tx, state_rx) = crossbeam_channel::unbounded::<ServerMessage>();
     let session = {
         let mut s = Session::new(map, MAX_PLAYERS);
-        s.add_subscriber(Subscriber::Local(state_tx));
+        s.add_subscriber(Subscriber::local(Some(human_id), state_tx));
         s.apply(
             human_id,
             Action::JoinGame {

@@ -13,7 +13,7 @@ pub async fn handle_socket(socket: WebSocket, session: SharedSession) {
 
     {
         let mut s = session.lock().await;
-        s.add_subscriber(Subscriber::Mpsc(tx.clone()));
+        s.add_subscriber(Subscriber::mpsc(Some(player_id), tx.clone()));
         info!("Client connected: {player_id}");
     }
 

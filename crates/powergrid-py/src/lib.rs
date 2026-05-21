@@ -19,7 +19,7 @@ use uuid::Uuid;
 // Observation / action-space constants — must stay in sync with constants.py
 // ---------------------------------------------------------------------------
 
-const OBS_SIZE: usize = 409;
+const OBS_SIZE: usize = 404;
 const N_ACTIONS: usize = 136;
 
 const CITY_IDS: [&str; 42] = [
@@ -418,22 +418,21 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     }
     idx += 42;
 
-    // 5. Opponents (5 × 5 = 25)
+    // 5. Opponents (5 × 4 = 20): plants, cities, cap, last_powered (money hidden)
     for (i, opp) in opponents.iter().take(5).enumerate() {
-        let base = idx + i * 5;
+        let base = idx + i * 4;
         let cap: f32 = opp
             .plants
             .iter()
             .filter(|p| !matches!(p.kind, PlantKind::Wind))
             .map(|p| p.cost as f32 * 2.0)
             .sum();
-        obs[base] = opp.money as f32 / 500.0;
-        obs[base + 1] = opp.plants.len() as f32 / 3.0;
-        obs[base + 2] = state.player_city_count(opp.id) as f32 / 42.0;
-        obs[base + 3] = cap / 30.0;
-        obs[base + 4] = opp.last_cities_powered as f32 / 21.0;
+        obs[base] = opp.plants.len() as f32 / 3.0;
+        obs[base + 1] = state.player_city_count(opp.id) as f32 / 42.0;
+        obs[base + 2] = cap / 30.0;
+        obs[base + 3] = opp.last_cities_powered as f32 / 21.0;
     }
-    idx += 25;
+    idx += 20;
 
     // 6. Opponent cities (5 × 42 = 210)
     for (i, opp) in opponents.iter().take(5).enumerate() {
