@@ -160,30 +160,14 @@ fn paint_card(
         },
     );
 
-    // Discount token badge — small cyan "$1" tag in the top-right corner
+    // Discount token — "$1" in white centered horizontally, raised to upper half
     if discounted {
-        let badge_w = 18.0;
-        let badge_h = 10.0;
-        let badge_rect = Rect::from_min_size(
-            egui::pos2(rect.max.x - badge_w, rect.min.y),
-            Vec2::new(badge_w, badge_h),
-        );
-        painter.rect_filled(
-            badge_rect,
-            CornerRadius {
-                nw: 0,
-                ne: 3,
-                sw: 3,
-                se: 0,
-            },
-            theme::NEON_CYAN.linear_multiply(0.3),
-        );
-        painter.text(
-            badge_rect.center(),
+        ui.painter().text(
+            egui::pos2(rect.center().x + 10.0, rect.min.y + CARD_H * 0.10),
             egui::Align2::CENTER_CENTER,
             "$1",
-            FontId::new(8.0, FontFamily::Monospace),
-            theme::NEON_CYAN,
+            FontId::new(15.0, FontFamily::Monospace),
+            Color32::WHITE,
         );
     }
 }

@@ -103,6 +103,7 @@
 
 * Clean up redunant info in server protocol
 * Fix legebility of wind plant when highlighted
+* Make one dollar plant more visible
 
 
 # To do...
@@ -110,7 +111,6 @@
 ## Takeaways from multiplayer game
 
 * sound on your turn
-* one dollar plant not obvious
 * put turn order thing 
 
 ## Client/UI
