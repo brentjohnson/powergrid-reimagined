@@ -251,6 +251,10 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
     """
     Encode a GameStateView dict into a flat float32 observation vector of length OBS_SIZE.
     All values are normalized to approximately [0, 1].
+
+    Fields NOT encoded: event_log (display-only text, no decision relevance).
+    City ownership is read from state["city_owners"] (the canonical source);
+    Player.cities was removed from the wire format as a redundant duplicate.
     """
     obs = np.zeros(OBS_SIZE, dtype=np.float32)
     idx = 0
@@ -261,6 +265,12 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
         return obs
 
     opponents = [p for p in players if p["id"] != actor_id]
+
+    # Build per-player city list from city_owners (single source of truth).
+    cities_by_player: dict[str, list[str]] = {}
+    for city_id, owners in state.get("city_owners", {}).items():
+        for owner_id in owners:
+            cities_by_player.setdefault(owner_id, []).append(city_id)
 
     # 1. Self money (1)
     obs[idx] = me["money"] / 500.0
@@ -283,7 +293,7 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
     idx += 15
 
     # 4. Self cities (42)
-    for city_id in me.get("cities", []):
+    for city_id in cities_by_player.get(actor_id, []):
         ci = CITY_INDEX.get(city_id)
         if ci is not None:
             obs[idx + ci] = 1.0
@@ -294,7 +304,7 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
         base = idx + i * 5
         obs[base]   = opp["money"] / 500
         obs[base+1] = len(opp.get("plants", [])) / 3
-        obs[base+2] = len(opp.get("cities", [])) / 42
+        obs[base+2] = len(cities_by_player.get(opp["id"], [])) / 42
         cap = sum(p["cost"] * 2 for p in opp.get("plants", []) if p["kind"] not in ("wind",))
         obs[base+3] = cap / 30
         obs[base+4] = opp.get("last_cities_powered", 0) / 21
@@ -302,7 +312,7 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
 
     # 6. Opponent cities (5 × 42 = 210)
     for i, opp in enumerate(opponents[:5]):
-        for city_id in opp.get("cities", []):
+        for city_id in cities_by_player.get(opp["id"], []):
             ci = CITY_INDEX.get(city_id)
             if ci is not None:
                 obs[idx + i * 42 + ci] = 1.0

@@ -1,5 +1,5 @@
 use crate::map::Map;
-use crate::types::{Phase, PlantMarket, Player, PlayerId, PowerPlant, ResourceMarket};
+use crate::types::{CityId, Phase, PlantMarket, Player, PlayerId, PowerPlant, ResourceMarket};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -91,6 +91,28 @@ pub struct GameStateView {
 }
 
 impl GameStateView {
+    pub fn player_city_count(&self, id: PlayerId) -> usize {
+        self.city_owners
+            .values()
+            .filter(|owners| owners.contains(&id))
+            .count()
+    }
+
+    pub fn player_cities(&self, id: PlayerId) -> Vec<&CityId> {
+        self.city_owners
+            .iter()
+            .filter(|(_, owners)| owners.contains(&id))
+            .map(|(city_id, _)| city_id)
+            .collect()
+    }
+
+    pub fn player_owns_city(&self, id: PlayerId, city_id: &str) -> bool {
+        self.city_owners
+            .get(city_id)
+            .map(|owners| owners.contains(&id))
+            .unwrap_or(false)
+    }
+
     pub fn player(&self, id: PlayerId) -> Option<&Player> {
         self.players.iter().find(|p| p.id == id)
     }
@@ -147,6 +169,31 @@ fn default_step() -> u8 {
 }
 
 impl GameState {
+    pub fn player_city_count(&self, id: PlayerId) -> usize {
+        self.map
+            .cities
+            .values()
+            .filter(|c| c.owners.contains(&id))
+            .count()
+    }
+
+    pub fn player_cities(&self, id: PlayerId) -> Vec<CityId> {
+        self.map
+            .cities
+            .iter()
+            .filter(|(_, c)| c.owners.contains(&id))
+            .map(|(city_id, _)| city_id.clone())
+            .collect()
+    }
+
+    pub fn player_owns_city(&self, id: PlayerId, city_id: &str) -> bool {
+        self.map
+            .cities
+            .get(city_id)
+            .map(|c| c.owners.contains(&id))
+            .unwrap_or(false)
+    }
+
     pub fn new(map: Map, player_count: usize) -> Self {
         Self::new_inner(map, player_count, None)
     }
@@ -241,6 +288,19 @@ impl GameState {
             event_log: self.event_log.clone(),
             step3_pending: self.step3_pending.clone(),
             active_regions: self.active_regions.clone(),
+        }
+    }
+}
+
+/// Sets city ownership in `state.map` for a player — used in tests instead of the
+/// removed `player.cities` field.
+#[cfg(test)]
+pub fn give_player_cities(state: &mut GameState, player_id: PlayerId, cities: &[&str]) {
+    for city_id in cities {
+        if let Some(city) = state.map.cities.get_mut(*city_id) {
+            if !city.owners.contains(&player_id) {
+                city.owners.push(player_id);
+            }
         }
     }
 }

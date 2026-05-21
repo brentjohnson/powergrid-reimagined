@@ -288,6 +288,7 @@ fn compute_legal_move_info(state: &GameState, actor_id: PlayerId) -> LegalMoveIn
         Phase::BuildCities { remaining } => {
             if remaining.first() == Some(&actor_id) {
                 info.done_building = true;
+                let actor_cities = state.player_cities(actor_id);
                 for (city_id, city) in &state.map.cities {
                     if !state.is_city_active(city_id) {
                         continue;
@@ -295,10 +296,10 @@ fn compute_legal_move_info(state: &GameState, actor_id: PlayerId) -> LegalMoveIn
                     if city.owners.len() >= state.step as usize {
                         continue;
                     }
-                    if player.cities.contains(city_id) {
+                    if city.owners.contains(&actor_id) {
                         continue;
                     }
-                    if let Some(routing) = state.map.connection_cost_to(&player.cities, city_id) {
+                    if let Some(routing) = state.map.connection_cost_to(&actor_cities, city_id) {
                         if routing + connection_cost(city.owners.len()) <= player.money {
                             info.buildable_city_ids.push(city_id.clone());
                         }
@@ -410,8 +411,8 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     idx += 15;
 
     // 4. Self cities (42)
-    for city_id in &me.cities {
-        if let Some(ci) = city_index(city_id) {
+    for city_id in state.player_cities(actor_id) {
+        if let Some(ci) = city_index(&city_id) {
             obs[idx + ci] = 1.0;
         }
     }
@@ -428,7 +429,7 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
             .sum();
         obs[base] = opp.money as f32 / 500.0;
         obs[base + 1] = opp.plants.len() as f32 / 3.0;
-        obs[base + 2] = opp.cities.len() as f32 / 42.0;
+        obs[base + 2] = state.player_city_count(opp.id) as f32 / 42.0;
         obs[base + 3] = cap / 30.0;
         obs[base + 4] = opp.last_cities_powered as f32 / 21.0;
     }
@@ -436,8 +437,8 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
 
     // 6. Opponent cities (5 × 42 = 210)
     for (i, opp) in opponents.iter().take(5).enumerate() {
-        for city_id in &opp.cities {
-            if let Some(ci) = city_index(city_id) {
+        for city_id in state.player_cities(opp.id) {
+            if let Some(ci) = city_index(&city_id) {
                 obs[idx + i * 42 + ci] = 1.0;
             }
         }

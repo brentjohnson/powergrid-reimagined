@@ -226,7 +226,6 @@ pub struct Player {
     pub name: String,
     pub color: PlayerColor,
     pub money: u32,
-    pub cities: Vec<CityId>,
     pub plants: Vec<PowerPlant>,
     pub resources: PlayerResources,
     pub passed_auction: bool,
@@ -240,16 +239,11 @@ impl Player {
             name,
             color,
             money: 50,
-            cities: Vec::new(),
             plants: Vec::new(),
             resources: PlayerResources::default(),
             passed_auction: false,
             last_cities_powered: 0,
         }
-    }
-
-    pub fn city_count(&self) -> usize {
-        self.cities.len()
     }
 
     /// Max resources this player can store across all their plants.
@@ -369,8 +363,8 @@ impl Player {
     /// Optimal feasible subset of plants to fire in the Bureaucracy phase.
     /// Returns (chosen plant numbers, cities powered capped at cities owned, remaining resources).
     /// Used by the bot and client to compute the recommended default selection.
-    pub fn optimal_firing_subset(&self) -> (Vec<u8>, u8, PlayerResources) {
-        let cities_owned = self.city_count() as u8;
+    pub fn optimal_firing_subset(&self, city_count: u8) -> (Vec<u8>, u8, PlayerResources) {
+        let cities_owned = city_count;
         let n = self.plants.len();
         let mut best_powered = 0u8;
         let mut best_res = self.resources.clone();

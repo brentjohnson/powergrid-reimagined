@@ -27,7 +27,8 @@ pub(in crate::ui) fn bureaucracy_panel(
     if remaining.contains(&my_id) {
         if let Some(player) = gs.player(my_id) {
             if !state.power_selected_initialised {
-                let (default_selection, _, _) = player.optimal_firing_subset();
+                let (default_selection, _, _) =
+                    player.optimal_firing_subset(gs.player_city_count(my_id) as u8);
                 state.power_selected_plants = default_selection.into_iter().collect();
                 state.power_selected_initialised = true;
             }
@@ -76,7 +77,7 @@ pub(in crate::ui) fn bureaucracy_panel(
                 .iter()
                 .filter(|p| state.power_selected_plants.contains(&p.number))
                 .collect();
-            let cities_owned = player.city_count() as u8;
+            let cities_owned = gs.player_city_count(my_id) as u8;
             let feasibility = check_plant_feasibility(&selected, &player.resources);
 
             match feasibility {

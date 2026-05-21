@@ -30,14 +30,18 @@ pub(super) fn player_summary(ui: &mut Ui, gs: &GameStateView, my_id: PlayerId) {
         );
         ui.add_space(8.0);
         ui.label(
-            RichText::new(format!("{}/{} cities", p.city_count(), gs.end_game_cities))
-                .color(theme::TEXT_MID)
-                .monospace(),
+            RichText::new(format!(
+                "{}/{} cities",
+                gs.player_city_count(p.id),
+                gs.end_game_cities
+            ))
+            .color(theme::TEXT_MID)
+            .monospace(),
         );
     });
 
-    let (_, max_cities_powered, _) = p.optimal_firing_subset();
-    let cities_owned = p.city_count() as u8;
+    let cities_owned = gs.player_city_count(p.id) as u8;
+    let (_, max_cities_powered, _) = p.optimal_firing_subset(cities_owned);
     let effective = max_cities_powered.min(cities_owned);
     ui.label(
         RichText::new(format!("Income: {} elektro", income_for(effective)))

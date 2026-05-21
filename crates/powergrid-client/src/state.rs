@@ -430,7 +430,7 @@ impl AppState {
             let snapshot: CitySnapshot = view
                 .players
                 .iter()
-                .map(|p| (p.id, p.city_count()))
+                .map(|p| (p.id, view.player_city_count(p.id)))
                 .collect();
             self.city_history.push(snapshot);
             self.last_recorded_round = view.round;
@@ -579,10 +579,7 @@ impl AppState {
             return;
         }
 
-        let owned = gs
-            .player(my_id)
-            .map(|p| p.cities.clone())
-            .unwrap_or_default();
+        let owned: Vec<String> = gs.player_cities(my_id).into_iter().cloned().collect();
         let mut combined: Vec<String> = owned;
         combined.extend(self.selected_build_cities.iter().cloned());
         if map.connection_cost_to(&combined, &city_id).is_none() {
@@ -605,10 +602,7 @@ impl AppState {
             self.build_preview = BuildPreview::default();
             return;
         };
-        let owned = gs
-            .player(my_id)
-            .map(|p| p.cities.clone())
-            .unwrap_or_default();
+        let owned: Vec<String> = gs.player_cities(my_id).into_iter().cloned().collect();
         let city_owners = &gs.city_owners;
         let selected = self.selected_build_cities.clone();
         self.build_preview = compute_build_preview(map, &owned, &selected, city_owners);

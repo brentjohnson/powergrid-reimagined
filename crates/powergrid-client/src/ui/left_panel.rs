@@ -109,7 +109,7 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
-                                RichText::new(format!("{} cities", p.cities.len()))
+                                RichText::new(format!("{} cities", gs.player_city_count(p.id)))
                                     .color(theme::TEXT_MID)
                                     .small()
                                     .monospace(),

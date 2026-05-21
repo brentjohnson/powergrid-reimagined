@@ -364,7 +364,7 @@ fn city_count_list(ui: &mut Ui, gs: &GameStateView) {
                     RichText::new(format!(
                         "{}: {}/{}",
                         p.name,
-                        p.city_count(),
+                        gs.player_city_count(p.id),
                         gs.end_game_cities
                     ))
                     .color(color)
@@ -744,7 +744,7 @@ pub(super) fn city_history_graph(
     let max_cities = history
         .iter()
         .flat_map(|snap| snap.iter().map(|(_, c)| *c))
-        .chain(gs.players.iter().map(|p| p.city_count()))
+        .chain(gs.players.iter().map(|p| gs.player_city_count(p.id)))
         .max()
         .unwrap_or(1)
         .max(end_game_cities as usize)
@@ -868,7 +868,7 @@ pub(super) fn city_history_graph(
 
         if let Some(&last_pt) = points.last() {
             if let Some(player) = gs.players.iter().find(|p| p.id == *player_id) {
-                let proj_count = player.city_count();
+                let proj_count = gs.player_city_count(player.id);
                 let proj_x = x_for(rounds);
                 let proj_y = oy + H - (proj_count as f32 / max_cities as f32) * H;
                 let proj_pt = egui::pos2(proj_x, proj_y);
@@ -890,8 +890,9 @@ pub(super) fn city_payout_table(ui: &mut Ui, gs: &GameStateView) {
         .players
         .iter()
         .map(|p| {
-            let (_, max_powered, _) = p.optimal_firing_subset();
-            let effective = max_powered.min(p.city_count() as u8);
+            let city_count = gs.player_city_count(p.id) as u8;
+            let (_, max_powered, _) = p.optimal_firing_subset(city_count);
+            let effective = max_powered.min(city_count);
             (effective, player_color_to_egui(p.color))
         })
         .collect();

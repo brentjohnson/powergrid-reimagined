@@ -114,7 +114,8 @@ class PowerGridSingleAgentEnv(gym.Env):
         if self.reward_shaping:
             for p in self._state_cache.get("players", []):
                 if p["id"] == self._learner_id:
-                    reward += len(p.get("cities", [])) * 0.001
+                    city_count = sum(1 for owners in self._state_cache.get("city_owners", {}).values() if p["id"] in owners)
+                    reward += city_count * 0.001
                     break
 
         obs = encode_observation(self._state_cache, self._learner_id)

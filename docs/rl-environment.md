@@ -141,6 +141,10 @@ All values are normalised to `[0, 1]`. Segments in order:
 | Turn-order position | 1 | actor's index in player\_order / (n\_players − 1) |
 | Phase scratch | 8 | Phase-specific features (bid amount, bidder index, remaining queue length, etc.) |
 
+**City ownership source:** `Player.cities` was removed from the wire format as a redundant duplicate of `city_owners`. All city-ownership slots in the observation (self cities, opponent cities, city slot count) are derived from `state["city_owners"]`, which maps `city_id → [player_id, ...]`.
+
+**Fields NOT encoded:** `event_log` (a `Vec<String>` of human-readable game events) is present in the wire payload but intentionally excluded from the observation tensor — it contains no decision-relevant signal beyond what the structured state already encodes.
+
 ---
 
 ## Policies

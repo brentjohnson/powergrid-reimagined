@@ -36,12 +36,12 @@ pub fn plant_score_contextual(
     let mut score = plant_score(plant, w);
 
     if w.opponent_gap_weight > 0.0 {
-        let my_cities = player.cities.len() as f32;
+        let my_cities = state.player_city_count(player.id) as f32;
         let max_opp = state
             .players
             .iter()
             .filter(|p| p.id != player.id)
-            .map(|p| p.cities.len() as f32)
+            .map(|p| state.player_city_count(p.id) as f32)
             .fold(0.0f32, f32::max);
         score += w.opponent_gap_weight * (max_opp - my_cities).max(0.0);
     }
@@ -50,7 +50,7 @@ pub fn plant_score_contextual(
         let max_cities = state
             .players
             .iter()
-            .map(|p| p.cities.len() as u32)
+            .map(|p| state.player_city_count(p.id) as u32)
             .max()
             .unwrap_or(0);
         let proximity = max_cities as f32 / state.end_game_cities as f32;
@@ -97,9 +97,14 @@ pub fn capacity_bump(plant: &PowerPlant, player: &Player, w: &AuctionWeights) ->
 }
 
 /// True when acquiring a new plant would give little or no benefit.
-pub fn should_skip_auction(player: &Player, candidate: &PowerPlant, w: &AuctionWeights) -> bool {
+pub fn should_skip_auction(
+    player: &Player,
+    candidate: &PowerPlant,
+    w: &AuctionWeights,
+    city_count: usize,
+) -> bool {
     let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
-    if powerable > player.cities.len() as u8 {
+    if powerable > city_count as u8 {
         return true;
     }
     if player.plants.len() >= 3 {

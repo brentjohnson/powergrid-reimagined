@@ -844,8 +844,7 @@ fn apply_single_build(
         return Err(ActionError::AlreadyBuiltThere);
     }
 
-    let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
-    let owned_cities = player.cities.clone();
+    let owned_cities = state.player_cities(actor);
     let route_cost = state
         .map
         .connection_cost_to(&owned_cities, city_id)
@@ -853,13 +852,13 @@ fn apply_single_build(
     let city_slot_cost = connection_cost(state.map.cities[city_id].owners.len());
     let total_cost = route_cost + city_slot_cost;
 
+    let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
     if player.money < total_cost {
         return Err(ActionError::CannotAffordCity);
     }
 
     let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
     player.money -= total_cost;
-    player.cities.push(city_id.to_string());
 
     state
         .map
@@ -889,10 +888,10 @@ fn advance_build_phase(state: &mut GameState, mut remaining: Vec<PlayerId>) {
 }
 
 fn check_end_game_trigger(state: &mut GameState) {
-    let max_cities = state
-        .players
+    let ids: Vec<_> = state.players.iter().map(|p| p.id).collect();
+    let max_cities = ids
         .iter()
-        .map(|p| p.cities.len())
+        .map(|&id| state.player_city_count(id))
         .max()
         .unwrap_or(0);
     if max_cities >= state.end_game_cities as usize {
@@ -904,10 +903,10 @@ fn check_step2_trigger(state: &mut GameState) {
     if state.step != 1 {
         return;
     }
-    let max_cities = state
-        .players
+    let ids: Vec<_> = state.players.iter().map(|p| p.id).collect();
+    let max_cities = ids
         .iter()
-        .map(|p| p.cities.len())
+        .map(|&id| state.player_city_count(id))
         .max()
         .unwrap_or(0);
     if max_cities >= 7 {
@@ -1005,10 +1004,10 @@ fn handle_build_city(
 
     apply_single_build(state, actor, &city_id)?;
     check_end_game_trigger(state);
-    let max_cities = state
-        .players
+    let ids: Vec<_> = state.players.iter().map(|p| p.id).collect();
+    let max_cities = ids
         .iter()
-        .map(|p| p.cities.len())
+        .map(|&id| state.player_city_count(id))
         .max()
         .unwrap_or(0);
     state.market.remove_obsolete(max_cities);
@@ -1052,10 +1051,10 @@ fn handle_build_cities(
     // All succeeded — commit and advance the phase.
     *state = scratch;
     check_end_game_trigger(state);
-    let max_cities = state
-        .players
+    let ids: Vec<_> = state.players.iter().map(|p| p.id).collect();
+    let max_cities = ids
         .iter()
-        .map(|p| p.cities.len())
+        .map(|&id| state.player_city_count(id))
         .max()
         .unwrap_or(0);
     state.market.remove_obsolete(max_cities);
@@ -1116,7 +1115,7 @@ fn handle_power_cities(
     // Fire exactly the submitted plants; the player is responsible for the selection.
     let (best_subset_numbers, best_powered, best_resources) = {
         let player = state.player(actor).ok_or(ActionError::UnknownPlayer)?;
-        let cities_owned = player.city_count() as u8;
+        let cities_owned = state.player_city_count(actor) as u8;
         let subset: Vec<&PowerPlant> = plant_numbers
             .iter()
             .map(|&num| player.plants.iter().find(|p| p.number == num).unwrap())
@@ -1262,7 +1261,7 @@ fn handle_power_cities_fuel(
         powered += plant.cities;
     }
 
-    let cities_owned = player.city_count() as u8;
+    let cities_owned = state.player_city_count(actor) as u8;
     let powered = powered.min(cities_owned);
 
     // Validate the split is feasible.
@@ -1328,7 +1327,7 @@ fn determine_winner(state: &GameState) -> Option<PlayerId> {
     let triggered = state
         .players
         .iter()
-        .any(|p| p.cities.len() >= state.end_game_cities as usize);
+        .any(|p| state.player_city_count(p.id) >= state.end_game_cities as usize);
     if !triggered {
         return None;
     }
@@ -1337,7 +1336,13 @@ fn determine_winner(state: &GameState) -> Option<PlayerId> {
     state
         .players
         .iter()
-        .max_by_key(|p| (p.last_cities_powered, p.money, p.city_count()))
+        .max_by_key(|p| {
+            (
+                p.last_cities_powered,
+                p.money,
+                state.player_city_count(p.id),
+            )
+        })
         .map(|p| p.id)
 }
 
@@ -1345,15 +1350,19 @@ fn recalculate_player_order(state: &mut GameState) {
     // Most cities → first. Tie: highest plant number → first.
     let mut order: Vec<PlayerId> = state.players.iter().map(|p| p.id).collect();
     order.sort_by(|&a, &b| {
-        let pa = state.player(a).unwrap();
-        let pb = state.player(b).unwrap();
-        let ca = pa.city_count();
-        let cb = pb.city_count();
+        let ca = state.player_city_count(a);
+        let cb = state.player_city_count(b);
         if ca != cb {
             return cb.cmp(&ca); // more cities = earlier
         }
-        let plant_a = pa.plants.iter().map(|p| p.number).max().unwrap_or(0);
-        let plant_b = pb.plants.iter().map(|p| p.number).max().unwrap_or(0);
+        let plant_a = state
+            .player(a)
+            .map(|p| p.plants.iter().map(|pl| pl.number).max().unwrap_or(0))
+            .unwrap_or(0);
+        let plant_b = state
+            .player(b)
+            .map(|p| p.plants.iter().map(|pl| pl.number).max().unwrap_or(0))
+            .unwrap_or(0);
         plant_b.cmp(&plant_a)
     });
     state.player_order = order;
@@ -1687,6 +1696,7 @@ pub fn build_plant_deck() -> PlantMarket {
 mod tests {
     use super::*;
     use crate::map::{CityData, ConnectionData, Map, MapData};
+    use crate::state::give_player_cities;
 
     fn test_map() -> Map {
         Map::from_data(MapData {
@@ -2046,8 +2056,8 @@ mod tests {
         // Player should own "a" and have been charged at least the slot fee.
         let player_batch = state_batch.player(first_batch).unwrap();
         let player_single = state_single.player(first_single).unwrap();
-        assert!(player_batch.cities.contains(&"a".to_string()));
-        assert!(player_single.cities.contains(&"a".to_string()));
+        assert!(state_batch.player_owns_city(first_batch, "a"));
+        assert!(state_single.player_owns_city(first_single, "a"));
         assert_eq!(player_batch.money, player_single.money);
     }
 
@@ -2066,8 +2076,7 @@ mod tests {
         let starting_money = state.player(first).unwrap().money;
 
         // Pre-seed city "a" as owned so the player has a network.
-        state.player_mut(first).unwrap().cities.push("a".into());
-        state.map.cities.get_mut("a").unwrap().owners.push(first);
+        give_player_cities(&mut state, first, &["a"]);
 
         apply_action(
             &mut state,
@@ -2078,11 +2087,10 @@ mod tests {
         )
         .unwrap();
 
-        let player = state.player(first).unwrap();
-        assert!(player.cities.contains(&"b".to_string()));
-        assert!(player.cities.contains(&"c".to_string()));
+        assert!(state.player_owns_city(first, "b"));
+        assert!(state.player_owns_city(first, "c"));
         // route costs: 5 + 3 = 8; slot costs: 10 + 10 = 20; total = 28.
-        assert_eq!(player.money, starting_money - 28);
+        assert_eq!(state.player(first).unwrap().money, starting_money - 28);
     }
 
     #[test]
@@ -2110,7 +2118,7 @@ mod tests {
         // State should be unchanged — player still has original money and no cities.
         let player = state.player(first).unwrap();
         assert_eq!(player.money, money_before);
-        assert!(!player.cities.contains(&"a".to_string()));
+        assert!(!state.player_owns_city(first, "a"));
     }
 
     #[test]
@@ -2396,9 +2404,20 @@ mod tests {
             remaining: vec![p1],
         };
 
+        // Give 4 cities (test map only has a/b/c; insert d directly).
+        give_player_cities(&mut state, p1, &["a", "b", "c"]);
+        state.map.cities.insert(
+            "d".into(),
+            crate::map::City {
+                id: "d".into(),
+                name: "D".into(),
+                region: "r1".into(),
+                owners: vec![p1],
+                x: None,
+                y: None,
+            },
+        );
         let player = state.player_mut(p1).unwrap();
-        // Give 4 cities.
-        player.cities = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         // Plants: 8 (Coal, cost 3, 2 cities), 10 (Coal, cost 2, 2 cities), 21 (GasOrOil, cost 2, 4 cities).
         player.plants = vec![
             PowerPlant {
@@ -2466,9 +2485,9 @@ mod tests {
             remaining: vec![p1],
         };
 
-        let player = state.player_mut(p1).unwrap();
         // Only 2 cities owned.
-        player.cities = vec!["a".into(), "b".into()];
+        give_player_cities(&mut state, p1, &["a", "b"]);
+        let player = state.player_mut(p1).unwrap();
         // Wind plant (free, 2 cities) + Coal plant (cost 2, 2 cities).
         player.plants = vec![
             PowerPlant {
@@ -2522,8 +2541,8 @@ mod tests {
             remaining: vec![p1],
         };
 
+        give_player_cities(&mut state, p1, &["a"]);
         let player = state.player_mut(p1).unwrap();
-        player.cities = vec!["a".into()];
         player.plants = vec![PowerPlant {
             number: 10,
             kind: PlantKind::Coal,
@@ -2564,9 +2583,9 @@ mod tests {
             remaining: vec![p1],
         };
 
-        let player = state.player_mut(p1).unwrap();
         // Only 2 cities owned.
-        player.cities = vec!["a".into(), "b".into()];
+        give_player_cities(&mut state, p1, &["a", "b"]);
+        let player = state.player_mut(p1).unwrap();
         // Three plants each powering 1 city.
         player.plants = vec![
             PowerPlant {
@@ -2627,8 +2646,8 @@ mod tests {
             remaining: vec![p1],
         };
 
+        give_player_cities(&mut state, p1, &["a"]);
         let player = state.player_mut(p1).unwrap();
-        player.cities = vec!["a".into()];
         // Wind (free, 1 city) and Coal (cost 2, 1 city).
         player.plants = vec![
             PowerPlant {
@@ -2681,8 +2700,8 @@ mod tests {
 
         // Give both players a wind plant and one city.
         for &pid in &[p1, p2] {
+            give_player_cities(&mut state, pid, &["a"]);
             let player = state.player_mut(pid).unwrap();
-            player.cities = vec!["a".into()];
             player.plants = vec![PowerPlant {
                 number: 13,
                 kind: PlantKind::Wind,
@@ -3232,9 +3251,22 @@ mod tests {
             remaining: vec![p1],
         };
 
+        // Give p1 fifteen cities so PowerCities can cap at 15.
+        for i in 0..15 {
+            let city_id = format!("city{i}");
+            state.map.cities.insert(
+                city_id.clone(),
+                crate::map::City {
+                    id: city_id.clone(),
+                    name: city_id.clone(),
+                    region: "r1".into(),
+                    owners: vec![p1],
+                    x: None,
+                    y: None,
+                },
+            );
+        }
         let player = state.player_mut(p1).unwrap();
-        // Push 15 arbitrary city IDs — city_count() just checks len().
-        player.cities = (0..15).map(|i| format!("city{i}")).collect();
         player.plants = vec![
             PowerPlant {
                 number: 20,
@@ -3295,8 +3327,22 @@ mod tests {
             remaining: vec![p1],
         };
 
+        // Give p1 six cities so all three plants can fire at capacity.
+        for i in 0..6 {
+            let city_id = format!("c{i}");
+            state.map.cities.insert(
+                city_id.clone(),
+                crate::map::City {
+                    id: city_id.clone(),
+                    name: city_id.clone(),
+                    region: "r1".into(),
+                    owners: vec![p1],
+                    x: None,
+                    y: None,
+                },
+            );
+        }
         let player = state.player_mut(p1).unwrap();
-        player.cities = (0..6).map(|i| format!("c{i}")).collect();
         // GasOrOil hybrid (cost 2) + GasOrOil hybrid (cost 1) + Coal (cost 2).
         // Resources: coal=2, gas=3, oil=2.
         // Coal plant needs 2 coal. Hybrid total cost=3; oil=2, gas=3 → split is ambiguous
@@ -3714,8 +3760,20 @@ mod tests {
             remaining: vec![p1],
         };
 
+        give_player_cities(&mut state, p1, &["a", "b", "c"]);
+        // Add one more city since test map only has a/b/c — insert d.
+        state.map.cities.insert(
+            "d".into(),
+            crate::map::City {
+                id: "d".into(),
+                name: "D".into(),
+                region: "r1".into(),
+                owners: vec![p1],
+                x: None,
+                y: None,
+            },
+        );
         let player = state.player_mut(p1).unwrap();
-        player.cities = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         player.plants = vec![
             PowerPlant {
                 number: 5,
@@ -3769,8 +3827,19 @@ mod tests {
             remaining: vec![p1],
         };
 
+        give_player_cities(&mut state, p1, &["a", "b", "c"]);
+        state.map.cities.insert(
+            "d".into(),
+            crate::map::City {
+                id: "d".into(),
+                name: "D".into(),
+                region: "r1".into(),
+                owners: vec![p1],
+                x: None,
+                y: None,
+            },
+        );
         let player = state.player_mut(p1).unwrap();
-        player.cities = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         player.plants = vec![
             PowerPlant {
                 number: 5,
@@ -3839,8 +3908,8 @@ mod tests {
             remaining: vec![p1],
         };
 
+        give_player_cities(&mut state, p1, &["a", "b"]);
         let player = state.player_mut(p1).unwrap();
-        player.cities = vec!["a".into(), "b".into()];
         player.plants = vec![PowerPlant {
             number: 5,
             kind: PlantKind::GasOrOil,
@@ -3888,8 +3957,8 @@ mod tests {
             remaining: vec![p1],
         };
 
+        give_player_cities(&mut state, p1, &["a", "b"]);
         let player = state.player_mut(p1).unwrap();
-        player.cities = vec!["a".into(), "b".into()];
         player.plants = vec![PowerPlant {
             number: 5,
             kind: PlantKind::GasOrOil,

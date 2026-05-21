@@ -102,6 +102,13 @@
 
 # To do...
 
+## Takeaways from multiplayer game
+
+* Can't read wind plant when highlighted
+* sound on your turn
+* one dollar plant not obvious
+* put turn order thing
+
 ## Client/UI
 
 * More layout adjustments - action panels need to be pop-ups or something

@@ -182,7 +182,8 @@ fn decide_auction(
         .filter(|p| {
             // In round 1 we must buy — don't filter. Later: apply skip logic.
             is_round_one
-                || (!should_skip_auction(my_player, p, w) && capacity_bump(p, my_player, w) >= 1)
+                || (!should_skip_auction(my_player, p, w, state.player_city_count(bot.id))
+                    && capacity_bump(p, my_player, w) >= 1)
         })
         .map(|p| {
             let score = plant_score_contextual(p, my_player, state, w);
@@ -420,6 +421,7 @@ fn try_buy(
 fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
     let player = state.player(bot.id)?;
     let block_weight = bot.profile.build.block_weight;
+    let owned_cities = state.player_cities(bot.id);
 
     let mut budget = player.money;
 
@@ -430,11 +432,11 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
         .values()
         .filter(|city| {
             state.active_regions.contains(&city.region)
-                && !player.cities.contains(&city.id)
+                && !city.owners.contains(&bot.id)
                 && city.owners.len() < state.step as usize
         })
         .filter_map(|city| {
-            let route_cost = state.map.connection_cost_to(&player.cities, &city.id)?;
+            let route_cost = state.map.connection_cost_to(&owned_cities, &city.id)?;
             let slot_cost = connection_cost(city.owners.len());
             let total = route_cost + slot_cost;
             // Hard-only: prefer cities opponents already occupy (block / density bonus).
@@ -455,11 +457,11 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
     // Only buy up to capacity headroom: cities we can actually power.
     // Buying more than that never increases income and wastes the city-build budget.
     let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
-    let owned = player.cities.len() as u8;
+    let owned = owned_cities.len() as u8;
     let headroom = powerable.saturating_sub(owned) as usize;
 
     let mut city_ids: Vec<String> = Vec::new();
-    let mut simulated_cities: Vec<String> = player.cities.clone();
+    let mut simulated_cities: Vec<String> = owned_cities.clone();
 
     for (city_id, _, _) in &candidates {
         if city_ids.len() >= headroom {
@@ -507,7 +509,8 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
 fn decide_power_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
     let player = state.player(bot.id)?;
 
-    let (plant_numbers, cities_powered, _) = player.optimal_firing_subset();
+    let (plant_numbers, cities_powered, _) =
+        player.optimal_firing_subset(state.player_city_count(bot.id) as u8);
     let expected_income = income_for(cities_powered);
 
     info!(
@@ -832,30 +835,22 @@ mod tests {
     fn skip_auction_when_any_surplus_capacity() {
         let mut player = bot_with_money(50);
         player.plants.push(coal_plant(5, 2, 3));
-        player.cities.push("a".into());
-        player.cities.push("b".into());
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
-        assert!(
-            should_skip_auction(&player, &candidate, w),
-            "expected to skip auction with surplus capacity (powerable=3, owned=2)"
-        );
+        // powerable=3, owned=2 → surplus → skip
+        assert!(should_skip_auction(&player, &candidate, w, 2));
     }
 
     #[test]
     fn dont_skip_when_at_capacity() {
         let mut player = bot_with_money(50);
         player.plants.push(coal_plant(5, 2, 2));
-        player.cities.push("a".into());
-        player.cities.push("b".into());
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
-        assert!(
-            !should_skip_auction(&player, &candidate, w),
-            "expected to participate when at capacity (powerable=2, owned=2)"
-        );
+        // powerable=2, owned=2 → at capacity → don't skip
+        assert!(!should_skip_auction(&player, &candidate, w, 2));
     }
 
     #[test]

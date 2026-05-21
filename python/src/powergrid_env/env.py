@@ -210,10 +210,15 @@ class PowerGridAECEnv(AECEnv):
         state = self._state_cache
         if state is None:
             return
+        city_owners = state.get("city_owners", {})
+        cities_by_player: dict[str, int] = {}
+        for owners in city_owners.values():
+            for pid in owners:
+                cities_by_player[pid] = cities_by_player.get(pid, 0) + 1
         for p in state.get("players", []):
             a = p["id"]
             if a in self.rewards:
-                self.rewards[a] += len(p.get("cities", [])) * 0.001
+                self.rewards[a] += cities_by_player.get(a, 0) * 0.001
 
 
 def _render_ansi(state: dict) -> str:
@@ -230,7 +235,7 @@ def _render_ansi(state: dict) -> str:
         res_str = f"C{r.get('coal',0)} O{r.get('oil',0)} G{r.get('gas',0)} U{r.get('uranium',0)}"
         lines.append(
             f"  {p['name']:12s}  ${p['money']:4d}  "
-            f"cities={len(p.get('cities', [])):2d}  plants=[{plants_str}]  res={res_str}"
+            f"cities={sum(1 for owners in state.get('city_owners', {}).values() if p['id'] in owners):2d}  plants=[{plants_str}]  res={res_str}"
         )
 
     lines.append("")
