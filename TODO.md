@@ -104,6 +104,8 @@
 * Clean up redunant info in server protocol
 * Fix legebility of wind plant when highlighted
 * Make one dollar plant more visible
+* Removed opponents money from display (also simplifies training)
+
 
 
 # To do...
@@ -115,6 +117,7 @@
 
 ## Client/UI
 
+* Splash screen
 * More layout adjustments - action panels need to be pop-ups or something
 * More layout adjustments - get things to fit better in top bar
 * Show version number somewhere?

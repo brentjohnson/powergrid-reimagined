@@ -662,13 +662,15 @@ impl MapEditor {
                                 if from_idx != idx {
                                     let from_id = self.cities[from_idx].id.clone();
                                     let to_id = self.cities[idx].id.clone();
-                                    let already = self.connections.iter().any(|c| {
+                                    let existing = self.connections.iter().position(|c| {
                                         (c.from == from_id && c.to == to_id)
                                             || (c.from == to_id && c.to == from_id)
                                     });
-                                    if already {
-                                        self.status =
-                                            format!("{from_id} ↔ {to_id} already connected");
+                                    if let Some(ci) = existing {
+                                        self.select_conn(ci);
+                                        self.status = format!(
+                                            "{from_id} ↔ {to_id} already connected — selected existing"
+                                        );
                                     } else {
                                         self.connections.push(Conn {
                                             from: from_id.clone(),

@@ -147,15 +147,15 @@ y = 0.9631435871124268
 id = "monterrey"
 name = "Monterrey"
 region = "southwest"
-x = 0.39887166023254395
-y = 0.839459240436554
+x = 0.395426869392395
+y = 0.8373608589172363
 
 [[cities]]
 id = "denver"
 name = "Denver"
 region = "west"
-x = 0.2803916037082672
-y = 0.44997644424438477
+x = 0.28057247400283813
+y = 0.4484957456588745
 
 [[cities]]
 id = "omaha"
@@ -294,8 +294,8 @@ y = 0.4507424831390381
 id = "philadelphia"
 name = "Philadelphia"
 region = "northeast"
-x = 0.8667015433311462
-y = 0.48238471150398254
+x = 0.8705860376358032
+y = 0.4772430956363678
 
 [[cities]]
 id = "charlotte"
@@ -315,15 +315,15 @@ y = 0.5290979146957397
 id = "newyorks"
 name = "New York (S)"
 region = "northeast"
-x = 0.8791603446006775
-y = 0.4206883907318115
+x = 0.8773945569992065
+y = 0.41722261905670166
 
 [[cities]]
 id = "newyorkn"
 name = "New York (N)"
 region = "northeast"
-x = 0.8781814575195313
-y = 0.38598084449768066
+x = 0.8773078322410583
+y = 0.3847363293170929
 
 [[cities]]
 id = "montreal"
@@ -386,7 +386,7 @@ cost = 5
 [[connections]]
 from = "winnipeg"
 to = "minneapolis"
-cost = 7
+cost = 13
 
 [[connections]]
 from = "portland"
@@ -397,21 +397,6 @@ cost = 20
 from = "regina"
 to = "saltlakecity"
 cost = 29
-
-[[connections]]
-from = "minneapolis"
-to = "chicago"
-cost = 15
-
-[[connections]]
-from = "minneapolis"
-to = "memphis"
-cost = 12
-
-[[connections]]
-from = "winnipeg"
-to = "omaha"
-cost = 20
 
 [[connections]]
 from = "sanfrancisco"
@@ -434,11 +419,6 @@ to = "saltlakecity"
 cost = 14
 
 [[connections]]
-from = "lasvegas"
-to = "juarez"
-cost = 15
-
-[[connections]]
 from = "saltlakecity"
 to = "denver"
 cost = 14
@@ -446,67 +426,27 @@ cost = 14
 [[connections]]
 from = "juarez"
 to = "chihuahua"
-cost = 4
+cost = 8
 
 [[connections]]
 from = "juarez"
 to = "albuquerque"
-cost = 14
-
-[[connections]]
-from = "juarez"
-to = "guadalajara"
-cost = 22
+cost = 9
 
 [[connections]]
 from = "chihuahua"
 to = "guadalajara"
-cost = 8
-
-[[connections]]
-from = "guadalajara"
-to = "albuquerque"
-cost = 10
+cost = 23
 
 [[connections]]
 from = "guadalajara"
 to = "mexicocitys"
-cost = 22
-
-[[connections]]
-from = "albuquerque"
-to = "mexicocityn"
-cost = 8
+cost = 10
 
 [[connections]]
 from = "mexicocityn"
 to = "monterrey"
-cost = 10
-
-[[connections]]
-from = "monterrey"
-to = "mexicocitys"
-cost = 7
-
-[[connections]]
-from = "mexicocitys"
-to = "houston"
-cost = 7
-
-[[connections]]
-from = "monterrey"
-to = "houston"
-cost = 8
-
-[[connections]]
-from = "mexicocityn"
-to = "oklahomacity"
-cost = 8
-
-[[connections]]
-from = "monterrey"
-to = "oklahomacity"
-cost = 5
+cost = 17
 
 [[connections]]
 from = "houston"
@@ -516,27 +456,17 @@ cost = 12
 [[connections]]
 from = "denver"
 to = "albuquerque"
-cost = 20
+cost = 12
 
 [[connections]]
 from = "denver"
 to = "kansascity"
-cost = 20
-
-[[connections]]
-from = "omaha"
-to = "memphis"
-cost = 5
-
-[[connections]]
-from = "omaha"
-to = "kansascity"
-cost = 7
+cost = 19
 
 [[connections]]
 from = "memphis"
 to = "kansascity"
-cost = 10
+cost = 14
 
 [[connections]]
 from = "kansascity"
@@ -551,17 +481,7 @@ cost = 10
 [[connections]]
 from = "stlouis"
 to = "chicago"
-cost = 11
-
-[[connections]]
-from = "stlouis"
-to = "dallas"
-cost = 12
-
-[[connections]]
-from = "stlouis"
-to = "sanantonio"
-cost = 7
+cost = 9
 
 [[connections]]
 from = "stlouis"
@@ -569,28 +489,8 @@ to = "indianapolis"
 cost = 9
 
 [[connections]]
-from = "memphis"
-to = "chicago"
-cost = 10
-
-[[connections]]
-from = "neworleans"
-to = "sanantonio"
-cost = 10
-
-[[connections]]
 from = "sanantonio"
 to = "dallas"
-cost = 8
-
-[[connections]]
-from = "dallas"
-to = "atlanta"
-cost = 8
-
-[[connections]]
-from = "dallas"
-to = "nashville"
 cost = 9
 
 [[connections]]
@@ -601,7 +501,7 @@ cost = 10
 [[connections]]
 from = "jacksonville"
 to = "miami"
-cost = 15
+cost = 12
 
 [[connections]]
 from = "chicago"
@@ -611,12 +511,12 @@ cost = 7
 [[connections]]
 from = "chicago"
 to = "indianapolis"
-cost = 7
+cost = 6
 
 [[connections]]
 from = "detroit"
 to = "toronto"
-cost = 5
+cost = 8
 
 [[connections]]
 from = "detroit"
@@ -626,32 +526,22 @@ cost = 7
 [[connections]]
 from = "toronto"
 to = "pittsburgh"
-cost = 5
-
-[[connections]]
-from = "toronto"
-to = "columbus"
-cost = 5
+cost = 11
 
 [[connections]]
 from = "pittsburgh"
 to = "columbus"
-cost = 7
+cost = 6
 
 [[connections]]
 from = "pittsburgh"
 to = "philadelphia"
-cost = 10
-
-[[connections]]
-from = "pittsburgh"
-to = "charlotte"
-cost = 8
+cost = 9
 
 [[connections]]
 from = "columbus"
 to = "nashville"
-cost = 4
+cost = 15
 
 [[connections]]
 from = "columbus"
@@ -661,12 +551,7 @@ cost = 7
 [[connections]]
 from = "nashville"
 to = "indianapolis"
-cost = 5
-
-[[connections]]
-from = "philadelphia"
-to = "charlotte"
-cost = 5
+cost = 9
 
 [[connections]]
 from = "philadelphia"
@@ -681,42 +566,22 @@ cost = 4
 [[connections]]
 from = "philadelphia"
 to = "newyorks"
-cost = 5
-
-[[connections]]
-from = "pittsburgh"
-to = "newyorks"
-cost = 18
+cost = 3
 
 [[connections]]
 from = "newyorks"
 to = "newyorkn"
-cost = 4
+cost = 0
 
 [[connections]]
 from = "newyorkn"
 to = "montreal"
-cost = 3
-
-[[connections]]
-from = "newyorkn"
-to = "boston"
-cost = 5
+cost = 12
 
 [[connections]]
 from = "montreal"
 to = "boston"
-cost = 4
-
-[[connections]]
-from = "boston"
-to = "quebec"
-cost = 7
-
-[[connections]]
-from = "ottawa"
-to = "quebec"
-cost = 10
+cost = 9
 
 [[connections]]
 from = "edmonton"
@@ -752,3 +617,233 @@ cost = 22
 from = "losangeles"
 to = "albuquerque"
 cost = 25
+
+[[connections]]
+from = "denver"
+to = "winnipeg"
+cost = 26
+
+[[connections]]
+from = "oklahomacity"
+to = "denver"
+cost = 17
+
+[[connections]]
+from = "regina"
+to = "denver"
+cost = 24
+
+[[connections]]
+from = "mexicocityn"
+to = "mexicocitys"
+cost = 0
+
+[[connections]]
+from = "monterrey"
+to = "guadalajara"
+cost = 16
+
+[[connections]]
+from = "monterrey"
+to = "sanantonio"
+cost = 10
+
+[[connections]]
+from = "monterrey"
+to = "chihuahua"
+cost = 14
+
+[[connections]]
+from = "albuquerque"
+to = "lasvegas"
+cost = 18
+
+[[connections]]
+from = "denver"
+to = "minneapolis"
+cost = 23
+
+[[connections]]
+from = "minneapolis"
+to = "omaha"
+cost = 10
+
+[[connections]]
+from = "minneapolis"
+to = "kansascity"
+cost = 14
+
+[[connections]]
+from = "oklahomacity"
+to = "albuquerque"
+cost = 18
+
+[[connections]]
+from = "chihuahua"
+to = "sanantonio"
+cost = 16
+
+[[connections]]
+from = "toronto"
+to = "ottawa"
+cost = 8
+
+[[connections]]
+from = "juarez"
+to = "dallas"
+cost = 19
+
+[[connections]]
+from = "dallas"
+to = "oklahomacity"
+cost = 7
+
+[[connections]]
+from = "dallas"
+to = "houston"
+cost = 8
+
+[[connections]]
+from = "sanantonio"
+to = "houston"
+cost = 6
+
+[[connections]]
+from = "juarez"
+to = "sanantonio"
+cost = 18
+
+[[connections]]
+from = "jacksonville"
+to = "neworleans"
+cost = 20
+
+[[connections]]
+from = "neworleans"
+to = "dallas"
+cost = 16
+
+[[connections]]
+from = "dallas"
+to = "memphis"
+cost = 15
+
+[[connections]]
+from = "memphis"
+to = "oklahomacity"
+cost = 15
+
+[[connections]]
+from = "chicago"
+to = "omaha"
+cost = 3
+
+[[connections]]
+from = "chicago"
+to = "kansascity"
+cost = 16
+
+[[connections]]
+from = "nashville"
+to = "stlouis"
+cost = 9
+
+[[connections]]
+from = "memphis"
+to = "nashville"
+cost = 7
+
+[[connections]]
+from = "memphis"
+to = "neworleans"
+cost = 14
+
+[[connections]]
+from = "atlanta"
+to = "neworleans"
+cost = 16
+
+[[connections]]
+from = "jacksonville"
+to = "charlotte"
+cost = 12
+
+[[connections]]
+from = "atlanta"
+to = "charlotte"
+cost = 8
+
+[[connections]]
+from = "atlanta"
+to = "nashville"
+cost = 8
+
+[[connections]]
+from = "atlanta"
+to = "memphis"
+cost = 12
+
+[[connections]]
+from = "memphis"
+to = "stlouis"
+cost = 9
+
+[[connections]]
+from = "pittsburgh"
+to = "newyorkn"
+cost = 11
+
+[[connections]]
+from = "boston"
+to = "newyorks"
+cost = 7
+
+[[connections]]
+from = "quebec"
+to = "montreal"
+cost = 5
+
+[[connections]]
+from = "montreal"
+to = "ottawa"
+cost = 3
+
+[[connections]]
+from = "nashville"
+to = "washington"
+cost = 22
+
+[[connections]]
+from = "newyorkn"
+to = "toronto"
+cost = 14
+
+[[connections]]
+from = "ottawa"
+to = "newyorkn"
+cost = 13
+
+[[connections]]
+from = "charlotte"
+to = "nashville"
+cost = 12
+
+[[connections]]
+from = "washington"
+to = "pittsburgh"
+cost = 7
+
+[[connections]]
+from = "washington"
+to = "columbus"
+cost = 12
+
+[[connections]]
+from = "columbus"
+to = "chicago"
+cost = 10
+
+[[connections]]
+from = "regina"
+to = "winnipeg"
+cost = 11
