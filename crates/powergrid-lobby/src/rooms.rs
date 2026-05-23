@@ -1,5 +1,5 @@
 use powergrid_core::{
-    actions::{RoomSummary, ServerMessage},
+    actions::{LobbyError, RoomSummary, ServerMessage},
     limits::MAX_ROOM_NAME,
     types::{BotDifficulty, Phase, PlayerColor, PlayerId},
 };
@@ -61,12 +61,20 @@ impl Room {
         bot_name: String,
         color: PlayerColor,
         difficulty: BotDifficulty,
-    ) -> Result<PlayerId, String> {
-        self.session.add_bot(bot_name, color, difficulty)
+    ) -> Result<PlayerId, LobbyError> {
+        self.session
+            .add_bot(bot_name, color, difficulty)
+            .map_err(|e| LobbyError::BotAddFailed { error: e })
     }
 
-    pub fn remove_bot(&mut self, bot_id: PlayerId) -> Result<(), String> {
-        self.session.remove_bot(bot_id)
+    pub fn remove_bot(&mut self, bot_id: PlayerId) -> Result<(), LobbyError> {
+        self.session.remove_bot(bot_id).map_err(|e| {
+            if e.contains("game has started") {
+                LobbyError::GameAlreadyStarted
+            } else {
+                LobbyError::BotNotFound
+            }
+        })
     }
 
     pub fn summary(&self) -> RoomSummary {
@@ -74,7 +82,6 @@ impl Room {
             name: self.name.clone(),
             player_count: self.session.game.players.len() as u8,
             max_players: MAX_PLAYERS,
-            in_lobby: matches!(self.session.game.phase, Phase::Lobby),
             has_started: !matches!(self.session.game.phase, Phase::Lobby),
         }
     }
@@ -116,12 +123,12 @@ impl RoomManager {
         &self,
         name: String,
         creator_user_id: PlayerId,
-    ) -> Result<Arc<Mutex<Room>>, String> {
+    ) -> Result<Arc<Mutex<Room>>, LobbyError> {
         validate_room_name(&name)?;
         let key = name.to_lowercase();
         let mut rooms = self.rooms.write().await;
         if rooms.contains_key(&key) {
-            return Err(format!("a room named '{}' already exists", name));
+            return Err(LobbyError::RoomAlreadyExists { name });
         }
         let map = (*self.default_map).clone();
         let room = Arc::new(Mutex::new(Room::new(name, map, creator_user_id)));
@@ -157,18 +164,16 @@ impl RoomManager {
     }
 }
 
-fn validate_room_name(name: &str) -> Result<(), String> {
+fn validate_room_name(name: &str) -> Result<(), LobbyError> {
     let len = name.chars().count();
     if len == 0 || len > MAX_ROOM_NAME {
-        return Err(format!("room name must be 1–{MAX_ROOM_NAME} characters"));
+        return Err(LobbyError::InvalidRoomName);
     }
     if !name
         .chars()
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(
-            "room name may only contain letters, digits, hyphens, and underscores".to_string(),
-        );
+        return Err(LobbyError::InvalidRoomName);
     }
     Ok(())
 }

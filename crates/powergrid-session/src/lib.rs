@@ -131,7 +131,7 @@ impl Session {
         bot_name: String,
         color: PlayerColor,
         difficulty: BotDifficulty,
-    ) -> Result<PlayerId, String> {
+    ) -> Result<PlayerId, ActionError> {
         let bot_id = uuid::Uuid::new_v4();
         apply_action(
             &mut self.game,
@@ -140,8 +140,7 @@ impl Session {
                 name: bot_name.clone(),
                 color,
             },
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
         info!(
             "Bot '{}' ({:?}) added to session (difficulty: {:?})",
             bot_name, color, difficulty

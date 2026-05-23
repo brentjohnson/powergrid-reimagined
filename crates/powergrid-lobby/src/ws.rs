@@ -8,8 +8,9 @@ use crate::{
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use powergrid_core::{
-    actions::{ClientMessage, ServerMessage},
+    actions::{AuthError, ClientMessage, LobbyError, ServerMessage},
     types::PlayerId,
+    PROTOCOL_VERSION,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
@@ -56,10 +57,9 @@ pub async fn handle_socket(
     let auth_result = loop {
         match tokio::time::timeout_at(deadline, stream.next()).await {
             Err(_) => {
-                // Timeout
                 let _ = tx.send(
                     serde_json::to_string(&ServerMessage::AuthError {
-                        message: "authentication timeout".to_string(),
+                        error: AuthError::Timeout,
                     })
                     .unwrap(),
                 );
@@ -69,13 +69,28 @@ pub async fn handle_socket(
             Ok(Some(Ok(Message::Close(_)))) => break None,
             Ok(Some(Ok(Message::Text(text)))) => {
                 match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(ClientMessage::Authenticate { token }) => {
+                    Ok(ClientMessage::Authenticate {
+                        token,
+                        protocol_version,
+                    }) => {
+                        if protocol_version != PROTOCOL_VERSION {
+                            let _ = tx.send(
+                                serde_json::to_string(&ServerMessage::AuthError {
+                                    error: AuthError::VersionMismatch {
+                                        server_version: PROTOCOL_VERSION,
+                                        client_version: protocol_version,
+                                    },
+                                })
+                                .unwrap(),
+                            );
+                            break None;
+                        }
                         match db.validate_token(&token).await {
                             Ok((user_id, username)) => break Some((user_id, username)),
                             Err(_) => {
                                 let _ = tx.send(
                                     serde_json::to_string(&ServerMessage::AuthError {
-                                        message: "invalid or expired token".to_string(),
+                                        error: AuthError::InvalidToken,
                                     })
                                     .unwrap(),
                                 );
@@ -86,7 +101,7 @@ pub async fn handle_socket(
                     _ => {
                         let _ = tx.send(
                             serde_json::to_string(&ServerMessage::AuthError {
-                                message: "authentication required as first message".to_string(),
+                                error: AuthError::AuthRequired,
                             })
                             .unwrap(),
                         );
@@ -117,7 +132,6 @@ pub async fn handle_socket(
         user_id,
         username: username.clone(),
     });
-    conn.send_msg(&ServerMessage::Welcome { your_id: user_id });
     info!("Client authenticated: {user_id} ({username})");
 
     while let Some(Ok(msg)) = stream.next().await {
@@ -132,7 +146,9 @@ pub async fn handle_socket(
             Err(e) => {
                 warn!("Malformed message from {user_id}: {e}");
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: format!("invalid message: {e}"),
+                    error: LobbyError::InvalidMessage {
+                        message: format!("{e}"),
+                    },
                 });
                 continue;
             }
@@ -142,7 +158,7 @@ pub async fn handle_socket(
             ClientMessage::Authenticate { .. } => {
                 // Already authenticated; ignore duplicate.
             }
-            ClientMessage::Lobby(action) => {
+            ClientMessage::Lobby { action } => {
                 handle_lobby_action(action, &mut conn, &manager).await;
             }
             ClientMessage::Room { room, action } => {

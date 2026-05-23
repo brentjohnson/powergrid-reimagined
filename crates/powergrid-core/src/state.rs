@@ -53,16 +53,13 @@ pub struct GameState {
 // Wire-safe view types (no hidden information)
 // ---------------------------------------------------------------------------
 
-/// The plant market as seen by clients: deck contents are hidden, only the
-/// count of remaining cards is sent.
+/// The plant market as seen by clients: deck contents are hidden.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlantMarketView {
     pub actual: Vec<PowerPlant>,
     pub future: Vec<PowerPlant>,
-    pub deck_remaining: usize,
     pub step3_triggered: bool,
     pub in_step3: bool,
-    #[serde(default)]
     pub discount_token: Option<u8>,
 }
 
@@ -70,6 +67,7 @@ pub struct PlantMarketView {
 /// - `rng_seed` (never sent)
 /// - `PlantMarket.deck`, `below_step3` (face-down cards)
 /// - `map` (sent once on `RoomJoined`; only mutable `city_owners` is included)
+/// - `step3_pending` (internal server state; no consumer reads it from the wire)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameStateView {
     pub phase: Phase,
@@ -80,13 +78,9 @@ pub struct GameStateView {
     /// City owners keyed by city ID. Only cities with at least one owner are included.
     pub city_owners: HashMap<String, Vec<PlayerId>>,
     pub round: u32,
-    #[serde(default = "default_step")]
     pub step: u8,
     pub end_game_cities: u8,
     pub event_log: Vec<String>,
-    #[serde(default)]
-    pub step3_pending: Option<Step3Pending>,
-    #[serde(default)]
     pub active_regions: Vec<String>,
 }
 
@@ -132,7 +126,7 @@ impl GameStateView {
     }
 
     /// Reconstruct a full `GameState` from this view using a static map.
-    /// The deck is empty (not transmitted); `rng_seed` is set to `None`.
+    /// The deck is empty (not transmitted); `rng_seed` and `step3_pending` are set to `None`.
     pub fn into_game_state(self, map: &Map) -> GameState {
         let mut game_map = map.clone();
         for city in game_map.cities.values_mut() {
@@ -157,7 +151,7 @@ impl GameStateView {
             step: self.step,
             end_game_cities: self.end_game_cities,
             event_log: self.event_log,
-            step3_pending: self.step3_pending,
+            step3_pending: None,
             rng_seed: None,
             active_regions: self.active_regions,
         }
@@ -285,7 +279,6 @@ impl GameState {
             market: PlantMarketView {
                 actual: self.market.actual.clone(),
                 future: self.market.future.clone(),
-                deck_remaining: self.market.deck.len(),
                 step3_triggered: self.market.step3_triggered,
                 in_step3: self.market.in_step3,
                 discount_token: self.market.discount_token,
@@ -302,7 +295,6 @@ impl GameState {
             step: self.step,
             end_game_cities: self.end_game_cities,
             event_log: self.event_log.clone(),
-            step3_pending: self.step3_pending.clone(),
             active_regions: self.active_regions.clone(),
         }
     }

@@ -180,7 +180,7 @@ async fn local_session_driver(
                 }
                 if let Err(e) = result {
                     let _ = event_tx.send(WsEvent::MessageReceived(ServerMessage::ActionError {
-                        message: e.to_string(),
+                        error: e,
                     }));
                 } else {
                     acted = true;

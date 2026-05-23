@@ -84,7 +84,7 @@ pub struct AppState {
     pub room_list: Vec<RoomSummary>,
     /// Input field used in the room browser to create or join a room.
     pub room_name_input: String,
-    /// If set, auto-create/join this room name on first Welcome (CLI arg).
+    /// If set, auto-create this room name after authentication (CLI arg).
     pub auto_room: Option<String>,
     /// Bot name + color + difficulty inputs for the Add Bot form (online lobby).
     pub bot_name_input: String,

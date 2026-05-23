@@ -24,7 +24,7 @@ pub struct WsChannels {
 
 impl WsChannels {
     pub fn send_lobby(&self, action: LobbyAction) {
-        self.action_tx.send(ClientMessage::Lobby(action)).ok();
+        self.action_tx.send(ClientMessage::Lobby { action }).ok();
     }
 
     pub fn send_action(&self, room: Option<&str>, action: Action) {
@@ -185,7 +185,10 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                 if let Some(token) = state.auth_token.clone() {
                     channels
                         .action_tx
-                        .send(ClientMessage::Authenticate { token })
+                        .send(ClientMessage::Authenticate {
+                            token,
+                            protocol_version: powergrid_core::PROTOCOL_VERSION,
+                        })
                         .ok();
                 }
             }
@@ -200,13 +203,10 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                         channels.send_lobby(LobbyAction::CreateRoom { name: room_name });
                     }
                 }
-                ServerMessage::AuthError { message } => {
-                    state.auth_error = Some(message);
+                ServerMessage::AuthError { error } => {
+                    state.auth_error = Some(error.to_string());
                     state.connected = false;
                     state.logout();
-                }
-                ServerMessage::Welcome { .. } => {
-                    // legacy standalone server only; the lobby protocol never sends this
                 }
                 ServerMessage::RoomJoined { room, your_id, map } => {
                     state.my_id = Some(your_id);
@@ -230,11 +230,11 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                 ServerMessage::StateUpdate(gs) => {
                     state.handle_state_update(*gs);
                 }
-                ServerMessage::ActionError { message } => {
-                    state.error_message = Some(message);
+                ServerMessage::ActionError { error } => {
+                    state.error_message = Some(error.to_string());
                 }
-                ServerMessage::LobbyError { message } => {
-                    state.error_message = Some(message);
+                ServerMessage::LobbyError { error } => {
+                    state.error_message = Some(error.to_string());
                 }
                 ServerMessage::Event { .. } => {
                     // event log is populated from gs.event_log in StateUpdate; no client-side dispatch needed

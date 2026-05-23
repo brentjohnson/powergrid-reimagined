@@ -1,9 +1,7 @@
 [workspace]
 members = [
     "crates/powergrid-core",
-    "crates/powergrid-server",
     "crates/powergrid-client",
-    "crates/powergrid-bot",
     "crates/powergrid-bot-strategy",
     "crates/powergrid-session",
     "crates/powergrid-lobby",

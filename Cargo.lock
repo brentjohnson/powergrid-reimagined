@@ -2572,23 +2572,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "powergrid-bot"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "powergrid-bot-strategy",
- "powergrid-core",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "powergrid-bot-strategy"
 version = "0.1.0"
 dependencies = [
@@ -2678,23 +2661,6 @@ dependencies = [
  "pyo3",
  "serde",
  "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "powergrid-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "futures",
- "powergrid-core",
- "powergrid-session",
- "serde",
- "serde_json",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

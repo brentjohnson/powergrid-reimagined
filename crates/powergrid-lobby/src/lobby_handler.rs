@@ -1,7 +1,7 @@
 use crate::{rooms::RoomManager, ws::ConnState};
 use powergrid_core::{
-    actions::{LobbyAction, ServerMessage},
-    limits::{MAX_PLAYER_NAME, MAX_ROOM_NAME},
+    actions::{LobbyAction, LobbyError, ServerMessage},
+    limits::MAX_PLAYER_NAME,
     types::Phase,
 };
 use std::sync::Arc;
@@ -21,7 +21,7 @@ pub async fn handle_lobby_action(
         LobbyAction::CreateRoom { name } => {
             match manager.create(name.clone(), conn.user_id).await {
                 Err(e) => {
-                    conn.send_msg(&ServerMessage::LobbyError { message: e });
+                    conn.send_msg(&ServerMessage::LobbyError { error: e });
                 }
                 Ok(room_arc) => {
                     conn.current_room = Some(name.to_lowercase());
@@ -48,16 +48,10 @@ pub async fn handle_lobby_action(
         }
 
         LobbyAction::JoinRoom { name } => {
-            if name.chars().count() > MAX_ROOM_NAME {
-                conn.send_msg(&ServerMessage::LobbyError {
-                    message: format!("room name exceeds {MAX_ROOM_NAME} characters"),
-                });
-                return;
-            }
             let room_arc = match manager.get(&name).await {
                 None => {
                     conn.send_msg(&ServerMessage::LobbyError {
-                        message: format!("room '{}' not found", name),
+                        error: LobbyError::RoomNotFound { name },
                     });
                     return;
                 }
@@ -65,7 +59,7 @@ pub async fn handle_lobby_action(
             };
             if conn.current_room.is_some() {
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: "leave your current room before joining another".to_string(),
+                    error: LobbyError::AlreadyInRoom,
                 });
                 return;
             }
@@ -126,7 +120,7 @@ pub async fn handle_lobby_action(
             let room_name = match &conn.current_room {
                 None => {
                     conn.send_msg(&ServerMessage::LobbyError {
-                        message: "not in any room".to_string(),
+                        error: LobbyError::NotInRoom,
                     });
                     return;
                 }
@@ -135,7 +129,7 @@ pub async fn handle_lobby_action(
             let room_arc = match manager.get(&room_name).await {
                 None => {
                     conn.send_msg(&ServerMessage::LobbyError {
-                        message: "room no longer exists".to_string(),
+                        error: LobbyError::RoomNotFound { name: room_name },
                     });
                     return;
                 }
@@ -144,33 +138,33 @@ pub async fn handle_lobby_action(
             let mut room = room_arc.lock().await;
             if room.creator_user_id != conn.user_id {
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: "only the room host can add bots".to_string(),
+                    error: LobbyError::NotHost,
                 });
                 return;
             }
             if !matches!(room.session.game.phase, Phase::Lobby) {
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: "cannot add bots after game has started".to_string(),
+                    error: LobbyError::GameAlreadyStarted,
                 });
                 return;
             }
             let trimmed = bot_name.trim();
             if trimmed.is_empty() {
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: "bot name must not be empty".to_string(),
+                    error: LobbyError::BotNameEmpty,
                 });
                 return;
             }
             if trimmed.chars().count() > MAX_PLAYER_NAME {
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: format!("bot name exceeds {MAX_PLAYER_NAME} characters"),
+                    error: LobbyError::BotNameTooLong,
                 });
                 return;
             }
             let bot_name = trimmed.to_string();
             match room.add_bot(bot_name, color, difficulty) {
                 Err(e) => {
-                    conn.send_msg(&ServerMessage::LobbyError { message: e });
+                    conn.send_msg(&ServerMessage::LobbyError { error: e });
                 }
                 Ok(_) => {
                     let msg = ServerMessage::StateUpdate(Box::new(room.session.game.view()));
@@ -183,7 +177,7 @@ pub async fn handle_lobby_action(
             let room_name = match &conn.current_room {
                 None => {
                     conn.send_msg(&ServerMessage::LobbyError {
-                        message: "not in any room".to_string(),
+                        error: LobbyError::NotInRoom,
                     });
                     return;
                 }
@@ -192,7 +186,7 @@ pub async fn handle_lobby_action(
             let room_arc = match manager.get(&room_name).await {
                 None => {
                     conn.send_msg(&ServerMessage::LobbyError {
-                        message: "room no longer exists".to_string(),
+                        error: LobbyError::RoomNotFound { name: room_name },
                     });
                     return;
                 }
@@ -201,13 +195,13 @@ pub async fn handle_lobby_action(
             let mut room = room_arc.lock().await;
             if room.creator_user_id != conn.user_id {
                 conn.send_msg(&ServerMessage::LobbyError {
-                    message: "only the room host can remove bots".to_string(),
+                    error: LobbyError::NotHost,
                 });
                 return;
             }
             match room.remove_bot(bot_id) {
                 Err(e) => {
-                    conn.send_msg(&ServerMessage::LobbyError { message: e });
+                    conn.send_msg(&ServerMessage::LobbyError { error: e });
                 }
                 Ok(()) => {
                     let msg = ServerMessage::StateUpdate(Box::new(room.session.game.view()));

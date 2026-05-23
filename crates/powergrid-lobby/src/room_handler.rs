@@ -1,5 +1,8 @@
 use crate::{driver::run_bot_pump, rooms::RoomManager, ws::ConnState};
-use powergrid_core::{actions::ServerMessage, Action};
+use powergrid_core::{
+    actions::{LobbyError, ServerMessage},
+    Action,
+};
 use std::{sync::Arc, time::Duration};
 use tracing::{info, warn};
 
@@ -13,7 +16,9 @@ pub async fn handle_room_action(
     let room_arc = match manager.get(&room_name).await {
         None => {
             conn.send_msg(&ServerMessage::LobbyError {
-                message: format!("room '{}' not found", room_name),
+                error: LobbyError::RoomNotFound {
+                    name: room_name.clone(),
+                },
             });
             return;
         }
@@ -25,7 +30,7 @@ pub async fn handle_room_action(
         let room = room_arc.lock().await;
         if !room.humans.iter().any(|(id, _)| *id == conn.user_id) {
             conn.send_msg(&ServerMessage::LobbyError {
-                message: format!("you are not in room '{}'", room_name),
+                error: LobbyError::NotMember,
             });
             return;
         }
@@ -50,9 +55,7 @@ pub async fn handle_room_action(
     };
 
     if let Err(e) = result {
-        conn.send_msg(&ServerMessage::ActionError {
-            message: e.to_string(),
-        });
+        conn.send_msg(&ServerMessage::ActionError { error: e });
         return;
     }
 

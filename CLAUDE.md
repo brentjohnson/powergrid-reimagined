@@ -23,19 +23,12 @@ cargo check
 # Run a single test
 cargo test -p powergrid-core test_join_and_start
 
-# Run the legacy single-game server (from repo root)
-cargo run -p powergrid-server
-
 # Run the lobby server (requires DATABASE_URL)
 DATABASE_URL=postgres://... cargo run -p powergrid-lobby
 
 # Run the client
 cargo run -p powergrid-client
 cargo run -p powergrid-client --features dev   # fast incremental rebuilds
-
-# Run standalone bots (against a running server)
-cargo run -p powergrid-bot -- --name BotA --color red
-cargo run -p powergrid-bot -- --name BotB --color blue
 
 # Docker (lobby + postgres)
 docker compose up --build
@@ -55,15 +48,13 @@ When making architectural or structural changes, update CLAUDE.md accordingly.
 
 ## Architecture
 
-Eight-crate Cargo workspace:
+Six-crate Cargo workspace:
 
 ```
 crates/
   powergrid-core/          # pure game logic, no I/O
   powergrid-session/       # shared Session abstraction: apply_action, broadcast, BotPump
   powergrid-bot-strategy/  # pure strategy lib — no I/O, no tokio
-  powergrid-bot/           # re-exports strategy + WS runtime; standalone bot binary
-  powergrid-server/        # legacy single-game axum WS server; also embeddable as a lib
   powergrid-lobby/         # production multi-game server: auth, rooms, in-process bots, PostgreSQL
   powergrid-client/        # Bevy/egui GUI — online (lobby) or local play (in-process session)
   powergrid-py/            # PyO3 extension module for the Python RL environment
@@ -77,7 +68,7 @@ python/                    # PettingZoo RL environment (see docs/rl-environment.
   Makefile                 # make develop = build Rust + install Python
 ```
 
-Dependency graph (Rust): core ← bot-strategy ← {bot, session, powergrid-py} ← {server, lobby, client}.
+Dependency graph (Rust): core ← bot-strategy ← {session, powergrid-py} ← {lobby, client}.
 
 `powergrid-py` depends only on `powergrid-core` and `powergrid-bot-strategy` — no server, lobby, or async runtime.
 
@@ -86,8 +77,12 @@ Dependency graph (Rust): core ← bot-strategy ← {bot, session, powergrid-py} 
 All game state and rules. The key entry point is `rules::apply_action(state, player_id, action) -> Result<(), ActionError>`. It's pure — no I/O — and fully unit-testable.
 
 - `types.rs` — `Player`, `PowerPlant`, `ResourceMarket`, `PlantMarket`, `Phase`, `PlayerColor`, `PlayerId` (Uuid alias), etc.
-- `state.rs` — `GameState` struct (all game data including the map)
-- `actions.rs` — all wire types: `Action` (game moves), `ActionError`, `ServerMessage`, `ClientMessage` (lobby envelope), `LobbyAction`, `RoomSummary`. The file contains both pure-game types and lobby-protocol types.
+- `state.rs` — `GameState` struct (all game data including the map); `GameStateView` is the wire-safe projection.
+- `actions/` — all wire types, split across three files:
+  - `game.rs` — `Action` (game moves), `ActionError`
+  - `protocol.rs` — `ServerMessage`, `ClientMessage`, `LobbyAction`, `RoomSummary`, `AuthError`, `LobbyError`
+  - `hints.rs` — `HintPayload`
+  - `mod.rs` — re-exports + `PROTOCOL_VERSION` constant
 - `map.rs` — `Map` (runtime graph) + `MapData` (TOML-deserializable). Dijkstra routing in `Map::connection_cost_to`.
 - `rules.rs` — `apply_action` dispatcher + one `handle_*` function per phase. Also `build_plant_deck()`.
 
@@ -95,11 +90,11 @@ All game state and rules. The key entry point is `rules::apply_action(state, pla
 
 ### powergrid-session
 
-Shared game session abstraction used by both server and lobby.
+Shared game session abstraction used by both lobby and client.
 
-- `lib.rs` — `Session { game, subscribers, bots }`. Methods: `apply(actor, action)` (calls `apply_action`, broadcasts `StateUpdate`), `add_subscriber(Subscriber)`, `add_bot(name, color)`, `remove_bot(id)`, `broadcast(msg)`.
+- `lib.rs` — `Session { game, subscribers, bots }`. Methods: `apply(actor, action)` (calls `apply_action`, broadcasts `StateUpdate`), `add_subscriber(Subscriber)`, `add_bot(name, color, difficulty) -> Result<PlayerId, ActionError>`, `remove_bot(id)`, `broadcast(msg)`.
 - `Subscriber` — two variants: `Mpsc(UnboundedSender<String>)` serializes to JSON (WS use); `Local(crossbeam::Sender<ServerMessage>)` sends typed messages (in-process use).
-- `run_bot_pump(Arc<Mutex<Session>>, delay)` — drives all in-process bots until none has a move or 50-iteration cap is hit; releases lock between turns.
+- `run_bot_pump(Arc<Mutex<Session>>, delay)` — drives all in-process bots until none has a move or 500-iteration cap is hit; releases lock between turns.
 - `MAX_PLAYERS: u8 = 6` — single workspace-level constant.
 
 ### powergrid-bot-strategy
@@ -108,44 +103,19 @@ Pure strategy lib with no I/O. Depended on by session, lobby, and client.
 
 - `strategy.rs` — `decide(state, me) -> Option<Action>` — pure function with one `decide_*` helper per phase.
 
-### powergrid-server
-
-Legacy single-game WS server. No auth, no room concept. Also runnable as a standalone binary for LAN play.
-
-- `lib.rs` — `pub async fn serve_embedded(map, addr) -> (SocketAddr, impl Future)`. Wraps `Session` in `Arc<Mutex<Session>>`. Used only for LAN play via the standalone binary; no longer embedded in the client.
-- `main.rs` — thin binary wrapper. Reads `PORT`/`MAP_FILE` env vars, uses `powergrid_core::default_map()`, calls `serve_embedded`.
-- `ws.rs` — per-connection handler using `Session::apply`; prunes dead subscribers via `retain`.
-- Configured via env vars: `PORT` (default 3000), `MAP_FILE` (optional override), `RUST_LOG`.
-
 ### powergrid-lobby
 
 Production multi-game server. Handles auth, room lifecycle, and in-process bots. Requires PostgreSQL (`DATABASE_URL` env var).
 
 - `main.rs` — axum router: `/health`, `/rooms` (REST), `/ws`, `/auth/{register,login,logout}`. `AppState { manager, bot_delay, db }`.
-- `ws.rs` — `ConnState { user_id, username, current_room, tx }`. Pre-auth gate: expects `ClientMessage::Authenticate { token }` as the first message (10s timeout). On success dispatches `Lobby(LobbyAction)` and `Room { room, action }` messages.
+- `ws.rs` — `ConnState { user_id, username, current_room, tx }`. Pre-auth gate: expects `ClientMessage::Authenticate { token, protocol_version }` as the first message (10s timeout); rejects mismatched `protocol_version` with `AuthError::VersionMismatch`. On success dispatches `Lobby { action }` and `Room { room, action }` messages.
 - `rooms.rs` — `Room { name, game, humans, bots, creator_user_id }` with `broadcast`, `broadcast_msg`, `add_bot`, `remove_bot`, `summary`. `RoomManager` owns `RwLock<HashMap<String, Arc<Mutex<Room>>>>`.
 - `lobby_handler.rs` — handles `LobbyAction` variants: `ListRooms`, `CreateRoom`, `JoinRoom`, `LeaveRoom`, `AddBot`, `RemoveBot`.
 - `room_handler.rs` — handles in-game `Action`: lock room, call `apply_action`, broadcast `StateUpdate`, trigger `run_bot_pump`.
-- `driver.rs` — `run_bot_pump(room_arc, delay)`: polls `strategy::decide` for each in-process bot (up to 50 iterations), applies moves via `apply_action`, broadcasts state. Bots never touch the network.
+- `driver.rs` — `run_bot_pump(room_arc, delay)`: polls `strategy::decide` for each in-process bot (up to 500 iterations), applies moves via `apply_action`, broadcasts state. Bots never touch the network.
 - `auth.rs` — REST handlers for register/login/logout. 32-byte URL-safe-base64 tokens, 30-day TTL.
 - `db.rs` — `Db { pool: PgPool }`. Methods: `register`, `login`, `validate_token`, `logout`. Uses Argon2 for password hashing.
 - Configured via env vars: `PORT` (3000), `DATABASE_URL` (required), `BOT_DELAY_MS` (250), `MAP_FILE`, `RUST_LOG`.
-
-### powergrid-bot
-
-Thin crate that re-exports `powergrid-bot-strategy::strategy` and adds a WS runtime. Standalone bot binary.
-
-- `lib.rs` — `pub use powergrid_bot_strategy::strategy; pub mod runtime;`
-- `runtime.rs` — `pub async fn run_bot(url, name, color)` — WS connect loop (legacy protocol), calls `strategy::decide` each turn. Used only by the standalone binary (and useful for testing remote servers). **Not used by the client or lobby.**
-- `main.rs` — CLI arg parsing (`--name`, `--color`, `--server`, `--port`); calls `runtime::run_bot`.
-
-Run with:
-```bash
-cargo run -p powergrid-bot -- --name BotA --color red
-cargo run -p powergrid-bot -- --name BotB --color blue --server localhost --port 3000
-```
-
-> **Important:** Whenever `Action`, `ServerMessage`, or any phase/state type in `powergrid-core` changes, update `strategy.rs` in `powergrid-bot` to match. The bot mirrors the full client/server protocol and will silently produce wrong decisions or fail to compile if it falls out of sync.
 
 ### powergrid-client
 
@@ -186,16 +156,21 @@ See [docs/rl-environment.md](docs/rl-environment.md) for the full Python API and
 
 ### Protocol
 
-**Online (lobby) protocol** — `ClientMessage` (tagged `"type"`) client→server:
-- `Authenticate { token }` — must be first message; 10s timeout.
-- `Lobby(LobbyAction)` — room management (`ListRooms`, `CreateRoom`, `JoinRoom`, `LeaveRoom`, `AddBot`, `RemoveBot`).
+Single protocol. Version negotiation is enforced at the handshake: the client must send `PROTOCOL_VERSION` (defined in `powergrid_core::actions::PROTOCOL_VERSION`); the server rejects mismatches with `AuthError::VersionMismatch`.
+
+**Client→server** — `ClientMessage` (tagged `"type"`):
+- `Authenticate { token, protocol_version }` — must be first message; 10s timeout.
+- `Lobby { action: LobbyAction }` — room management (`ListRooms`, `CreateRoom`, `JoinRoom`, `LeaveRoom`, `AddBot`, `RemoveBot`).
 - `Room { room, action: Action }` — in-game move scoped to a named room.
+- `RoomHint { room, hint: HintPayload }` — ephemeral peer selection hint.
 
-`ServerMessage` (tagged `"type"`) server→client: `Authenticated`, `AuthError`, `Welcome`, `StateUpdate`, `ActionError`, `LobbyError`, `RoomList`, `RoomJoined`, `RoomLeft`, `Event`.
+**Server→client** — `ServerMessage` (tagged `"type"`):
+- `Authenticated`, `AuthError { error: AuthError }` — auth handshake result.
+- `StateUpdate(GameStateView)` — full wire-safe state after every valid action.
+- `ActionError { error: ActionError }`, `LobbyError { error: LobbyError }` — structured errors.
+- `RoomList`, `RoomJoined` (includes full static map once), `RoomLeft`, `Event`, `PeerHint`.
 
-**Legacy (embedded) protocol** — bare `Action` (tagged `"type"`) client→server; same `ServerMessage` subset (`Welcome`, `StateUpdate`, `ActionError`) server→client. Used only for local play via the embedded `powergrid-server`.
-
-Full `GameState` is broadcast to all clients after every valid action in both protocols.
+`GameStateView` is broadcast to all clients after every valid action. It omits hidden info (deck, rng seed, map graph) and zeroes opponent money. The full `Map` is sent once in `RoomJoined`; subsequent `StateUpdate`s carry only `city_owners`.
 
 ### Map format
 
