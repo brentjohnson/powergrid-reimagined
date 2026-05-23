@@ -64,9 +64,9 @@ pub struct ShortestPath {
     pub edges: Vec<(String, String)>,
 }
 
-const DEFAULT_MAP_TOML: &str = include_str!("../../../assets/maps/germany.toml");
+const DEFAULT_MAP_TOML: &str = include_str!("../../../assets/maps/usa.toml");
 
-/// Load the built-in Germany map.
+/// Load the built-in USA map.
 pub fn default_map() -> Map {
     Map::load(DEFAULT_MAP_TOML).expect("embedded map must be valid")
 }
