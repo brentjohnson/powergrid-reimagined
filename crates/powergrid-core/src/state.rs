@@ -261,13 +261,14 @@ impl GameState {
     }
 
     /// Produce a wire-safe view: strips hidden information (deck, seed, full map).
-    /// Opponent money is zeroed unless `viewer` matches the player's id.
+    /// Opponent money is zeroed unless `viewer` matches the player's id (or the game is over).
     pub fn view_for(&self, viewer: Option<PlayerId>) -> GameStateView {
+        let game_over = matches!(self.phase, crate::types::Phase::GameOver { .. });
         let players = self
             .players
             .iter()
             .map(|p| {
-                if viewer == Some(p.id) {
+                if game_over || viewer == Some(p.id) {
                     p.clone()
                 } else {
                     crate::types::Player {
