@@ -13,10 +13,6 @@ use crate::{
     theme,
 };
 
-/// Original map image dimensions (germany.png is 1869 × 2593).
-const IMG_W: f32 = 1869.0;
-const IMG_H: f32 = 2593.0;
-
 /// Fraction of displayed image width used as draw radius for city house indicators.
 const CITY_R_FRAC: f32 = 0.011;
 /// Half-width / half-height of the city rectangle in fractional image coords (zoom-invariant).
@@ -69,7 +65,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
 
     if response.clicked() && is_my_build_turn {
         if let Some(click) = response.interact_pointer_pos() {
-            let (img_w, img_h, ox, oy) = image_layout(map_rect);
+            let (img_w, img_h, ox, oy) = image_layout(map_rect, map.width, map.height);
             let lx = (click.x - map_rect.left() - state.map_offset.x) / state.map_zoom;
             let ly = (click.y - map_rect.top() - state.map_offset.y) / state.map_zoom;
             let xp = (lx - ox) / img_w;
@@ -99,7 +95,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
     }
 
     // ---- overlays ----
-    let (img_w, img_h, ox, oy) = image_layout(map_rect);
+    let (img_w, img_h, ox, oy) = image_layout(map_rect, map.width, map.height);
     let city_r = CITY_R_FRAC * img_w * state.map_zoom;
 
     let to_screen = |xp: f32, yp: f32| -> Pos2 {
@@ -452,15 +448,15 @@ fn house_points(center: Pos2, r: f32) -> Vec<Pos2> {
 
 /// Compute the "contain" layout of the map image within a rect.
 /// Returns (displayed_w, displayed_h, offset_x, offset_y) in local image coords.
-fn image_layout(rect: Rect) -> (f32, f32, f32, f32) {
-    let img_ratio = IMG_W / IMG_H;
+fn image_layout(rect: Rect, board_w: f32, board_h: f32) -> (f32, f32, f32, f32) {
+    let img_ratio = board_w / board_h;
     let rect_ratio = rect.width() / rect.height();
     let (w, h) = if rect_ratio < img_ratio {
-        let s = rect.width() / IMG_W;
-        (rect.width(), IMG_H * s)
+        let s = rect.width() / board_w;
+        (rect.width(), board_h * s)
     } else {
-        let s = rect.height() / IMG_H;
-        (IMG_W * s, rect.height())
+        let s = rect.height() / board_h;
+        (board_w * s, rect.height())
     };
     (w, h, (rect.width() - w) / 2.0, (rect.height() - h) / 2.0)
 }

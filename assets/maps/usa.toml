@@ -1,4 +1,6 @@
 name = "USA"
+width = 30.5
+height = 26.5
 image = "pg-usa.jpeg"
 regions = [
     "northwest",

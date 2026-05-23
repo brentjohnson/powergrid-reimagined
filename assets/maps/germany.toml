@@ -1,4 +1,6 @@
 name = "Germany"
+width = 20.5
+height = 28.5
 image = "germany.png"
 regions = ["northwest", "northeast", "west", "east", "southwest", "southeast"]
 

@@ -65,6 +65,8 @@ enum Selection {
 
 struct MapEditor {
     map_name: String,
+    board_width: f32,
+    board_height: f32,
     regions: Vec<String>,
     image_filename: Option<String>,
     cities: Vec<City>,
@@ -92,6 +94,8 @@ impl MapEditor {
     fn new(output_path: PathBuf) -> Self {
         Self {
             map_name: "New Map".into(),
+            board_width: 1.0,
+            board_height: 1.0,
             regions: vec!["region1".into()],
             image_filename: None,
             cities: vec![],
@@ -139,6 +143,10 @@ impl MapEditor {
         struct TomlMap {
             name: String,
             #[serde(default)]
+            width: f32,
+            #[serde(default)]
+            height: f32,
+            #[serde(default)]
             regions: Vec<String>,
             #[serde(default)]
             image: Option<String>,
@@ -150,6 +158,8 @@ impl MapEditor {
 
         let m: TomlMap = toml::from_str(&content).map_err(|e| e.to_string())?;
         self.map_name = m.name;
+        self.board_width = m.width;
+        self.board_height = m.height;
         self.regions = if m.regions.is_empty() {
             vec!["region1".into()]
         } else {
@@ -172,6 +182,8 @@ impl MapEditor {
         #[derive(serde::Serialize)]
         struct TomlMap<'a> {
             name: &'a str,
+            width: f32,
+            height: f32,
             #[serde(skip_serializing_if = "Option::is_none")]
             image: Option<&'a str>,
             regions: &'a [String],
@@ -181,6 +193,8 @@ impl MapEditor {
 
         let map = TomlMap {
             name: &self.map_name,
+            width: self.board_width,
+            height: self.board_height,
             image: self.image_filename.as_deref(),
             regions: &self.regions,
             cities: &self.cities,

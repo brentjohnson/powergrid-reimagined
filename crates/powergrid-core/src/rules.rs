@@ -1701,6 +1701,8 @@ mod tests {
     fn test_map() -> Map {
         Map::from_data(MapData {
             name: "Test".into(),
+            width: 1.0,
+            height: 1.0,
             regions: vec!["r1".into()],
             image: None,
             cities: vec![
@@ -3044,6 +3046,8 @@ mod tests {
     fn multi_region_map() -> Map {
         Map::from_data(MapData {
             name: "MultiRegion".into(),
+            width: 1.0,
+            height: 1.0,
             regions: vec![
                 "r1".into(),
                 "r2".into(),

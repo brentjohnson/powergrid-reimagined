@@ -5,6 +5,10 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize)]
 pub struct MapData {
     pub name: String,
+    /// Physical board width (e.g. inches). Used for aspect-ratio-correct rendering.
+    pub width: f32,
+    /// Physical board height (e.g. inches). Used for aspect-ratio-correct rendering.
+    pub height: f32,
     pub regions: Vec<String>,
     /// Relative path to the board image (e.g. "germany.png"), resolved from the TOML file's directory.
     #[serde(default)]
@@ -35,6 +39,10 @@ pub struct ConnectionData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Map {
     pub name: String,
+    /// Physical board width (e.g. inches). Used for aspect-ratio-correct rendering.
+    pub width: f32,
+    /// Physical board height (e.g. inches). Used for aspect-ratio-correct rendering.
+    pub height: f32,
     pub regions: Vec<String>,
     pub cities: HashMap<String, City>,
     /// Adjacency: city_id → list of (neighbor_id, edge_cost).
@@ -102,6 +110,8 @@ impl Map {
 
         Self {
             name: data.name,
+            width: data.width,
+            height: data.height,
             regions: data.regions,
             cities,
             edges,
@@ -234,6 +244,8 @@ mod tests {
     fn small_map() -> Map {
         Map::from_data(MapData {
             name: "Test".into(),
+            width: 1.0,
+            height: 1.0,
             regions: vec!["r".into()],
             image: None,
             cities: vec![
