@@ -1,5 +1,8 @@
 use egui::RichText;
-use powergrid_core::types::{BotDifficulty, PlayerColor};
+use powergrid_core::{
+    limits::MAX_PLAYER_NAME,
+    types::{BotDifficulty, PlayerColor},
+};
 
 use crate::{
     local::LocalConfig,
@@ -42,7 +45,10 @@ pub(super) fn local_setup_screen(ctx: &egui::Context, state: &mut AppState, acti
 
                     // Name
                     ui.label(RichText::new("YOUR NAME").color(theme::TEXT_DIM).small());
-                    ui.text_edit_singleline(&mut state.local_name);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.local_name)
+                            .char_limit(MAX_PLAYER_NAME),
+                    );
 
                     ui.add_space(4.0);
 

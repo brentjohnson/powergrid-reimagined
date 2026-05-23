@@ -1,4 +1,5 @@
 use crate::actions::{Action, ActionError};
+use crate::limits::MAX_PLAYER_NAME;
 use crate::state::GameState;
 use crate::types::*;
 use rand::seq::SliceRandom;
@@ -46,6 +47,12 @@ fn handle_join(
 ) -> Result<(), ActionError> {
     if !matches!(state.phase, Phase::Lobby) {
         return Err(ActionError::WrongPhase);
+    }
+    if name.trim().is_empty() {
+        return Err(ActionError::NameEmpty);
+    }
+    if name.chars().count() > MAX_PLAYER_NAME {
+        return Err(ActionError::NameTooLong);
     }
     if state.players.len() >= 6 {
         return Err(ActionError::GameFull);

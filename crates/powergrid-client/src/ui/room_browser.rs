@@ -1,5 +1,5 @@
 use egui::RichText;
-use powergrid_core::actions::LobbyAction;
+use powergrid_core::{actions::LobbyAction, limits::MAX_ROOM_NAME};
 
 use crate::{state::AppState, theme, ws::WsChannels};
 
@@ -43,7 +43,10 @@ pub(super) fn room_browser_screen(
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Room name:").color(theme::TEXT_DIM));
-                        ui.text_edit_singleline(&mut state.room_name_input);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.room_name_input)
+                                .char_limit(MAX_ROOM_NAME),
+                        );
                     });
 
                     let room_name = state.room_name_input.trim().to_string();

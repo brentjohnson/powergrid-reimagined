@@ -49,6 +49,10 @@ pub enum Action {
 pub enum ActionError {
     #[error("game is full")]
     GameFull,
+    #[error("name must not be empty")]
+    NameEmpty,
+    #[error("name exceeds maximum length")]
+    NameTooLong,
     #[error("name already taken")]
     NameTaken,
     #[error("color already taken")]

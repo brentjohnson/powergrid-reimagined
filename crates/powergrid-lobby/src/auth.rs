@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{db::AuthError, AppState};
+use powergrid_core::limits::{MAX_EMAIL, MAX_PASSWORD, MAX_USERNAME, MIN_PASSWORD, MIN_USERNAME};
 
 #[derive(Deserialize)]
 pub struct RegisterReq {
@@ -46,14 +47,18 @@ pub async fn register(
     State(app): State<AppState>,
     Json(req): Json<RegisterReq>,
 ) -> Result<(StatusCode, Json<AuthResp>), (StatusCode, Json<ErrResp>)> {
-    if !req.email.contains('@') {
-        return Err(err(StatusCode::BAD_REQUEST, "email must contain @"));
-    }
-    let ulen = req.username.chars().count();
-    if !(3..=32).contains(&ulen) {
+    let elen = req.email.chars().count();
+    if !req.email.contains('@') || elen > MAX_EMAIL {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "username must be 3–32 characters",
+            format!("email must contain @ and be at most {MAX_EMAIL} characters"),
+        ));
+    }
+    let ulen = req.username.chars().count();
+    if !(MIN_USERNAME..=MAX_USERNAME).contains(&ulen) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            format!("username must be {MIN_USERNAME}–{MAX_USERNAME} characters"),
         ));
     }
     if !req
@@ -66,10 +71,11 @@ pub async fn register(
             "username may only contain letters, digits, hyphens, and underscores",
         ));
     }
-    if req.password.len() < 8 {
+    let plen = req.password.chars().count();
+    if !(MIN_PASSWORD..=MAX_PASSWORD).contains(&plen) {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "password must be at least 8 characters",
+            format!("password must be {MIN_PASSWORD}–{MAX_PASSWORD} characters"),
         ));
     }
 
@@ -96,6 +102,12 @@ pub async fn login(
     State(app): State<AppState>,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<AuthResp>, (StatusCode, Json<ErrResp>)> {
+    if req.identifier.chars().count() > MAX_EMAIL {
+        return Err(err(StatusCode::BAD_REQUEST, "invalid credentials"));
+    }
+    if req.password.chars().count() > MAX_PASSWORD {
+        return Err(err(StatusCode::BAD_REQUEST, "invalid credentials"));
+    }
     match app.db.login(&req.identifier, &req.password).await {
         Ok(s) => Ok(Json(AuthResp {
             token: s.token,

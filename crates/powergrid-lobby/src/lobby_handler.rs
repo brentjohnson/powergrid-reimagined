@@ -1,6 +1,7 @@
 use crate::{rooms::RoomManager, ws::ConnState};
 use powergrid_core::{
     actions::{LobbyAction, ServerMessage},
+    limits::{MAX_PLAYER_NAME, MAX_ROOM_NAME},
     types::Phase,
 };
 use std::sync::Arc;
@@ -47,6 +48,12 @@ pub async fn handle_lobby_action(
         }
 
         LobbyAction::JoinRoom { name } => {
+            if name.chars().count() > MAX_ROOM_NAME {
+                conn.send_msg(&ServerMessage::LobbyError {
+                    message: format!("room name exceeds {MAX_ROOM_NAME} characters"),
+                });
+                return;
+            }
             let room_arc = match manager.get(&name).await {
                 None => {
                     conn.send_msg(&ServerMessage::LobbyError {
@@ -147,6 +154,20 @@ pub async fn handle_lobby_action(
                 });
                 return;
             }
+            let trimmed = bot_name.trim();
+            if trimmed.is_empty() {
+                conn.send_msg(&ServerMessage::LobbyError {
+                    message: "bot name must not be empty".to_string(),
+                });
+                return;
+            }
+            if trimmed.chars().count() > MAX_PLAYER_NAME {
+                conn.send_msg(&ServerMessage::LobbyError {
+                    message: format!("bot name exceeds {MAX_PLAYER_NAME} characters"),
+                });
+                return;
+            }
+            let bot_name = trimmed.to_string();
             match room.add_bot(bot_name, color, difficulty) {
                 Err(e) => {
                     conn.send_msg(&ServerMessage::LobbyError { message: e });

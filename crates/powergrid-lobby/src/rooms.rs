@@ -1,5 +1,6 @@
 use powergrid_core::{
     actions::{RoomSummary, ServerMessage},
+    limits::MAX_ROOM_NAME,
     types::{BotDifficulty, Phase, PlayerColor, PlayerId},
 };
 use powergrid_session::{Map, Session, Subscriber, MAX_PLAYERS};
@@ -157,8 +158,9 @@ impl RoomManager {
 }
 
 fn validate_room_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.len() > 32 {
-        return Err("room name must be 1–32 characters".to_string());
+    let len = name.chars().count();
+    if len == 0 || len > MAX_ROOM_NAME {
+        return Err(format!("room name must be 1–{MAX_ROOM_NAME} characters"));
     }
     if !name
         .chars()

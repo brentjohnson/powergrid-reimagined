@@ -1,4 +1,5 @@
 use egui::RichText;
+use powergrid_core::limits::{MAX_EMAIL, MAX_PASSWORD};
 
 use crate::{
     auth::{do_login, AuthEvent},
@@ -48,11 +49,17 @@ pub(super) fn login_screen(ctx: &egui::Context, state: &mut AppState) {
                             .color(theme::TEXT_DIM)
                             .small(),
                     );
-                    let id_resp = ui.text_edit_singleline(&mut state.login_identifier);
+                    let id_resp = ui.add(
+                        egui::TextEdit::singleline(&mut state.login_identifier)
+                            .char_limit(MAX_EMAIL),
+                    );
 
                     ui.label(RichText::new("PASSWORD").color(theme::TEXT_DIM).small());
-                    let pw_resp = ui
-                        .add(egui::TextEdit::singleline(&mut state.login_password).password(true));
+                    let pw_resp = ui.add(
+                        egui::TextEdit::singleline(&mut state.login_password)
+                            .password(true)
+                            .char_limit(MAX_PASSWORD),
+                    );
 
                     // Submit on Enter
                     let submit = (id_resp.lost_focus() || pw_resp.lost_focus())

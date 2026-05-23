@@ -1,6 +1,7 @@
 use egui::RichText;
 use powergrid_core::{
     actions::{Action, LobbyAction},
+    limits::MAX_PLAYER_NAME,
     types::{PlayerColor, PlayerId},
     GameStateView,
 };
@@ -186,7 +187,10 @@ pub(super) fn lobby_screen(
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Name:").color(theme::TEXT_DIM).small());
-                            ui.text_edit_singleline(&mut state.bot_name_input);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.bot_name_input)
+                                    .char_limit(MAX_PLAYER_NAME),
+                            );
                         });
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("Color:").color(theme::TEXT_DIM).small());

@@ -1,7 +1,11 @@
-use egui::{Align2, Grid, RichText};
+use egui::{Align, Align2, Label, Layout, RichText};
 use powergrid_core::{types::PlayerId, GameStateView};
 
 use crate::{state::player_color_to_egui, theme};
+
+const ROW_H: f32 = 16.0;
+// name, MONEY, POWERED, CITIES, CAP
+const COL_WIDTHS: [f32; 5] = [150.0, 70.0, 80.0, 70.0, 60.0];
 
 pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, winner: PlayerId) {
     // Build ranking: sort by (cities_powered desc, money desc, cities_owned desc)
@@ -22,21 +26,28 @@ pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, 
             theme::neon_frame().show(ui, |ui| {
                 ui.add_space(6.0);
 
-                // Column headers
-                Grid::new("game_over_header")
-                    .num_columns(5)
-                    .spacing([16.0, 2.0])
-                    .show(ui, |ui| {
-                        for label in ["", "MONEY", "POWERED", "CITIES", "CAP"] {
-                            ui.label(
-                                RichText::new(label)
-                                    .size(11.0)
-                                    .color(theme::TEXT_DIM)
-                                    .monospace(),
+                // Column headers — using the same fixed widths as the data rows
+                let headers = ["", "MONEY", "POWERED", "CITIES", "CAP"];
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for (i, (&width, &label)) in COL_WIDTHS.iter().zip(headers.iter()).enumerate() {
+                        let text = RichText::new(label)
+                            .size(11.0)
+                            .color(theme::TEXT_DIM)
+                            .monospace();
+                        if i == 0 {
+                            ui.add_sized([width, ROW_H], Label::new(text));
+                        } else {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(width, ROW_H),
+                                Layout::right_to_left(Align::Center),
+                                |ui| {
+                                    ui.add(Label::new(text));
+                                },
                             );
                         }
-                        ui.end_row();
-                    });
+                    }
+                });
 
                 ui.add_space(4.0);
 
@@ -54,49 +65,47 @@ pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, 
                     let cities_owned = gs.player_city_count(p.id) as u32;
                     let capacity: u32 = p.plants.iter().map(|pl| pl.cities as u32).sum();
 
+                    let cells: [(&str, egui::Color32, String); 5] = [
+                        (
+                            "name",
+                            player_egui_color,
+                            format!("{} {}", ordinal(rank + 1), p.name),
+                        ),
+                        ("money", theme::NEON_GREEN, format!("${}", p.money)),
+                        (
+                            "powered",
+                            theme::TEXT_DIM,
+                            format!("{}", p.last_cities_powered),
+                        ),
+                        ("cities", theme::TEXT_DIM, format!("{cities_owned}")),
+                        ("cap", theme::TEXT_DIM, format!("{capacity}")),
+                    ];
+
                     egui::Frame::NONE
                         .fill(theme::BG_PANEL)
                         .stroke(egui::Stroke::new(stroke_width, stroke_color))
                         .inner_margin(egui::Margin::same(6))
                         .corner_radius(egui::CornerRadius::same(3))
                         .show(ui, |ui| {
-                            Grid::new(format!("game_over_row_{rank}"))
-                                .num_columns(5)
-                                .spacing([16.0, 0.0])
-                                .show(ui, |ui| {
-                                    // Position + name
-                                    let ordinal = ordinal(rank + 1);
-                                    ui.label(
-                                        RichText::new(format!("{ordinal} {}", p.name))
-                                            .monospace()
-                                            .color(player_egui_color),
-                                    );
-                                    // Money
-                                    ui.label(
-                                        RichText::new(format!("${}", p.money))
-                                            .monospace()
-                                            .color(theme::NEON_GREEN),
-                                    );
-                                    // Cities powered (final bureaucracy result)
-                                    ui.label(
-                                        RichText::new(format!("{}", p.last_cities_powered))
-                                            .monospace()
-                                            .color(theme::TEXT_DIM),
-                                    );
-                                    // Cities owned
-                                    ui.label(
-                                        RichText::new(format!("{cities_owned}"))
-                                            .monospace()
-                                            .color(theme::TEXT_DIM),
-                                    );
-                                    // Plant capacity
-                                    ui.label(
-                                        RichText::new(format!("{capacity}"))
-                                            .monospace()
-                                            .color(theme::TEXT_DIM),
-                                    );
-                                    ui.end_row();
-                                });
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                for (i, (&width, (_, color, text))) in
+                                    COL_WIDTHS.iter().zip(cells.iter()).enumerate()
+                                {
+                                    let rich = RichText::new(text).monospace().color(*color);
+                                    if i == 0 {
+                                        ui.add_sized([width, ROW_H], Label::new(rich));
+                                    } else {
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(width, ROW_H),
+                                            Layout::right_to_left(Align::Center),
+                                            |ui| {
+                                                ui.add(Label::new(rich));
+                                            },
+                                        );
+                                    }
+                                }
+                            });
                         });
 
                     ui.add_space(4.0);

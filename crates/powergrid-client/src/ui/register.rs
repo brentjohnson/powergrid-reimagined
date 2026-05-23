@@ -1,4 +1,5 @@
 use egui::RichText;
+use powergrid_core::limits::{MAX_EMAIL, MAX_PASSWORD, MAX_USERNAME, MIN_PASSWORD, MIN_USERNAME};
 
 use crate::{
     auth::{do_register, AuthEvent},
@@ -44,21 +45,32 @@ pub(super) fn register_screen(ctx: &egui::Context, state: &mut AppState) {
                     ui.add_space(4.0);
 
                     ui.label(RichText::new("EMAIL").color(theme::TEXT_DIM).small());
-                    ui.text_edit_singleline(&mut state.register_email);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.register_email).char_limit(MAX_EMAIL),
+                    );
 
                     ui.label(
-                        RichText::new("USERNAME (3–32 chars, letters/digits/-/_)")
+                        RichText::new(format!(
+                            "USERNAME ({MIN_USERNAME}–{MAX_USERNAME} chars, letters/digits/-/_)"
+                        ))
+                        .color(theme::TEXT_DIM)
+                        .small(),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.register_username)
+                            .char_limit(MAX_USERNAME),
+                    );
+
+                    ui.label(
+                        RichText::new(format!("PASSWORD ({MIN_PASSWORD}–{MAX_PASSWORD} chars)"))
                             .color(theme::TEXT_DIM)
                             .small(),
                     );
-                    ui.text_edit_singleline(&mut state.register_username);
-
-                    ui.label(
-                        RichText::new("PASSWORD (min 8 chars)")
-                            .color(theme::TEXT_DIM)
-                            .small(),
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.register_password)
+                            .password(true)
+                            .char_limit(MAX_PASSWORD),
                     );
-                    ui.add(egui::TextEdit::singleline(&mut state.register_password).password(true));
 
                     if let Some(ref err) = state.auth_error.clone() {
                         ui.add_space(4.0);
