@@ -5,7 +5,7 @@ use powergrid_core::{
     types::{BotDifficulty, Phase, PlayerColor, PlayerId},
     GameState,
 };
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -172,12 +172,13 @@ impl Session {
         Ok(())
     }
 
-    /// Find the first bot that has a move and return its id + action.
+    /// Find the first non-skipped bot that has a move and return its id + action.
     /// Uses disjoint field borrows so game can be read while bots are iterated mutably.
-    pub fn next_bot_action(&mut self) -> Option<(PlayerId, Action)> {
+    pub fn next_bot_action(&mut self, skip: &HashSet<PlayerId>) -> Option<(PlayerId, Action)> {
         let game = &self.game;
         self.bots
             .iter_mut()
+            .filter(|b| !skip.contains(&b.id))
             .find_map(|b| b.decide(game).map(|a| (b.id, a)))
     }
 }
@@ -186,15 +187,18 @@ impl Session {
 // BotPump
 // ---------------------------------------------------------------------------
 
-const MAX_BOT_ITERATIONS: usize = 50;
+const MAX_BOT_ITERATIONS: usize = 500;
 
 /// Drive all in-process bots in `session_arc` until none has a move or the cap is hit.
 /// The lock is released during `delay` so other work can proceed.
+/// Bots that produce an invalid action are blocked for the remainder of this pump
+/// invocation so a strategy bug cannot stall the game.
 pub async fn run_bot_pump(session_arc: Arc<Mutex<Session>>, delay: Duration) {
+    let mut failed: HashSet<PlayerId> = HashSet::new();
     for iter in 0..MAX_BOT_ITERATIONS {
         let next = {
             let mut session = session_arc.lock().await;
-            session.next_bot_action()
+            session.next_bot_action(&failed)
         };
 
         let Some((bot_id, action)) = next else {
@@ -210,6 +214,7 @@ pub async fn run_bot_pump(session_arc: Arc<Mutex<Session>>, delay: Duration) {
             }
             Err(e) => {
                 warn!("Bot {} produced invalid action: {}", bot_id, e);
+                failed.insert(bot_id);
             }
         }
     }
