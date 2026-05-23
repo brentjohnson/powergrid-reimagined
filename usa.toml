@@ -46,8 +46,8 @@ x = 0.12405134737491608
 y = 0.10149067640304565
 
 [[cities]]
-id = "billings"
-name = "Billings"
+id = "edmonton"
+name = "Edmonton"
 region = "northwest"
 x = 0.17089395225048065
 y = 0.035077013075351715
@@ -102,22 +102,22 @@ x = 0.19873648881912231
 y = 0.3839681148529053
 
 [[cities]]
-id = "phoenix"
-name = "Phoenix"
+id = "juarez"
+name = "Juarez"
 region = "southwest"
 x = 0.2638274133205414
 y = 0.6839585304260254
 
 [[cities]]
-id = "tucson"
-name = "Tucson"
+id = "chihuahua"
+name = "Chihuahua"
 region = "southwest"
 x = 0.2808554768562317
 y = 0.7848890423774719
 
 [[cities]]
-id = "elpaso"
-name = "El Paso"
+id = "guadalajara"
+name = "Guadalajara"
 region = "southwest"
 x = 0.3679329752922058
 y = 0.9157087206840515
@@ -126,26 +126,26 @@ y = 0.9157087206840515
 id = "albuquerque"
 name = "Albuquerque"
 region = "southwest"
-x = 0.268960565328598
-y = 0.6089596152305603
+x = 0.2645707130432129
+y = 0.6061298251152039
 
 [[cities]]
-id = "amarillo"
-name = "Amarillo"
+id = "mexicocityn"
+name = "Mexico City (N)"
 region = "southwest"
 x = 0.4741421341896057
 y = 0.9279488325119019
 
 [[cities]]
-id = "sanantonio"
-name = "San Antonio"
+id = "mexicocitys"
+name = "Mexico City (S)"
 region = "southwest"
 x = 0.47432345151901245
 y = 0.9631435871124268
 
 [[cities]]
-id = "dallas"
-name = "Dallas"
+id = "monterrey"
+name = "Monterrey"
 region = "southwest"
 x = 0.39887166023254395
 y = 0.839459240436554
@@ -158,25 +158,18 @@ x = 0.2803916037082672
 y = 0.44997644424438477
 
 [[cities]]
-id = "cheyenne"
-name = "Cheyenne"
-region = "central"
-x = 0.4258301854133606
-y = 0.40300989151000977
-
-[[cities]]
 id = "omaha"
 name = "Omaha"
 region = "central"
-x = 0.451200008392334
-y = 0.39410001039505005
+x = 0.5833823084831238
+y = 0.33258119225502014
 
 [[cities]]
-id = "desmoines"
-name = "Des Moines"
+id = "memphis"
+name = "Memphis"
 region = "central"
-x = 0.4878000020980835
-y = 0.387800008058548
+x = 0.5642091035842896
+y = 0.6060457229614258
 
 [[cities]]
 id = "kansascity"
@@ -184,13 +177,6 @@ name = "Kansas City"
 region = "central"
 x = 0.44534391164779663
 y = 0.47079652547836304
-
-[[cities]]
-id = "wichita"
-name = "Wichita"
-region = "central"
-x = 0.38357242941856384
-y = 0.43006810545921326
 
 [[cities]]
 id = "oklahomacity"
@@ -221,32 +207,18 @@ x = 0.5900448560714722
 y = 0.7182308435440063
 
 [[cities]]
-id = "memphis"
-name = "Memphis"
+id = "sanantonio"
+name = "San Antonio"
 region = "south"
 x = 0.415470689535141
 y = 0.7741481065750122
 
 [[cities]]
-id = "nashville"
-name = "Nashville"
+id = "dallas"
+name = "Dallas"
 region = "south"
 x = 0.4499472677707672
 y = 0.6555650234222412
-
-[[cities]]
-id = "louisville"
-name = "Louisville"
-region = "south"
-x = 0.5584193468093872
-y = 0.539621114730835
-
-[[cities]]
-id = "birmingham"
-name = "Birmingham"
-region = "south"
-x = 0.6200283765792847
-y = 0.5996562242507935
 
 [[cities]]
 id = "atlanta"
@@ -263,13 +235,6 @@ x = 0.7175719141960144
 y = 0.7321897149085999
 
 [[cities]]
-id = "tampa"
-name = "Tampa"
-region = "south"
-x = 0.6228166818618774
-y = 0.8021310567855835
-
-[[cities]]
 id = "miami"
 name = "Miami"
 region = "south"
@@ -279,7 +244,7 @@ y = 0.8096402287483215
 [[cities]]
 id = "chicago"
 name = "Chicago"
-region = "east"
+region = "central"
 x = 0.5940790176391602
 y = 0.39027321338653564
 
@@ -291,11 +256,11 @@ x = 0.7225696444511414
 y = 0.383143812417984
 
 [[cities]]
-id = "cleveland"
-name = "Cleveland"
+id = "toronto"
+name = "Toronto"
 region = "east"
-x = 0.7449343800544739
-y = 0.41147956252098083
+x = 0.7565658688545227
+y = 0.33719730377197266
 
 [[cities]]
 id = "pittsburgh"
@@ -305,11 +270,11 @@ x = 0.7766643762588501
 y = 0.42811012268066406
 
 [[cities]]
-id = "cincinnati"
-name = "Cincinnati"
+id = "nashville"
+name = "Nashville"
 region = "east"
-x = 0.6846186518669128
-y = 0.5257700681686401
+x = 0.6299780607223511
+y = 0.5317884087562561
 
 [[cities]]
 id = "columbus"
@@ -321,23 +286,23 @@ y = 0.4765254259109497
 [[cities]]
 id = "indianapolis"
 name = "Indianapolis"
-region = "east"
+region = "central"
 x = 0.6184796690940857
 y = 0.4507424831390381
 
 [[cities]]
 id = "philadelphia"
 name = "Philadelphia"
-region = "east"
+region = "northeast"
 x = 0.8667015433311462
 y = 0.48238471150398254
 
 [[cities]]
-id = "baltimore"
-name = "Baltimore"
+id = "charlotte"
+name = "Charlotte"
 region = "east"
-x = 0.7936612367630005
-y = 0.4808591306209564
+x = 0.7643424272537231
+y = 0.607612133026123
 
 [[cities]]
 id = "washington"
@@ -347,32 +312,25 @@ x = 0.7975702881813049
 y = 0.5290979146957397
 
 [[cities]]
-id = "newyork"
-name = "New York"
+id = "newyorks"
+name = "New York (S)"
 region = "northeast"
 x = 0.8791603446006775
 y = 0.4206883907318115
 
 [[cities]]
-id = "albany"
-name = "Albany"
+id = "newyorkn"
+name = "New York (N)"
 region = "northeast"
-x = 0.7928000092506409
-y = 0.3677999973297119
+x = 0.8781814575195313
+y = 0.38598084449768066
 
 [[cities]]
-id = "hartford"
-name = "Hartford"
+id = "montreal"
+name = "Montreal"
 region = "northeast"
-x = 0.830694854259491
-y = 0.391086220741272
-
-[[cities]]
-id = "providence"
-name = "Providence"
-region = "northeast"
-x = 0.8644134402275085
-y = 0.35925498604774475
+x = 0.9387601613998413
+y = 0.30845555663108826
 
 [[cities]]
 id = "boston"
@@ -382,18 +340,18 @@ x = 0.9625676274299622
 y = 0.3719552159309387
 
 [[cities]]
-id = "portlandme"
-name = "Portland (ME)"
+id = "quebec"
+name = "Quebec"
 region = "northeast"
-x = 0.906289279460907
-y = 0.27890095114707947
+x = 0.9577977061271667
+y = 0.24692876636981964
 
 [[cities]]
-id = "burlington"
-name = "Burlington"
+id = "ottawa"
+name = "Ottawa"
 region = "northeast"
-x = 0.8348034620285034
-y = 0.3093223571777344
+x = 0.8429247736930847
+y = 0.30369460582733154
 
 [[connections]]
 from = "seattle"
@@ -422,7 +380,7 @@ cost = 14
 
 [[connections]]
 from = "calgary"
-to = "billings"
+to = "edmonton"
 cost = 5
 
 [[connections]]
@@ -447,7 +405,7 @@ cost = 15
 
 [[connections]]
 from = "minneapolis"
-to = "desmoines"
+to = "memphis"
 cost = 12
 
 [[connections]]
@@ -477,7 +435,7 @@ cost = 14
 
 [[connections]]
 from = "lasvegas"
-to = "phoenix"
+to = "juarez"
 cost = 15
 
 [[connections]]
@@ -486,67 +444,67 @@ to = "denver"
 cost = 14
 
 [[connections]]
-from = "phoenix"
-to = "tucson"
+from = "juarez"
+to = "chihuahua"
 cost = 4
 
 [[connections]]
-from = "phoenix"
+from = "juarez"
 to = "albuquerque"
 cost = 14
 
 [[connections]]
-from = "phoenix"
-to = "elpaso"
+from = "juarez"
+to = "guadalajara"
 cost = 22
 
 [[connections]]
-from = "tucson"
-to = "elpaso"
+from = "chihuahua"
+to = "guadalajara"
 cost = 8
 
 [[connections]]
-from = "elpaso"
+from = "guadalajara"
 to = "albuquerque"
 cost = 10
 
 [[connections]]
-from = "elpaso"
-to = "sanantonio"
+from = "guadalajara"
+to = "mexicocitys"
 cost = 22
 
 [[connections]]
 from = "albuquerque"
-to = "amarillo"
+to = "mexicocityn"
 cost = 8
 
 [[connections]]
-from = "amarillo"
-to = "dallas"
+from = "mexicocityn"
+to = "monterrey"
 cost = 10
 
 [[connections]]
-from = "dallas"
-to = "sanantonio"
+from = "monterrey"
+to = "mexicocitys"
 cost = 7
 
 [[connections]]
-from = "sanantonio"
+from = "mexicocitys"
 to = "houston"
 cost = 7
 
 [[connections]]
-from = "dallas"
+from = "monterrey"
 to = "houston"
 cost = 8
 
 [[connections]]
-from = "amarillo"
+from = "mexicocityn"
 to = "oklahomacity"
 cost = 8
 
 [[connections]]
-from = "dallas"
+from = "monterrey"
 to = "oklahomacity"
 cost = 5
 
@@ -556,11 +514,6 @@ to = "neworleans"
 cost = 12
 
 [[connections]]
-from = "cheyenne"
-to = "denver"
-cost = 4
-
-[[connections]]
 from = "denver"
 to = "albuquerque"
 cost = 20
@@ -571,18 +524,8 @@ to = "kansascity"
 cost = 20
 
 [[connections]]
-from = "denver"
-to = "wichita"
-cost = 18
-
-[[connections]]
-from = "cheyenne"
-to = "omaha"
-cost = 15
-
-[[connections]]
 from = "omaha"
-to = "desmoines"
+to = "memphis"
 cost = 5
 
 [[connections]]
@@ -591,7 +534,7 @@ to = "kansascity"
 cost = 7
 
 [[connections]]
-from = "desmoines"
+from = "memphis"
 to = "kansascity"
 cost = 10
 
@@ -602,18 +545,8 @@ cost = 8
 
 [[connections]]
 from = "kansascity"
-to = "wichita"
-cost = 5
-
-[[connections]]
-from = "kansascity"
 to = "oklahomacity"
 cost = 10
-
-[[connections]]
-from = "wichita"
-to = "oklahomacity"
-cost = 5
 
 [[connections]]
 from = "stlouis"
@@ -622,18 +555,13 @@ cost = 11
 
 [[connections]]
 from = "stlouis"
-to = "nashville"
+to = "dallas"
 cost = 12
 
 [[connections]]
 from = "stlouis"
-to = "memphis"
+to = "sanantonio"
 cost = 7
-
-[[connections]]
-from = "stlouis"
-to = "louisville"
-cost = 10
 
 [[connections]]
 from = "stlouis"
@@ -641,64 +569,29 @@ to = "indianapolis"
 cost = 9
 
 [[connections]]
-from = "desmoines"
+from = "memphis"
 to = "chicago"
 cost = 10
 
 [[connections]]
 from = "neworleans"
-to = "memphis"
+to = "sanantonio"
 cost = 10
 
 [[connections]]
-from = "neworleans"
-to = "birmingham"
-cost = 10
+from = "sanantonio"
+to = "dallas"
+cost = 8
 
 [[connections]]
-from = "memphis"
+from = "dallas"
+to = "atlanta"
+cost = 8
+
+[[connections]]
+from = "dallas"
 to = "nashville"
-cost = 8
-
-[[connections]]
-from = "memphis"
-to = "birmingham"
-cost = 8
-
-[[connections]]
-from = "nashville"
-to = "louisville"
-cost = 5
-
-[[connections]]
-from = "nashville"
-to = "birmingham"
-cost = 7
-
-[[connections]]
-from = "nashville"
-to = "atlanta"
-cost = 8
-
-[[connections]]
-from = "nashville"
-to = "cincinnati"
 cost = 9
-
-[[connections]]
-from = "louisville"
-to = "cincinnati"
-cost = 4
-
-[[connections]]
-from = "louisville"
-to = "indianapolis"
-cost = 5
-
-[[connections]]
-from = "birmingham"
-to = "atlanta"
-cost = 4
 
 [[connections]]
 from = "atlanta"
@@ -707,18 +600,8 @@ cost = 10
 
 [[connections]]
 from = "jacksonville"
-to = "tampa"
-cost = 8
-
-[[connections]]
-from = "jacksonville"
 to = "miami"
 cost = 15
-
-[[connections]]
-from = "tampa"
-to = "miami"
-cost = 7
 
 [[connections]]
 from = "chicago"
@@ -732,7 +615,7 @@ cost = 7
 
 [[connections]]
 from = "detroit"
-to = "cleveland"
+to = "toronto"
 cost = 5
 
 [[connections]]
@@ -741,12 +624,12 @@ to = "columbus"
 cost = 7
 
 [[connections]]
-from = "cleveland"
+from = "toronto"
 to = "pittsburgh"
 cost = 5
 
 [[connections]]
-from = "cleveland"
+from = "toronto"
 to = "columbus"
 cost = 5
 
@@ -762,12 +645,12 @@ cost = 10
 
 [[connections]]
 from = "pittsburgh"
-to = "baltimore"
+to = "charlotte"
 cost = 8
 
 [[connections]]
 from = "columbus"
-to = "cincinnati"
+to = "nashville"
 cost = 4
 
 [[connections]]
@@ -776,13 +659,13 @@ to = "indianapolis"
 cost = 7
 
 [[connections]]
-from = "cincinnati"
+from = "nashville"
 to = "indianapolis"
 cost = 5
 
 [[connections]]
 from = "philadelphia"
-to = "baltimore"
+to = "charlotte"
 cost = 5
 
 [[connections]]
@@ -791,67 +674,52 @@ to = "washington"
 cost = 5
 
 [[connections]]
-from = "baltimore"
+from = "charlotte"
 to = "washington"
 cost = 4
 
 [[connections]]
 from = "philadelphia"
-to = "newyork"
+to = "newyorks"
 cost = 5
 
 [[connections]]
 from = "pittsburgh"
-to = "newyork"
+to = "newyorks"
 cost = 18
 
 [[connections]]
-from = "newyork"
-to = "albany"
-cost = 5
-
-[[connections]]
-from = "newyork"
-to = "hartford"
+from = "newyorks"
+to = "newyorkn"
 cost = 4
 
 [[connections]]
-from = "albany"
-to = "burlington"
-cost = 8
-
-[[connections]]
-from = "albany"
-to = "hartford"
-cost = 5
-
-[[connections]]
-from = "hartford"
-to = "providence"
+from = "newyorkn"
+to = "montreal"
 cost = 3
 
 [[connections]]
-from = "hartford"
+from = "newyorkn"
 to = "boston"
 cost = 5
 
 [[connections]]
-from = "providence"
+from = "montreal"
 to = "boston"
 cost = 4
 
 [[connections]]
 from = "boston"
-to = "portlandme"
+to = "quebec"
 cost = 7
 
 [[connections]]
-from = "burlington"
-to = "portlandme"
+from = "ottawa"
+to = "quebec"
 cost = 10
 
 [[connections]]
-from = "billings"
+from = "edmonton"
 to = "regina"
 cost = 15
 
@@ -873,4 +741,14 @@ cost = 16
 [[connections]]
 from = "lasvegas"
 to = "denver"
+cost = 25
+
+[[connections]]
+from = "sandiego"
+to = "juarez"
+cost = 22
+
+[[connections]]
+from = "losangeles"
+to = "albuquerque"
 cost = 25
