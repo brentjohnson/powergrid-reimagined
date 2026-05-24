@@ -102,12 +102,7 @@ fn paint_card(
     // Background + border (resource color fill when nominated)
     let bg = if nominated { color } else { theme::BG_WIDGET };
     painter.rect_filled(rect, rounding, bg);
-    painter.rect_stroke(
-        rect,
-        rounding,
-        Stroke::new(1.5, color),
-        StrokeKind::Inside,
-    );
+    painter.rect_stroke(rect, rounding, Stroke::new(1.5, color), StrokeKind::Inside);
 
     // Left number box — colored background, plant number centered
     let num_box_w = CARD_H; // square: height × height

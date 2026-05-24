@@ -1,5 +1,5 @@
-/// Renders the Germany map inside an egui panel using the registered Bevy texture,
-/// with zoom/pan and interactive overlays (resource slots, city markers, build edges).
+/// Renders the USA map inside an egui panel, with an SVG silhouette background,
+/// zoom/pan, and interactive overlays (city markers, build edges).
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui};
 use powergrid_core::{
     actions::HintPayload,
@@ -115,6 +115,24 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
             map_rect.top() + state.map_offset.y + (oy + yp * img_h) * state.map_zoom,
         )
     };
+
+    // Subtle USA silhouette behind the board (tracks pan/zoom, ~70% of map content).
+    {
+        let full = Rect::from_two_pos(to_screen(0.0, 0.0), to_screen(1.0, 1.0));
+        let center = full.center() + egui::vec2(-full.width() * 0.05, full.height() * 0.05);
+        let box70 = Rect::from_center_size(center, full.size() * 1.10);
+        let svg_aspect = 959.0_f32 / 593.0;
+        let box_aspect = box70.width() / box70.height();
+        let size = if svg_aspect > box_aspect {
+            egui::vec2(box70.width(), box70.width() / svg_aspect)
+        } else {
+            egui::vec2(box70.height() * svg_aspect, box70.height())
+        };
+        let bg_rect = Rect::from_center_size(box70.center(), size);
+        egui::Image::new(egui::include_image!("../assets/usa.svg"))
+            .tint(Color32::from_white_alpha(30))
+            .paint_at(ui, bg_rect);
+    }
 
     // Player color lookup
     let player_colors: HashMap<PlayerId, PlayerColor> = game_state
