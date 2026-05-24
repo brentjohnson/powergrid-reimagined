@@ -13,10 +13,6 @@ COPY assets assets
 
 # Stub out workspace members that are not dependencies of powergrid-lobby
 # so Cargo can load the workspace manifest without their full source.
-COPY crates/powergrid-bot/Cargo.toml crates/powergrid-bot/Cargo.toml
-RUN mkdir -p crates/powergrid-bot/src && echo 'fn main(){}' > crates/powergrid-bot/src/main.rs
-COPY crates/powergrid-server/Cargo.toml crates/powergrid-server/Cargo.toml
-RUN mkdir -p crates/powergrid-server/src && echo '' > crates/powergrid-server/src/lib.rs && echo 'fn main(){}' > crates/powergrid-server/src/main.rs
 COPY crates/powergrid-client/Cargo.toml crates/powergrid-client/Cargo.toml
 RUN mkdir -p crates/powergrid-client/src && echo 'fn main(){}' > crates/powergrid-client/src/main.rs
 COPY crates/powergrid-py/Cargo.toml crates/powergrid-py/Cargo.toml
