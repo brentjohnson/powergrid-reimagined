@@ -66,12 +66,13 @@ The game ends when a player connects enough cities to trigger the end condition.
 ## Client CLI Flags
 
 ```
---server <host>     Server hostname (default: powergrid.onyxoryx.net)
---port <port>       Server port (default: 3000)
---color <color>     Auto-select player color on connect
-                      Choices: red, blue, green, yellow, purple, white
---room <name>       Auto-create/join this room on connect
--w, --windowed      Run in a window instead of borderless fullscreen
+--server <host>         Server hostname (default: powergrid.onyxoryx.net)
+--port <port>           Server port (default: 3000)
+--color <color>         Auto-select player color on connect
+                          Choices: red, blue, green, yellow, purple, white
+--room <name>           Auto-create/join this room on connect
+-w, --windowed          Run in a window instead of borderless fullscreen
+-n, --no-preferences    Don't load or save credentials/preferences (for testing)
 ```
 
 ## LAN Server Configuration
