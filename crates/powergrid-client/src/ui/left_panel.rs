@@ -73,50 +73,60 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                         }
                     }
 
-                    // Resources + cities row
-                    ui.horizontal(|ui| {
-                        let res = &p.resources;
-                        let mut parts = Vec::new();
-                        if res.coal > 0 {
-                            parts.push(format!("C:{}", res.coal));
-                        }
-                        if res.oil > 0 {
-                            parts.push(format!("O:{}", res.oil));
-                        }
-                        if res.gas > 0 {
-                            parts.push(format!("G:{}", res.gas));
-                        }
-                        if res.uranium > 0 {
-                            parts.push(format!("U:{}", res.uranium));
-                        }
-                        let res_str = if parts.is_empty() {
-                            "No resources".to_string()
-                        } else {
-                            parts.join("  ")
-                        };
-                        ui.label(
-                            RichText::new(res_str)
-                                .color(theme::TEXT_MID)
-                                .small()
-                                .monospace(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                RichText::new(format!("{} cities", gs.player_city_count(p.id)))
-                                    .color(theme::TEXT_MID)
-                                    .small()
-                                    .monospace(),
-                            );
-                        });
-                    });
+                    // Cities + capacity row (single combined label — no width competition)
+                    let capacity: u32 = p.plants.iter().map(|pl| pl.cities as u32).sum();
+                    ui.label(
+                        RichText::new(format!(
+                            "{} cities / capacity {}",
+                            gs.player_city_count(p.id),
+                            capacity
+                        ))
+                        .color(theme::TEXT_MID)
+                        .small()
+                        .monospace(),
+                    );
 
-                    // Plants row
-                    if !p.plants.is_empty() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
-                            for plant in &p.plants {
-                                card_painter::draw_plant_card(ui, plant);
-                            }
+                    // Plants (left) + resources stacked (right)
+                    // ui.scope + set_max_width constrains the wrap width without
+                    // pre-allocating an infinite-height rect (which causes NaN crashes).
+                    let res = &p.resources;
+                    let has_plants = !p.plants.is_empty();
+                    let has_res = res.coal > 0 || res.oil > 0 || res.gas > 0 || res.uranium > 0;
+                    if has_plants || has_res {
+                        ui.horizontal(|ui| {
+                            let res_w = 30.0;
+                            let plant_w =
+                                (ui.available_width() - res_w - ui.spacing().item_spacing.x)
+                                    .max(0.0);
+                            ui.scope(|ui| {
+                                ui.set_max_width(plant_w);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+                                    for plant in &p.plants {
+                                        card_painter::draw_plant_card(ui, plant);
+                                    }
+                                });
+                            });
+                            ui.vertical(|ui| {
+                                let mk = |s: &str, v: u8| {
+                                    RichText::new(format!("{s}:{v}"))
+                                        .color(theme::TEXT_MID)
+                                        .small()
+                                        .monospace()
+                                };
+                                if res.coal > 0 {
+                                    ui.label(mk("C", res.coal));
+                                }
+                                if res.oil > 0 {
+                                    ui.label(mk("O", res.oil));
+                                }
+                                if res.gas > 0 {
+                                    ui.label(mk("G", res.gas));
+                                }
+                                if res.uranium > 0 {
+                                    ui.label(mk("U", res.uranium));
+                                }
+                            });
                         });
                     }
                 });
