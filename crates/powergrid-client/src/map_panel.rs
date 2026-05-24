@@ -18,6 +18,10 @@ const CITY_R_FRAC: f32 = 0.011;
 /// Half-width / half-height of the city rectangle in fractional image coords (zoom-invariant).
 const CITY_RECT_HALF_W_FRAC: f32 = CITY_R_FRAC * 3.6;
 const CITY_RECT_HALF_H_FRAC: f32 = CITY_R_FRAC * 2.0;
+/// Zoom level beyond which city box/house/label size stops growing.
+/// Aligns with the cost-label visibility threshold so zooming past this
+/// spreads cities apart while boxes stay fixed, revealing the labels.
+const CITY_SCALE_CAP: f32 = 1.2;
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -59,6 +63,10 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
         state.map_offset += egui::Vec2::new(delta.x, delta.y);
     }
 
+    // Size zoom: boxes/houses/labels cap so zooming past the cap spreads
+    // cities apart while box size stays fixed, revealing connection-cost labels.
+    let render_zoom = state.map_zoom.min(CITY_SCALE_CAP);
+
     // ---- city click ----
     let is_my_build_turn = matches!(&game_state.phase,
         Phase::BuildCities { remaining } if remaining.first() == Some(&my_id));
@@ -79,7 +87,10 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
                 if let (Some(cx), Some(cy)) = (city.x, city.y) {
                     let dx = (xp - cx).abs();
                     let dy = (yp - cy).abs();
-                    if dx <= CITY_RECT_HALF_W_FRAC && dy <= CITY_RECT_HALF_H_FRAC {
+                    let hit_scale = render_zoom / state.map_zoom;
+                    if dx <= CITY_RECT_HALF_W_FRAC * hit_scale
+                        && dy <= CITY_RECT_HALF_H_FRAC * hit_scale
+                    {
                         clicked_city = Some(city_id.clone());
                         break;
                     }
@@ -96,7 +107,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
 
     // ---- overlays ----
     let (img_w, img_h, ox, oy) = image_layout(map_rect, map.width, map.height);
-    let city_r = CITY_R_FRAC * img_w * state.map_zoom;
+    let city_r = CITY_R_FRAC * img_w * render_zoom;
 
     let to_screen = |xp: f32, yp: f32| -> Pos2 {
         Pos2::new(
@@ -294,8 +305,8 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
             let total_w = spacing * 2.0; // 3 slots → 2 gaps
 
             // Rectangle background — covers connection lines passing through the city.
-            let hw = CITY_RECT_HALF_W_FRAC * img_w * state.map_zoom;
-            let hh = CITY_RECT_HALF_H_FRAC * img_w * state.map_zoom;
+            let hw = CITY_RECT_HALF_W_FRAC * img_w * render_zoom;
+            let hh = CITY_RECT_HALF_H_FRAC * img_w * render_zoom;
             let rect = egui::Rect::from_center_size(center, egui::vec2(hw * 2.0, hh * 2.0));
             painter.rect_filled(rect, 4.0, theme::map_city_bg());
             if !is_selected {
