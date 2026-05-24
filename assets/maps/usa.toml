@@ -160,8 +160,8 @@ x = 0.28057247400283813
 y = 0.4484957456588745
 
 [[cities]]
-id = "omaha"
-name = "Omaha"
+id = "milwaukee"
+name = "Milwaukee"
 region = "central"
 x = 0.5833823084831238
 y = 0.33258119225502014
@@ -667,7 +667,7 @@ cost = 23
 
 [[connections]]
 from = "minneapolis"
-to = "omaha"
+to = "milwaukee"
 cost = 10
 
 [[connections]]
@@ -737,7 +737,7 @@ cost = 15
 
 [[connections]]
 from = "chicago"
-to = "omaha"
+to = "milwaukee"
 cost = 3
 
 [[connections]]
