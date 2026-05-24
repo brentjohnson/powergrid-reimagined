@@ -862,17 +862,20 @@ mod tests {
     #[test]
     fn surplus_skip_weight_profile_tiers() {
         let registry = default_registry();
+        // All tiers must have a non-zero weight — zero causes capacity hoarding with no city builds.
         assert!(
-            registry.normal.auction.surplus_skip_weight > 0.0,
-            "normal should have surplus skip weight"
+            registry.easy.auction.surplus_skip_weight > 0.0,
+            "easy must have surplus skip weight"
         );
         assert!(
-            registry.hard.auction.surplus_skip_weight > 0.0,
-            "hard should have surplus skip weight"
+            registry.normal.auction.surplus_skip_weight
+                >= registry.easy.auction.surplus_skip_weight,
+            "normal should be at least as aggressive as easy"
         );
-        assert_eq!(
-            registry.easy.auction.surplus_skip_weight, 0.0,
-            "easy should not reason about capacity surplus"
+        assert!(
+            registry.hard.auction.surplus_skip_weight
+                >= registry.normal.auction.surplus_skip_weight,
+            "hard should be the most aggressive"
         );
     }
 

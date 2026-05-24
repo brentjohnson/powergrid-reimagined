@@ -20,7 +20,7 @@ city_reserve        = 30.0
 safety_buffer       = 5.0
 upgrade_margin      = 5.0   # lower = replaces plants even for small improvements (wastes money)
 min_open_score      = 15.0  # lower = buys plants more aggressively even when suboptimal
-surplus_skip_weight = 0.0   # easy bots don't reason about capacity surplus
+surplus_skip_weight = 20.0  # lower than normal/hard; easy temperature means it'll still occasionally buy
 capacity_premium    = 3.0   # higher = overbids more
 high_capacity_threshold   = 5    # inert for easy (bonuses are 0)
 high_capacity_bonus       = 0.0
@@ -57,7 +57,7 @@ city_reserve        = 30.0   # ~2 city builds kept in reserve
 safety_buffer       = 5.0
 upgrade_margin      = 10.0   # minimum score improvement to justify replacing a plant
 min_open_score      = 20.0   # minimum score for a plant to be worth selecting
-surplus_skip_weight = 10.0   # each surplus city adds 10 to the PassAuction score
+surplus_skip_weight = 30.0   # surplus=3 → pass=110, beats a 5-city plant (107) → bot skips
 capacity_premium    = 2.0    # extra elektro per city of capacity gained
 high_capacity_threshold   = 5     # plants powering 5+ cities are worth a premium
 high_capacity_bonus       = 20.0  # score bonus per step at/above threshold (graduated)
@@ -94,7 +94,7 @@ city_reserve        = 30.0
 safety_buffer       = 5.0
 upgrade_margin      = 10.0
 min_open_score      = 20.0
-surplus_skip_weight = 15.0   # hard bot strongly prefers building cities over buying plants when ahead
+surplus_skip_weight = 40.0   # surplus=3 → pass=140, beats even 6-city plants → hard bot builds cities aggressively
 capacity_premium    = 2.0
 high_capacity_threshold   = 5
 high_capacity_bonus       = 30.0  # stronger premium — hard bot really wants 5+ plants
