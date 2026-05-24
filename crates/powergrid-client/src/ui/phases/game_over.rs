@@ -33,7 +33,7 @@ pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, 
                     for (i, (&width, &label)) in COL_WIDTHS.iter().zip(headers.iter()).enumerate() {
                         let text = RichText::new(label)
                             .size(11.0)
-                            .color(theme::TEXT_DIM)
+                            .color(theme::TEXT_BRIGHT)
                             .monospace();
                         if i == 0 {
                             ui.add_sized([width, ROW_H], Label::new(text));
@@ -74,11 +74,11 @@ pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, 
                         ("money", theme::NEON_GREEN, format!("${}", p.money)),
                         (
                             "powered",
-                            theme::TEXT_DIM,
+                            theme::TEXT_BRIGHT,
                             format!("{}", p.last_cities_powered),
                         ),
-                        ("cities", theme::TEXT_DIM, format!("{cities_owned}")),
-                        ("cap", theme::TEXT_DIM, format!("{capacity}")),
+                        ("cities", theme::TEXT_BRIGHT, format!("{cities_owned}")),
+                        ("cap", theme::TEXT_BRIGHT, format!("{capacity}")),
                     ];
 
                     egui::Frame::NONE

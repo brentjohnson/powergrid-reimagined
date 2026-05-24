@@ -253,7 +253,7 @@ impl AppState {
             bottom_panel_tab: BottomTab::EventLog,
             fullscreen,
             no_preferences: cli.no_preferences,
-            local_name: "You".to_string(),
+            local_name: "Human".to_string(),
             local_color: PlayerColor::Red,
             local_bots: vec![
                 BotDifficulty::Normal,
