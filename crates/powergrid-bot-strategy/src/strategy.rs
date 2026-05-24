@@ -866,6 +866,58 @@ mod tests {
     }
 
     #[test]
+    fn high_capacity_plant_score_graduated() {
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let four_city = coal_plant(20, 3, 4);
+        let five_city = coal_plant(25, 4, 5);
+        let six_city = coal_plant(30, 5, 6);
+
+        let mut w_zero = w.clone();
+        w_zero.high_capacity_bonus = 0.0;
+
+        let premium_5 = plant_score(&five_city, w) - plant_score(&five_city, &w_zero);
+        let premium_6 = plant_score(&six_city, w) - plant_score(&six_city, &w_zero);
+
+        assert!(
+            premium_5 > 0.0,
+            "5-city plant should score higher with the premium (got {premium_5})"
+        );
+        assert!(
+            premium_6 > premium_5,
+            "6-city premium ({premium_6}) should exceed 5-city premium ({premium_5}) — graduated"
+        );
+        // 4-city plant gets no premium
+        let premium_4 = plant_score(&four_city, w) - plant_score(&four_city, &w_zero);
+        assert_eq!(
+            premium_4, 0.0,
+            "4-city plant should not receive the premium"
+        );
+    }
+
+    #[test]
+    fn high_capacity_bid_ceiling_premium() {
+        // 5-city plant, empty rack → capacity_bump = 5, round 2 → premium applies.
+        let plant = coal_plant(25, 2, 5);
+        let player = bot_with_money(100);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+        let buy = &registry.normal.buy;
+
+        let ceiling_with = bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32);
+
+        let mut w_zero = w.clone();
+        w_zero.high_capacity_bid_premium = 0.0;
+        let ceiling_without = bid_ceiling(&plant, &player, 2, &w_zero, buy, plant.number as u32);
+
+        assert!(
+            ceiling_with > ceiling_without,
+            "5-city plant bid ceiling should be higher with the premium ({ceiling_with} vs {ceiling_without})"
+        );
+    }
+
+    #[test]
     fn jitter_sometimes_lifts_the_ceiling() {
         let plant = coal_plant(15, 2, 2);
         let player = bot_with_money(100);

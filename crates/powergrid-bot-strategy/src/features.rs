@@ -9,6 +9,16 @@ use crate::profile::{AuctionWeights, BuyWeights};
 // Plant helpers
 // ---------------------------------------------------------------------------
 
+/// Graduated step count for the high-capacity premium.
+/// Returns 0 below the threshold, 1 at the threshold, +1 per extra city.
+fn high_capacity_steps(cities: u8, threshold: u8) -> u32 {
+    if cities < threshold {
+        0
+    } else {
+        (cities - threshold + 1) as u32
+    }
+}
+
 pub fn is_green(plant: &PowerPlant) -> bool {
     matches!(plant.kind, PlantKind::Wind)
 }
@@ -22,7 +32,9 @@ pub fn plant_score(plant: &PowerPlant, w: &AuctionWeights) -> f32 {
     } else {
         (plant.cities as f32 * w.efficiency_weight) / plant.cost as f32
     };
-    city_value + fuel_bonus + efficiency
+    let high_cap =
+        w.high_capacity_bonus * high_capacity_steps(plant.cities, w.high_capacity_threshold) as f32;
+    city_value + fuel_bonus + efficiency + high_cap
 }
 
 /// Score for a plant candidate including hard-only context features.
@@ -161,7 +173,11 @@ pub fn bid_ceiling(
     } else {
         let bump = capacity_bump(plant, player, w);
         let premium = if bump > 0 {
-            bump as u32 * w.capacity_premium as u32
+            let base = bump as u32 * w.capacity_premium as u32;
+            let high_cap = (w.high_capacity_bid_premium
+                * high_capacity_steps(plant.cities, w.high_capacity_threshold) as f32)
+                as u32;
+            base + high_cap
         } else {
             0
         };

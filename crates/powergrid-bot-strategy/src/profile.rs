@@ -23,6 +23,12 @@ pub struct AuctionWeights {
     pub min_open_score: f32,
     /// Extra elektro per city of capacity gained when computing bid ceiling.
     pub capacity_premium: f32,
+    /// Capacity threshold at/above which the high-capacity premium activates.
+    pub high_capacity_threshold: u8,
+    /// Score-space bonus per step at/above the threshold (graduated). 0.0 disables.
+    pub high_capacity_bonus: f32,
+    /// Elektro added to the bid ceiling per step at/above the threshold. 0.0 disables.
+    pub high_capacity_bid_premium: f32,
     // Hard-only features (0.0 in easy/normal):
     pub opponent_gap_weight: f32,
     pub endgame_weight: f32,
@@ -135,5 +141,30 @@ mod tests {
         assert!(w.endgame_weight > 0.0);
         assert!(w.pipeline_weight > 0.0);
         assert!(registry.hard.build.block_weight > 0.0);
+    }
+
+    #[test]
+    fn high_capacity_premium_tiers() {
+        let registry = default_registry();
+        assert!(
+            registry.normal.auction.high_capacity_bonus > 0.0,
+            "normal should have high-capacity score bonus"
+        );
+        assert!(
+            registry.normal.auction.high_capacity_bid_premium > 0.0,
+            "normal should have high-capacity bid premium"
+        );
+        assert!(
+            registry.hard.auction.high_capacity_bonus > 0.0,
+            "hard should have high-capacity score bonus"
+        );
+        assert_eq!(
+            registry.easy.auction.high_capacity_bonus, 0.0,
+            "easy should have no high-capacity bonus"
+        );
+        assert_eq!(
+            registry.easy.auction.high_capacity_bid_premium, 0.0,
+            "easy should have no high-capacity bid premium"
+        );
     }
 }
