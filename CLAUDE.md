@@ -46,6 +46,8 @@ python scripts/play_game.py --all-bots --render  # watch a rollout
 Before running a build, do "cargo fmt" "cargo check" and run clippy.  Then fix any issues before building.
 When making architectural or structural changes, update CLAUDE.md accordingly.
 
+If adding or removing crates, update the stubs in the Dockerfile.
+
 ## Architecture
 
 Seven-crate Cargo workspace:
@@ -107,7 +109,7 @@ Pure strategy + AI lib. No I/O, no tokio. Depended on by session, lobby, and cli
 - `bot.rs` — `Bot { id, name, color, profile, rng }`: stateful bot with a seeded `SmallRng`. `decide(&mut self, state) -> Option<Action>` is the primary call site. Holds the RNG across calls so sampling is stable within a game.
 - `profile.rs` — `BotProfile` (per-difficulty weight struct), `ProfileRegistry` (named profile map), `default_registry()`. Profiles are embedded from `assets/bots/default.toml` at compile time; a runtime override path is reserved via `BOT_PROFILES_FILE`.
 - `features.rs` — feature extraction helpers (plant value scoring, resource cost estimation) shared by the auction and buy-resources decision functions.
-- `strategy.rs` — `decide(state, me) -> Option<Action>` (stateless, used by the Python bridge) and `decide_with_bot(state, bot) -> Option<Action>` (profile-weighted + softmax sampling). One `decide_*` helper per phase.
+- `strategy.rs` — `decide(state, me) -> Option<Action>` (stateless, used by the Python bridge) and `decide_with_bot(state, bot) -> Option<Action>` (profile-weighted + softmax sampling). One `decide_`* helper per phase.
 
 ### powergrid-lobby
 
@@ -177,12 +179,14 @@ See [docs/rl-environment.md](docs/rl-environment.md) for the full Python API and
 Single protocol. Version negotiation is enforced at the handshake: the client must send `PROTOCOL_VERSION` (defined in `powergrid_core::actions::PROTOCOL_VERSION`); the server rejects mismatches with `AuthError::VersionMismatch`.
 
 **Client→server** — `ClientMessage` (tagged `"type"`):
+
 - `Authenticate { token, protocol_version }` — must be first message; 10s timeout.
 - `Lobby { action: LobbyAction }` — room management (`ListRooms`, `CreateRoom`, `JoinRoom`, `LeaveRoom`, `AddBot`, `RemoveBot`).
 - `Room { room, action: Action }` — in-game move scoped to a named room.
 - `RoomHint { room, hint: HintPayload }` — ephemeral peer selection hint.
 
 **Server→client** — `ServerMessage` (tagged `"type"`):
+
 - `Authenticated`, `AuthError { error: AuthError }` — auth handshake result.
 - `StateUpdate(GameStateView)` — full wire-safe state after every valid action.
 - `ActionError { error: ActionError }`, `LobbyError { error: LobbyError }` — structured errors.
