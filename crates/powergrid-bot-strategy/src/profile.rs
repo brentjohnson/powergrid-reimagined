@@ -21,6 +21,9 @@ pub struct AuctionWeights {
     pub upgrade_margin: f32,
     /// Minimum plant score to be worth opening an auction for.
     pub min_open_score: f32,
+    /// Added to the PassAuction score per city of capacity surplus (powerable − owned).
+    /// Higher → bot skips buying plants more aggressively when it already has headroom.
+    pub surplus_skip_weight: f32,
     /// Extra elektro per city of capacity gained when computing bid ceiling.
     pub capacity_premium: f32,
     /// Capacity threshold at/above which the high-capacity premium activates.

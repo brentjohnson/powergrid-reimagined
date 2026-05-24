@@ -108,17 +108,9 @@ pub fn capacity_bump(plant: &PowerPlant, player: &Player, w: &AuctionWeights) ->
     plant.cities as i32 - worst_cities
 }
 
-/// True when acquiring a new plant would give little or no benefit.
-pub fn should_skip_auction(
-    player: &Player,
-    candidate: &PowerPlant,
-    w: &AuctionWeights,
-    city_count: usize,
-) -> bool {
-    let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
-    if powerable > city_count as u8 {
-        return true;
-    }
+/// True when acquiring a new plant would give little or no benefit (full rack, low upgrade margin).
+/// Capacity surplus is handled separately via `surplus_skip_weight` on the PassAuction score.
+pub fn should_skip_auction(player: &Player, candidate: &PowerPlant, w: &AuctionWeights) -> bool {
     if player.plants.len() >= 3 {
         if let Some(worst) = player.plants.iter().min_by(|a, b| {
             plant_score(a, w)

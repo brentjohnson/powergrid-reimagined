@@ -182,8 +182,7 @@ fn decide_auction(
         .filter(|p| {
             // In round 1 we must buy — don't filter. Later: apply skip logic.
             is_round_one
-                || (!should_skip_auction(my_player, p, w, state.player_city_count(bot.id))
-                    && capacity_bump(p, my_player, w) >= 1)
+                || (!should_skip_auction(my_player, p, w) && capacity_bump(p, my_player, w) >= 1)
         })
         .map(|p| {
             let score = plant_score_contextual(p, my_player, state, w);
@@ -192,8 +191,14 @@ fn decide_auction(
         .collect();
 
     // PassAuction as a scored baseline (not available in round 1).
+    // Surplus capacity (powerable > owned cities) boosts the pass score: the bot
+    // increasingly prefers to skip buying plants and spend money on cities instead.
     if !is_round_one {
-        candidates.push((AuctionCandidate::Pass, w.min_open_score));
+        let powerable: u8 = my_player.plants.iter().map(|p| p.cities).sum();
+        let city_count = state.player_city_count(bot.id) as u8;
+        let surplus = powerable.saturating_sub(city_count);
+        let pass_score = w.min_open_score + w.surplus_skip_weight * surplus as f32;
+        candidates.push((AuctionCandidate::Pass, pass_score));
     }
 
     if candidates.is_empty() {
@@ -832,14 +837,15 @@ mod tests {
     }
 
     #[test]
-    fn skip_auction_when_any_surplus_capacity() {
+    fn surplus_capacity_no_longer_hard_skips() {
+        // should_skip_auction no longer hard-skips on capacity surplus — that is now
+        // handled by boosting the PassAuction score in decide_auction proportionally.
         let mut player = bot_with_money(50);
-        player.plants.push(coal_plant(5, 2, 3));
+        player.plants.push(coal_plant(5, 2, 3)); // powerable=3
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
-        // powerable=3, owned=2 → surplus → skip
-        assert!(should_skip_auction(&player, &candidate, w, 2));
+        assert!(!should_skip_auction(&player, &candidate, w));
     }
 
     #[test]
@@ -849,8 +855,50 @@ mod tests {
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
-        // powerable=2, owned=2 → at capacity → don't skip
-        assert!(!should_skip_auction(&player, &candidate, w, 2));
+        // powerable=2, rack not full → don't skip
+        assert!(!should_skip_auction(&player, &candidate, w));
+    }
+
+    #[test]
+    fn surplus_skip_weight_profile_tiers() {
+        let registry = default_registry();
+        assert!(
+            registry.normal.auction.surplus_skip_weight > 0.0,
+            "normal should have surplus skip weight"
+        );
+        assert!(
+            registry.hard.auction.surplus_skip_weight > 0.0,
+            "hard should have surplus skip weight"
+        );
+        assert_eq!(
+            registry.easy.auction.surplus_skip_weight, 0.0,
+            "easy should not reason about capacity surplus"
+        );
+    }
+
+    #[test]
+    fn surplus_boosts_pass_auction_score() {
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+        // Pass score at surplus=0 is the baseline.
+        let base = w.min_open_score;
+        // Each surplus city adds surplus_skip_weight to the pass score.
+        let pass_surplus_2 = base + w.surplus_skip_weight * 2.0;
+        let pass_surplus_4 = base + w.surplus_skip_weight * 4.0;
+        assert!(
+            pass_surplus_2 > base,
+            "surplus=2 should raise pass score above baseline"
+        );
+        assert!(
+            pass_surplus_4 > pass_surplus_2,
+            "higher surplus should give even higher pass score"
+        );
+        // With surplus=4 under Normal (weight=10), pass=60 — beats most 3-city plants (~52).
+        let three_city_plant = coal_plant(20, 3, 3);
+        assert!(
+            pass_surplus_4 > plant_score(&three_city_plant, w),
+            "large surplus pass score should beat a mediocre plant"
+        );
     }
 
     #[test]
