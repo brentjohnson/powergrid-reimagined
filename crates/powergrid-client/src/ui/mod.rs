@@ -160,8 +160,8 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
     }
 
     // GameOver overlay — rendered last so it floats above everything
-    if let Phase::GameOver { winner } = gs.phase {
-        phases::game_over_overlay(ctx, &gs, winner);
+    if let Phase::GameOver { .. } = gs.phase {
+        phases::game_over_overlay(ctx, &gs);
     }
 
     let top_resp = egui::TopBottomPanel::top("top_panel")

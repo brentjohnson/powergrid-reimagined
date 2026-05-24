@@ -99,14 +99,13 @@ fn paint_card(
 
     let color = kind_color(plant.kind);
 
-    // Background + border (cyan border when discount token; resource color fill when nominated)
+    // Background + border (resource color fill when nominated)
     let bg = if nominated { color } else { theme::BG_WIDGET };
     painter.rect_filled(rect, rounding, bg);
-    let border_color = if discounted { theme::NEON_CYAN } else { color };
     painter.rect_stroke(
         rect,
         rounding,
-        Stroke::new(1.5, border_color),
+        Stroke::new(1.5, color),
         StrokeKind::Inside,
     );
 

@@ -77,9 +77,9 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                     let capacity: u32 = p.plants.iter().map(|pl| pl.cities as u32).sum();
                     ui.label(
                         RichText::new(format!(
-                            "{} cities / capacity {}",
-                            gs.player_city_count(p.id),
-                            capacity
+                            "capacity {} / cities {}",
+                            capacity,
+                            gs.player_city_count(p.id)
                         ))
                         .color(theme::TEXT_MID)
                         .small()

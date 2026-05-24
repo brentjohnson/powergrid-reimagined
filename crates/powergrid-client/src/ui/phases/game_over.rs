@@ -1,5 +1,5 @@
 use egui::{Align, Align2, Label, Layout, RichText};
-use powergrid_core::{types::PlayerId, GameStateView};
+use powergrid_core::GameStateView;
 
 use crate::{state::player_color_to_egui, theme};
 
@@ -7,7 +7,7 @@ const ROW_H: f32 = 16.0;
 // name, MONEY, POWERED, CITIES, CAP
 const COL_WIDTHS: [f32; 5] = [150.0, 70.0, 80.0, 70.0, 60.0];
 
-pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, winner: PlayerId) {
+pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView) {
     // Build ranking: sort by (cities_powered desc, money desc, cities_owned desc)
     let mut ranked: Vec<_> = gs.players.iter().collect();
     ranked.sort_by(|a, b| {
@@ -53,14 +53,7 @@ pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, 
 
                 // Per-player rows
                 for (rank, p) in ranked.iter().enumerate() {
-                    let is_winner = p.id == winner;
                     let player_egui_color = player_color_to_egui(p.color);
-                    let stroke_width = if is_winner { 2.0 } else { 1.0 };
-                    let stroke_color = if is_winner {
-                        theme::NEON_GREEN
-                    } else {
-                        player_egui_color
-                    };
 
                     let cities_owned = gs.player_city_count(p.id) as u32;
                     let capacity: u32 = p.plants.iter().map(|pl| pl.cities as u32).sum();
@@ -83,7 +76,7 @@ pub(in crate::ui) fn game_over_overlay(ctx: &egui::Context, gs: &GameStateView, 
 
                     egui::Frame::NONE
                         .fill(theme::BG_PANEL)
-                        .stroke(egui::Stroke::new(stroke_width, stroke_color))
+                        .stroke(egui::Stroke::new(1.0, player_egui_color))
                         .inner_margin(egui::Margin::same(6))
                         .corner_radius(egui::CornerRadius::same(3))
                         .show(ui, |ui| {
