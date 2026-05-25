@@ -679,18 +679,22 @@ fn resource_market_grid(
 
                 let will_refill =
                     dp < cheapest_filled && (cheapest_filled - dp) <= replenish_amount;
-                let icon_tint = if filled || in_cart {
-                    *color
-                } else if will_refill {
-                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120)
-                } else {
-                    dim_color(*color)
-                };
-                egui::Image::new(resource_image(*resource))
-                    .tint(icon_tint)
-                    .paint_at(ui, sq_rect);
                 if in_cart {
-                    painter.rect_stroke(sq_rect, 1.0, Stroke::new(1.5, *color), StrokeKind::Inside);
+                    painter.rect_filled(sq_rect, 1.0, *color);
+                    egui::Image::new(resource_image(*resource))
+                        .tint(Color32::BLACK)
+                        .paint_at(ui, sq_rect);
+                } else {
+                    let icon_tint = if filled {
+                        *color
+                    } else if will_refill {
+                        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120)
+                    } else {
+                        dim_color(*color)
+                    };
+                    egui::Image::new(resource_image(*resource))
+                        .tint(icon_tint)
+                        .paint_at(ui, sq_rect);
                 }
 
                 for (peer_color, peer_cart) in peer_carts {
