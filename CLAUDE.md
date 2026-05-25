@@ -43,8 +43,10 @@ python scripts/play_game.py --all-bots --render  # watch a rollout
 
 ## Workflow
 
-Before running a build, do "cargo fmt" "cargo check" and run clippy.  Then fix any issues before building.
+Before running a build, do "cargo fmt" "cargo check" and run clippy.  Then fix any issues before building.  
 When making architectural or structural changes, update CLAUDE.md accordingly.
+
+When making visual changes, do not attempt to launch the game to verify changes.  Tell me what to verify and I will do it manually.
 
 If adding or removing crates, update the stubs in the Dockerfile.
 

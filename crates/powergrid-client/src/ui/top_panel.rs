@@ -523,6 +523,15 @@ pub(super) fn step_replenish_columns(ui: &mut Ui, current_step: u8, n_players: u
 
 // ── Resource market grid ───────────────────────────────────────────────────────
 
+fn resource_image(resource: Resource) -> egui::ImageSource<'static> {
+    match resource {
+        Resource::Coal => egui::include_image!("../../assets/coal-pile-svgrepo-com.svg"),
+        Resource::Oil => egui::include_image!("../../assets/oil-barrel-svgrepo-com.svg"),
+        Resource::Gas => egui::include_image!("../../assets/flame-outline-svgrepo-com.svg"),
+        Resource::Uranium => egui::include_image!("../../assets/nuclear-1-svgrepo-com.svg"),
+    }
+}
+
 fn resource_market_grid(
     ui: &mut Ui,
     market: &ResourceMarket,
@@ -668,16 +677,20 @@ fn resource_market_grid(
                 let sq_x = gx + s as f32 * (SQ + INNER_GAP);
                 let sq_rect = Rect::from_min_size(egui::pos2(sq_x, row_y), egui::vec2(SQ, ROW_H));
 
+                let will_refill =
+                    dp < cheapest_filled && (cheapest_filled - dp) <= replenish_amount;
+                let icon_tint = if filled || in_cart {
+                    *color
+                } else if will_refill {
+                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120)
+                } else {
+                    dim_color(*color)
+                };
+                egui::Image::new(resource_image(*resource))
+                    .tint(icon_tint)
+                    .paint_at(ui, sq_rect);
                 if in_cart {
                     painter.rect_stroke(sq_rect, 1.0, Stroke::new(1.5, *color), StrokeKind::Inside);
-                } else if filled {
-                    painter.rect_filled(sq_rect, 1.0, *color);
-                } else {
-                    painter.rect_filled(sq_rect, 1.0, dim_color(*color));
-                }
-
-                if dp < cheapest_filled && (cheapest_filled - dp) <= replenish_amount {
-                    painter.circle_filled(sq_rect.center(), 2.5, *color);
                 }
 
                 for (peer_color, peer_cart) in peer_carts {
