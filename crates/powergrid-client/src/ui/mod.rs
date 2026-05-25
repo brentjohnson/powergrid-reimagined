@@ -173,9 +173,10 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
     state.top_panel_bottom = top_resp.response.rect.bottom();
 
     // Left panel is added before CentralPanel so it extends the full remaining height.
+    state.left_panel_width = compute_left_panel_width(ctx, &gs);
     egui::SidePanel::left("player_panel")
         .resizable(false)
-        .exact_width(220.0)
+        .exact_width(state.left_panel_width)
         .frame(theme::panel_frame(0))
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -220,10 +221,66 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Left-panel dynamic width
+// ---------------------------------------------------------------------------
+
+fn compute_left_panel_width(ctx: &egui::Context, gs: &powergrid_core::GameStateView) -> f32 {
+    const MIN_W: f32 = 200.0;
+    const MAX_W: f32 = 320.0;
+    // Overhead: card inner margin (6*2=12) + frame stroke (~2) + scrollbar (~16)
+    const OVERHEAD: f32 = 30.0;
+
+    let style = ctx.style();
+    // Approximate monospace char width as 0.6 × font size (accurate for typical monospace fonts).
+    let mono_char_w = style
+        .text_styles
+        .get(&egui::TextStyle::Monospace)
+        .map(|f| f.size)
+        .unwrap_or(12.0)
+        * 0.6;
+    let small_char_w = style
+        .text_styles
+        .get(&egui::TextStyle::Small)
+        .map(|f| f.size)
+        .unwrap_or(10.0)
+        * 0.6;
+
+    let measure = |text: &str, char_w: f32| -> f32 { text.chars().count() as f32 * char_w };
+
+    let mut max_content = 0f32;
+
+    for pid in &gs.player_order {
+        if let Some(p) = gs.player(*pid) {
+            let capacity: u32 = p.plants.iter().map(|pl| pl.cities as u32).sum();
+            let header = format!("{} (you) ◀ ACTIVE", p.name);
+            let capacity_line = format!(
+                "capacity {} / cities {}",
+                capacity,
+                gs.player_city_count(p.id)
+            );
+            let has_plants = !p.plants.is_empty();
+            let res_w = left_panel::resource_col_width(&p.resources);
+            let has_res = res_w > 0.0;
+            let row_w = match (has_plants, has_res) {
+                (true, true) => crate::card_painter::CARD_W + left_panel::PLANT_RES_GAP + res_w,
+                (true, false) => crate::card_painter::CARD_W,
+                (false, true) => res_w,
+                (false, false) => 0.0,
+            };
+            max_content = max_content
+                .max(row_w)
+                .max(measure(&header, mono_char_w))
+                .max(measure(&capacity_line, small_char_w));
+        }
+    }
+
+    (max_content + OVERHEAD).clamp(MIN_W, MAX_W)
+}
+
+// ---------------------------------------------------------------------------
 // Floating action panel — overlays the map beneath the active phase column
 // ---------------------------------------------------------------------------
 
-const LEFT_PANEL_W: f32 = 220.0;
 const FLOAT_GAP: f32 = 6.0;
 
 fn floating_action_panel(
@@ -255,7 +312,7 @@ fn floating_action_panel(
     let x = col_rect
         .min
         .x
-        .max(LEFT_PANEL_W + FLOAT_GAP)
+        .max(state.left_panel_width + FLOAT_GAP)
         .min(screen_right - 280.0);
     let y = state.top_panel_bottom + FLOAT_GAP;
     let pos = egui::pos2(x, y);

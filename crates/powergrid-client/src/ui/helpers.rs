@@ -7,6 +7,24 @@ use powergrid_core::{
 
 use crate::{theme, ws::WsChannels};
 
+pub(super) fn resource_image(resource: Resource) -> egui::ImageSource<'static> {
+    match resource {
+        Resource::Coal => egui::include_image!("../../assets/coal-pile-svgrepo-com.svg"),
+        Resource::Oil => egui::include_image!("../../assets/oil-barrel-svgrepo-com.svg"),
+        Resource::Gas => egui::include_image!("../../assets/flame-outline-svgrepo-com.svg"),
+        Resource::Uranium => egui::include_image!("../../assets/nuclear-1-svgrepo-com.svg"),
+    }
+}
+
+pub(super) fn resource_color(resource: Resource) -> Color32 {
+    match resource {
+        Resource::Coal => theme::RES_COAL,
+        Resource::Oil => theme::RES_OIL,
+        Resource::Gas => theme::RES_GAS,
+        Resource::Uranium => theme::RES_URANIUM,
+    }
+}
+
 pub(super) fn neon_button(label: &str, color: Color32) -> egui::Button<'static> {
     egui::Button::new(RichText::new(label).color(color).monospace())
         .fill(theme::BG_WIDGET)

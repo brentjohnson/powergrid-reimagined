@@ -1,12 +1,29 @@
 use egui::{RichText, Ui};
 use powergrid_core::{
-    types::{Phase, PlayerId},
+    types::{Phase, PlayerId, PlayerResources, Resource},
     GameStateView,
 };
 
 use crate::{card_painter, state::player_color_to_egui, theme};
 
-use super::helpers::{dim_color, is_active_player};
+use super::helpers::{dim_color, is_active_player, resource_color, resource_image};
+
+pub(super) const PLANT_RES_GAP: f32 = 6.0;
+const ICON: f32 = 16.0;
+const ICON_GAP: f32 = 2.0;
+const MAX_PER_ROW: u8 = 3;
+
+/// Width of the resource icon column for a player, based on the largest single-type count
+/// capped at MAX_PER_ROW. Returns 0 when the player owns no resources.
+pub(super) fn resource_col_width(res: &PlayerResources) -> f32 {
+    let max_count = res.coal.max(res.oil).max(res.gas).max(res.uranium);
+    let cols = max_count.min(MAX_PER_ROW) as f32;
+    if cols == 0.0 {
+        0.0
+    } else {
+        cols * ICON + (cols - 1.0) * ICON_GAP
+    }
+}
 
 pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: PlayerId) {
     for pid in &gs.player_order {
@@ -86,47 +103,62 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                         .monospace(),
                     );
 
-                    // Plants (left) + resources stacked (right)
-                    // ui.scope + set_max_width constrains the wrap width without
-                    // pre-allocating an infinite-height rect (which causes NaN crashes).
+                    // Plants (left, wrapping) + resources (right, per-type rows of ≤3 icons)
                     let res = &p.resources;
                     let has_plants = !p.plants.is_empty();
                     let has_res = res.coal > 0 || res.oil > 0 || res.gas > 0 || res.uranium > 0;
                     if has_plants || has_res {
-                        ui.horizontal(|ui| {
-                            let res_w = 30.0;
-                            let plant_w =
-                                (ui.available_width() - res_w - ui.spacing().item_spacing.x)
-                                    .max(0.0);
-                            ui.scope(|ui| {
-                                ui.set_max_width(plant_w);
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
-                                    for plant in &p.plants {
-                                        card_painter::draw_plant_card(ui, plant);
+                        let res_w = resource_col_width(res);
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = PLANT_RES_GAP;
+                            if has_plants {
+                                let plant_w = if has_res {
+                                    (ui.available_width() - res_w - PLANT_RES_GAP).max(0.0)
+                                } else {
+                                    ui.available_width()
+                                };
+                                ui.scope(|ui| {
+                                    ui.set_max_width(plant_w);
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+                                        for plant in &p.plants {
+                                            card_painter::draw_plant_card(ui, plant);
+                                        }
+                                    });
+                                });
+                            }
+                            if has_res {
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    for (r, count) in [
+                                        (Resource::Coal, res.coal),
+                                        (Resource::Gas, res.gas),
+                                        (Resource::Oil, res.oil),
+                                        (Resource::Uranium, res.uranium),
+                                    ] {
+                                        if count == 0 {
+                                            continue;
+                                        }
+                                        let mut remaining = count;
+                                        while remaining > 0 {
+                                            let n = remaining.min(MAX_PER_ROW);
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = ICON_GAP;
+                                                for _ in 0..n {
+                                                    ui.add(
+                                                        egui::Image::new(resource_image(r))
+                                                            .tint(resource_color(r))
+                                                            .fit_to_exact_size(egui::vec2(
+                                                                ICON, ICON,
+                                                            )),
+                                                    );
+                                                }
+                                            });
+                                            remaining -= n;
+                                        }
                                     }
                                 });
-                            });
-                            ui.vertical(|ui| {
-                                let mk = |s: &str, v: u8| {
-                                    RichText::new(format!("{s}:{v}"))
-                                        .color(theme::TEXT_MID)
-                                        .small()
-                                        .monospace()
-                                };
-                                if res.coal > 0 {
-                                    ui.label(mk("C", res.coal));
-                                }
-                                if res.oil > 0 {
-                                    ui.label(mk("O", res.oil));
-                                }
-                                if res.gas > 0 {
-                                    ui.label(mk("G", res.gas));
-                                }
-                                if res.uranium > 0 {
-                                    ui.label(mk("U", res.uranium));
-                                }
-                            });
+                            }
                         });
                     }
                 });

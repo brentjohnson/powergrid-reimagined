@@ -148,6 +148,7 @@ pub struct AppState {
     // Indices: 0=Auction, 1=BuyResources, 2=BuildCities, 3=Bureaucracy
     pub phase_column_rects: [Option<egui::Rect>; 4],
     pub top_panel_bottom: f32,
+    pub left_panel_width: f32,
 
     // Window mode (kept in sync with the actual viewport)
     pub fullscreen: bool,
@@ -264,6 +265,7 @@ impl AppState {
             hint_tracker: LocalHintTracker::new(),
             phase_column_rects: [None; 4],
             top_panel_bottom: 0.0,
+            left_panel_width: 220.0,
         }
     }
 

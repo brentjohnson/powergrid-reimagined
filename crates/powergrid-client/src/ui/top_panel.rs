@@ -15,7 +15,7 @@ use crate::{
     ws::WsChannels,
 };
 
-use super::helpers::{dim_color, send};
+use super::helpers::{dim_color, resource_image, send};
 use super::player_summary::player_summary;
 
 pub(super) fn top_panel_contents(
@@ -522,15 +522,6 @@ pub(super) fn step_replenish_columns(ui: &mut Ui, current_step: u8, n_players: u
 }
 
 // ── Resource market grid ───────────────────────────────────────────────────────
-
-fn resource_image(resource: Resource) -> egui::ImageSource<'static> {
-    match resource {
-        Resource::Coal => egui::include_image!("../../assets/coal-pile-svgrepo-com.svg"),
-        Resource::Oil => egui::include_image!("../../assets/oil-barrel-svgrepo-com.svg"),
-        Resource::Gas => egui::include_image!("../../assets/flame-outline-svgrepo-com.svg"),
-        Resource::Uranium => egui::include_image!("../../assets/nuclear-1-svgrepo-com.svg"),
-    }
-}
 
 fn resource_market_grid(
     ui: &mut Ui,
