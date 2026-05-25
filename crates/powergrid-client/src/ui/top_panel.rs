@@ -540,13 +540,13 @@ fn resource_market_grid(
     clickable: bool,
     replenish: (u8, u8, u8, u8),
 ) -> Option<(Resource, u8)> {
-    const SQ: f32 = 14.0;
-    const INNER_GAP: f32 = 2.0;
-    const GROUP_GAP: f32 = 8.0;
-    const LABEL_W: f32 = 36.0;
-    const HEADER_H: f32 = 20.0;
+    const SQ: f32 = 22.0;
+    const INNER_GAP: f32 = 3.0;
+    const GROUP_GAP: f32 = 10.0;
+    const LABEL_W: f32 = 44.0;
+    const HEADER_H: f32 = 22.0;
     const ROW_H: f32 = SQ;
-    const ROW_GAP: f32 = 4.0;
+    const ROW_GAP: f32 = 5.0;
 
     let rows: &[(Resource, &str, Color32)] = &[
         (Resource::Coal, "COAL", theme::RES_COAL),
@@ -625,7 +625,7 @@ fn resource_market_grid(
             egui::pos2(gx + col_w / 2.0, oy + HEADER_H / 2.0),
             Align2::CENTER_CENTER,
             format!("${price}"),
-            FontId::monospace(10.0),
+            FontId::monospace(12.0),
             theme::TEXT_DIM,
         );
     }
@@ -656,7 +656,7 @@ fn resource_market_grid(
             egui::pos2(ox + LABEL_W - 2.0, row_y + ROW_H / 2.0),
             Align2::RIGHT_CENTER,
             *label,
-            FontId::monospace(10.0),
+            FontId::monospace(12.0),
             *color,
         );
 

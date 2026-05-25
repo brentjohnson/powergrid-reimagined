@@ -168,11 +168,7 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
         .min_height(180.0)
         .frame(theme::panel_frame(6))
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    top_panel::top_panel_contents(ui, gs.clone(), state, channels, my_id);
-                });
+            top_panel::top_panel_contents(ui, gs.clone(), state, channels, my_id);
         });
     state.top_panel_bottom = top_resp.response.rect.bottom();
 
@@ -253,12 +249,17 @@ fn floating_action_panel(
         return; // first frame — rects not captured yet
     };
 
-    let x = col_rect.min.x.max(LEFT_PANEL_W + FLOAT_GAP);
+    #[allow(deprecated)]
+    let screen_right = ctx.screen_rect().right() - 8.0;
+    // Clamp x so the floating panel always has at least 280px of room to the right.
+    let x = col_rect
+        .min
+        .x
+        .max(LEFT_PANEL_W + FLOAT_GAP)
+        .min(screen_right - 280.0);
     let y = state.top_panel_bottom + FLOAT_GAP;
     let pos = egui::pos2(x, y);
 
-    #[allow(deprecated)]
-    let screen_right = ctx.screen_rect().right() - 8.0;
     let max_width = (col_rect.width().max(280.0)).min(screen_right - x);
 
     egui::Area::new(egui::Id::new("floating_action_panel"))
