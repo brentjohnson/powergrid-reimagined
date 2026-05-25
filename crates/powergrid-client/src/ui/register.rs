@@ -15,6 +15,7 @@ pub(super) fn register_screen(ctx: &egui::Context, state: &mut AppState) {
                 .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
+            theme::draw_backdrop(ui);
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
 

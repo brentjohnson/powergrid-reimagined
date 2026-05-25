@@ -197,3 +197,18 @@ pub fn panel_frame(inner_margin: i8) -> egui::Frame {
         .stroke(Stroke::new(1.0, NEON_CYAN_DARK))
         .inner_margin(egui::Margin::same(inner_margin))
 }
+
+pub fn draw_backdrop(ui: &mut egui::Ui) {
+    let panel = ui.max_rect();
+    let img_aspect = 1920.0_f32 / 1280.0;
+    let panel_aspect = panel.width() / panel.height();
+    let size = if panel_aspect > img_aspect {
+        egui::vec2(panel.width(), panel.width() / img_aspect)
+    } else {
+        egui::vec2(panel.height() * img_aspect, panel.height())
+    };
+    let bg_rect = egui::Rect::from_center_size(panel.center(), size);
+    egui::Image::new(egui::include_image!("../assets/splash.png")).paint_at(ui, bg_rect);
+    ui.painter()
+        .rect_filled(panel, 0.0, egui::Color32::from_black_alpha(140));
+}

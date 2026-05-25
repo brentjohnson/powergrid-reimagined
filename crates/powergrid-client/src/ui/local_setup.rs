@@ -21,6 +21,7 @@ pub(super) fn local_setup_screen(ctx: &egui::Context, state: &mut AppState, acti
                 .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
+            theme::draw_backdrop(ui);
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
 

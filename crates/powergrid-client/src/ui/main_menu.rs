@@ -16,21 +16,7 @@ pub(super) fn main_menu_screen(ctx: &egui::Context, state: &mut AppState, action
                 .inner_margin(egui::Margin::same(0)),
         )
         .show(ctx, |ui| {
-            let panel = ui.max_rect();
-            {
-                let img_aspect = 1920.0_f32 / 1280.0;
-                let panel_aspect = panel.width() / panel.height();
-                let size = if panel_aspect > img_aspect {
-                    egui::vec2(panel.width(), panel.width() / img_aspect)
-                } else {
-                    egui::vec2(panel.height() * img_aspect, panel.height())
-                };
-                let bg_rect = egui::Rect::from_center_size(panel.center(), size);
-                egui::Image::new(egui::include_image!("../../assets/splash.png"))
-                    .paint_at(ui, bg_rect);
-                ui.painter()
-                    .rect_filled(panel, 0.0, egui::Color32::from_black_alpha(140));
-            }
+            theme::draw_backdrop(ui);
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
 

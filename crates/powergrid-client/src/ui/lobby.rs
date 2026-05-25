@@ -28,6 +28,7 @@ pub(super) fn lobby_screen(
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(theme::BG_DEEP))
         .show(ctx, |ui| {
+            theme::draw_backdrop(ui);
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
                 ui.label(
