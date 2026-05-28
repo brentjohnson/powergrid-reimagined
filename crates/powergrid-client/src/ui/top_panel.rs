@@ -171,6 +171,12 @@ pub(super) fn top_panel_contents(
             } else {
                 replenishment_amounts(gs.step, gs.players.len())
             };
+            let target_scale = if is_buy { 1.0_f32 } else { 0.5 };
+            let scale = ui.ctx().animate_value_with_time(
+                egui::Id::new("resource_market_scale"),
+                target_scale,
+                0.25,
+            );
             let click = theme::neon_frame().show(ui, |ui| {
                 resource_market_grid(
                     ui,
@@ -179,6 +185,7 @@ pub(super) fn top_panel_contents(
                     &peer_carts,
                     my_buy_turn,
                     replenish,
+                    scale,
                 )
             });
             if let Some((resource, amount)) = click.inner {
@@ -530,14 +537,16 @@ fn resource_market_grid(
     peer_carts: &[(Color32, HashMap<Resource, u8>)],
     clickable: bool,
     replenish: (u8, u8, u8, u8),
+    scale: f32,
 ) -> Option<(Resource, u8)> {
-    const SQ: f32 = 22.0;
-    const INNER_GAP: f32 = 3.0;
-    const GROUP_GAP: f32 = 10.0;
-    const LABEL_W: f32 = 44.0;
-    const HEADER_H: f32 = 22.0;
-    const ROW_H: f32 = SQ;
-    const ROW_GAP: f32 = 5.0;
+    let sq = 22.0 * scale;
+    let inner_gap = 3.0 * scale;
+    let group_gap = 10.0 * scale;
+    let label_w = 44.0 * scale;
+    let header_h = 22.0 * scale;
+    let row_h = sq;
+    let row_gap = 5.0 * scale;
+    let font_size = 12.0 * scale;
 
     let rows: &[(Resource, &str, Color32)] = &[
         (Resource::Coal, "COAL", theme::RES_COAL),
@@ -582,17 +591,17 @@ fn resource_market_grid(
     let mut x = 0.0f32;
     for (i, &w) in col_widths.iter().enumerate() {
         col_x.push(x);
-        let col_w = w as f32 * (SQ + INNER_GAP) - INNER_GAP;
+        let col_w = w as f32 * (sq + inner_gap) - inner_gap;
         x += col_w;
         if i + 1 < col_widths.len() {
-            x += GROUP_GAP;
+            x += group_gap;
         }
     }
     let content_w = x;
 
-    let total_w = LABEL_W + content_w;
+    let total_w = label_w + content_w;
     let n = rows.len() as f32;
-    let total_h = HEADER_H + ROW_GAP + n * ROW_H + (n - 1.0) * ROW_GAP;
+    let total_h = header_h + row_gap + n * row_h + (n - 1.0) * row_gap;
 
     let sense = if clickable {
         Sense::click()
@@ -610,13 +619,13 @@ fn resource_market_grid(
     let oy = rect.min.y;
 
     for (col_idx, (&price, &w)) in all_prices.iter().zip(col_widths.iter()).enumerate() {
-        let gx = ox + LABEL_W + col_x[col_idx];
-        let col_w = w as f32 * (SQ + INNER_GAP) - INNER_GAP;
+        let gx = ox + label_w + col_x[col_idx];
+        let col_w = w as f32 * (sq + inner_gap) - inner_gap;
         painter.text(
-            egui::pos2(gx + col_w / 2.0, oy + HEADER_H / 2.0),
+            egui::pos2(gx + col_w / 2.0, oy + header_h / 2.0),
             Align2::CENTER_CENTER,
             format!("${price}"),
-            FontId::monospace(12.0),
+            FontId::monospace(font_size),
             theme::TEXT_DIM,
         );
     }
@@ -631,7 +640,7 @@ fn resource_market_grid(
     for (row_idx, ((resource, label, color), rgroups)) in
         rows.iter().zip(resource_groups.iter()).enumerate()
     {
-        let row_y = oy + HEADER_H + ROW_GAP + row_idx as f32 * (ROW_H + ROW_GAP);
+        let row_y = oy + header_h + row_gap + row_idx as f32 * (row_h + row_gap);
         let count = market.available(*resource) as usize;
         let total = price_table(*resource).len();
         let cart_amount = cart.get(resource).copied().unwrap_or(0) as usize;
@@ -644,10 +653,10 @@ fn resource_market_grid(
         } as usize;
 
         painter.text(
-            egui::pos2(ox + LABEL_W - 2.0, row_y + ROW_H / 2.0),
+            egui::pos2(ox + label_w - 2.0 * scale, row_y + row_h / 2.0),
             Align2::RIGHT_CENTER,
             *label,
-            FontId::monospace(12.0),
+            FontId::monospace(font_size),
             *color,
         );
 
@@ -657,7 +666,7 @@ fn resource_market_grid(
                 .iter()
                 .find(|&&(p, _)| p == price)
                 .map_or(0, |&(_, gs)| gs);
-            let gx = ox + LABEL_W + col_x[col_idx];
+            let gx = ox + label_w + col_x[col_idx];
 
             for s in 0..group_size {
                 let dp = display_pos + s;
@@ -665,8 +674,8 @@ fn resource_market_grid(
                 let filled = array_idx < count;
                 let in_cart = filled && dp >= cheapest_filled && dp < cheapest_filled + cart_amount;
 
-                let sq_x = gx + s as f32 * (SQ + INNER_GAP);
-                let sq_rect = Rect::from_min_size(egui::pos2(sq_x, row_y), egui::vec2(SQ, ROW_H));
+                let sq_x = gx + s as f32 * (sq + inner_gap);
+                let sq_rect = Rect::from_min_size(egui::pos2(sq_x, row_y), egui::vec2(sq, row_h));
 
                 let will_refill =
                     dp < cheapest_filled && (cheapest_filled - dp) <= replenish_amount;
@@ -703,7 +712,7 @@ fn resource_market_grid(
                 }
 
                 if let Some(pos) = clicked_pos {
-                    if pos.y >= row_y && pos.y < row_y + ROW_H && pos.x >= sq_x && pos.x < sq_x + SQ
+                    if pos.y >= row_y && pos.y < row_y + row_h && pos.x >= sq_x && pos.x < sq_x + sq
                     {
                         let amount = if filled {
                             (dp.saturating_sub(cheapest_filled) + 1) as u8
