@@ -51,6 +51,12 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                         ui.colored_label(name_color, RichText::new(&p.name).monospace().strong());
                         if is_me {
                             ui.label(RichText::new("(you)").color(theme::TEXT_DIM).small());
+                            ui.label(
+                                RichText::new(format!("${}", p.money))
+                                    .color(theme::NEON_GREEN)
+                                    .small()
+                                    .monospace(),
+                            );
                         }
                         if active {
                             ui.label(
