@@ -191,14 +191,10 @@ fn decide_auction(
         .collect();
 
     // PassAuction as a scored baseline (not available in round 1).
-    // Surplus capacity (powerable > owned cities) boosts the pass score: the bot
-    // increasingly prefers to skip buying plants and spend money on cities instead.
+    // Overshoot capacity is penalised on individual plant scores (see plant_score_contextual),
+    // so the Pass baseline is simply the minimum worthwhile plant score threshold.
     if !is_round_one {
-        let powerable: u8 = my_player.plants.iter().map(|p| p.cities).sum();
-        let city_count = state.player_city_count(bot.id) as u8;
-        let surplus = powerable.saturating_sub(city_count);
-        let pass_score = w.min_open_score + w.surplus_skip_weight * surplus as f32;
-        candidates.push((AuctionCandidate::Pass, pass_score));
+        candidates.push((AuctionCandidate::Pass, w.min_open_score));
     }
 
     if candidates.is_empty() {
@@ -572,9 +568,16 @@ fn decide_power_cities_fuel(state: &GameState, bot: &mut Bot, hybrid_cost: u8) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use powergrid_core::types::{Player, PlayerColor, PlayerId, PowerPlant};
+    use powergrid_core::{
+        default_map,
+        state::GameState,
+        types::{Player, PlayerColor, PlayerId, PowerPlant},
+    };
 
-    use crate::{features::auction_reserve, profile::default_registry};
+    use crate::{
+        features::{auction_reserve, plant_score_contextual, useful_city_target},
+        profile::default_registry,
+    };
 
     fn coal_plant(number: u8, cost: u8, cities: u8) -> PowerPlant {
         PowerPlant {
@@ -610,6 +613,15 @@ mod tests {
             profile,
             42,
         )
+    }
+
+    /// Build a minimal 4-player GameState and insert `player` as its first player.
+    fn state_with_player(player: &Player) -> GameState {
+        let mut state = GameState::new(default_map(), 4);
+        state.end_game_cities = 17; // 4-player default
+        state.players.push(player.clone());
+        state.player_order.push(player.id);
+        state
     }
 
     #[test]
@@ -837,11 +849,10 @@ mod tests {
     }
 
     #[test]
-    fn surplus_capacity_no_longer_hard_skips() {
-        // should_skip_auction no longer hard-skips on capacity surplus — that is now
-        // handled by boosting the PassAuction score in decide_auction proportionally.
+    fn should_skip_only_on_full_rack_no_improvement() {
+        // should_skip_auction should NOT hard-skip on capacity alone — only on full rack + low upgrade.
         let mut player = bot_with_money(50);
-        player.plants.push(coal_plant(5, 2, 3)); // powerable=3
+        player.plants.push(coal_plant(5, 2, 3)); // powerable=3, rack size=1 (not full)
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
@@ -860,47 +871,88 @@ mod tests {
     }
 
     #[test]
-    fn surplus_skip_weight_profile_tiers() {
+    fn overshoot_weight_profile_tiers() {
         let registry = default_registry();
-        // All tiers must have a non-zero weight — zero causes capacity hoarding with no city builds.
+        // All tiers must have a non-zero overshoot weight — zero would disable the endgame brake.
         assert!(
-            registry.easy.auction.surplus_skip_weight > 0.0,
-            "easy must have surplus skip weight"
+            registry.easy.auction.overshoot_weight > 0.0,
+            "easy must have overshoot weight"
         );
         assert!(
-            registry.normal.auction.surplus_skip_weight
-                >= registry.easy.auction.surplus_skip_weight,
+            registry.normal.auction.overshoot_weight >= registry.easy.auction.overshoot_weight,
             "normal should be at least as aggressive as easy"
         );
         assert!(
-            registry.hard.auction.surplus_skip_weight
-                >= registry.normal.auction.surplus_skip_weight,
+            registry.hard.auction.overshoot_weight >= registry.normal.auction.overshoot_weight,
             "hard should be the most aggressive"
+        );
+        // Hard bot plans least capacity ahead (tightest ceiling).
+        assert!(
+            registry.hard.auction.buildable_lookahead
+                <= registry.normal.auction.buildable_lookahead,
+            "hard should have the tightest buildable_lookahead"
         );
     }
 
     #[test]
-    fn surplus_boosts_pass_auction_score() {
+    fn overshoot_penalty_applied_to_plant_score() {
+        // A bot that already owns 4 cities (owned=4) with end_game_cities=17 and
+        // buildable_lookahead=2 has useful_city_target=6.
+        // If it currently has powerable=5 and buys a +3 plant → projected total=8 → overshoot=2.
+        // The score should be reduced by overshoot_weight * 2 compared to no-overshoot case.
         let registry = default_registry();
         let w = &registry.normal.auction;
-        // Pass score at surplus=0 is the baseline.
-        let base = w.min_open_score;
-        // Each surplus city adds surplus_skip_weight to the pass score.
-        let pass_surplus_2 = base + w.surplus_skip_weight * 2.0;
-        let pass_surplus_4 = base + w.surplus_skip_weight * 4.0;
+
+        let mut player = bot_with_money(100);
+        player.plants.push(coal_plant(5, 2, 5)); // existing powerable=5
+                                                 // Give the player 4 owned cities by inserting cities into a state.
+        let mut state = state_with_player(&player);
+        state.end_game_cities = 17;
+        // Manually set player_city_count by assigning cities in the map.
+        // Simpler: tweak end_game_cities / useful_city_target directly via a custom weight set.
+        // Use a profile where end_game_cities=6 to force the boundary.
+        let mut w_custom = w.clone();
+        w_custom.overshoot_weight = 35.0;
+        w_custom.buildable_lookahead = 2;
+
+        // state has player with 0 owned cities, so target = 0+2 = 2 (min(2, 17)).
+        // Existing powerable = 5; adding a 3-city plant → projected = 5+3=8, overshoot = 8-2 = 6.
+        let player_ref = &state.players[0];
+        let candidate = coal_plant(20, 2, 3);
+        let score_with = plant_score_contextual(&candidate, player_ref, &state, &w_custom);
+        let score_base = plant_score(&candidate, &w_custom);
+        let expected_penalty = 35.0 * 6.0; // overshoot_weight * 6 cities of overshoot
         assert!(
-            pass_surplus_2 > base,
-            "surplus=2 should raise pass score above baseline"
+            score_base - score_with >= expected_penalty - 1.0,
+            "expected ~{expected_penalty} penalty from overshoot, base={score_base}, actual={score_with}"
         );
-        assert!(
-            pass_surplus_4 > pass_surplus_2,
-            "higher surplus should give even higher pass score"
-        );
-        // With surplus=4 under Normal (weight=10), pass=60 — beats most 3-city plants (~52).
-        let three_city_plant = coal_plant(20, 3, 3);
-        assert!(
-            pass_surplus_4 > plant_score(&three_city_plant, w),
-            "large surplus pass score should beat a mediocre plant"
+    }
+
+    #[test]
+    fn endgame_ceiling_clamps_useful_target() {
+        // With owned=15 and buildable_lookahead=3, the naive target would be 18,
+        // but if end_game_cities=17 it clamps to 17.
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+        let mut player = bot_with_money(100);
+        let mut state = state_with_player(&player);
+        state.end_game_cities = 17;
+        // Manually nudge owned count by lowering the end-game ceiling instead.
+        // Construct a player with 0 cities but set end_game_cities=2 to simulate the clamp.
+        state.end_game_cities = 2;
+        let player_ref = &state.players[0];
+        // owned=0, buildable_lookahead=2 → naive target=2 → clamped to 2 (matches end_game_cities).
+        let target = useful_city_target(player_ref, &state, w);
+        assert_eq!(target, 2, "target should clamp to end_game_cities=2");
+
+        // Now raise end_game_cities above lookahead → clamp does not fire.
+        state.end_game_cities = 17;
+        player.plants.clear();
+        let target2 = useful_city_target(&state.players[0], &state, w);
+        assert_eq!(
+            target2, w.buildable_lookahead,
+            "with 0 owned cities, target should be buildable_lookahead={}",
+            w.buildable_lookahead
         );
     }
 

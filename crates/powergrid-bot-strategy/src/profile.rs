@@ -21,9 +21,14 @@ pub struct AuctionWeights {
     pub upgrade_margin: f32,
     /// Minimum plant score to be worth opening an auction for.
     pub min_open_score: f32,
-    /// Added to the PassAuction score per city of capacity surplus (powerable − owned).
-    /// Higher → bot skips buying plants more aggressively when it already has headroom.
-    pub surplus_skip_weight: f32,
+    /// Score penalty per city of capacity that would exceed the useful ceiling *after*
+    /// acquiring the candidate plant.  "Useful ceiling" = min(owned + buildable_lookahead,
+    /// end_game_cities).  Higher → bot avoids overshooting more aggressively.
+    pub overshoot_weight: f32,
+    /// How many cities beyond currently owned are considered "usefully planned for"
+    /// when computing the overshoot ceiling.  2 = mild planning ahead; 1 = tight (hard);
+    /// 3+ = relaxed (easy / early game).  The ceiling is always capped at end_game_cities.
+    pub buildable_lookahead: u8,
     /// Extra elektro per city of capacity gained when computing bid ceiling.
     pub capacity_premium: f32,
     /// Capacity threshold at/above which the high-capacity premium activates.

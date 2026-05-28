@@ -86,6 +86,16 @@ pub fn plant_score_contextual(
         score += (bump - plant.cities as f32) * w.upgrade_efficiency_weight;
     }
 
+    // Penalise capacity that would overshoot the useful ceiling *after* buying this plant.
+    // Uses capacity_bump (net gain, accounting for any discard) so a full-rack upgrade that
+    // actually shrinks capacity produces zero or negative projected surplus.
+    if w.overshoot_weight > 0.0 {
+        let powerable: i32 = player.plants.iter().map(|p| p.cities as i32).sum();
+        let target = useful_city_target(player, state, w) as i32;
+        let projected_surplus = (powerable + capacity_bump(plant, player, w) - target).max(0);
+        score -= w.overshoot_weight * projected_surplus as f32;
+    }
+
     score
 }
 
@@ -108,8 +118,17 @@ pub fn capacity_bump(plant: &PowerPlant, player: &Player, w: &AuctionWeights) ->
     plant.cities as i32 - worst_cities
 }
 
+/// Cities worth owning given current progress and the rules of the game.
+/// = min(owned + buildable_lookahead, end_game_cities).
+/// Capacity beyond this is either surplus we already have planned for (lookahead) or pure waste
+/// (beyond the game-ending threshold).
+pub fn useful_city_target(player: &Player, state: &GameState, w: &AuctionWeights) -> u8 {
+    let owned = state.player_city_count(player.id) as u8;
+    (owned + w.buildable_lookahead).min(state.end_game_cities)
+}
+
 /// True when acquiring a new plant would give little or no benefit (full rack, low upgrade margin).
-/// Capacity surplus is handled separately via `surplus_skip_weight` on the PassAuction score.
+/// Capacity overshoot (capacity > useful ceiling) is handled by `plant_score_contextual`.
 pub fn should_skip_auction(player: &Player, candidate: &PowerPlant, w: &AuctionWeights) -> bool {
     if player.plants.len() >= 3 {
         if let Some(worst) = player.plants.iter().min_by(|a, b| {
