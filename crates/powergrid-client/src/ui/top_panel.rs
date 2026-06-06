@@ -54,6 +54,11 @@ pub(super) fn top_panel_contents(
                         .color(theme::NEON_CYAN)
                         .monospace(),
                 );
+                ui.label(
+                    RichText::new(format!("STEP  {}", gs.step))
+                        .color(theme::NEON_CYAN)
+                        .monospace(),
+                );
             });
         });
 
