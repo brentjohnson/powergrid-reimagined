@@ -228,8 +228,8 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
 fn compute_left_panel_width(ctx: &egui::Context, gs: &powergrid_core::GameStateView) -> f32 {
     const MIN_W: f32 = 200.0;
     const MAX_W: f32 = 320.0;
-    // Overhead: card inner margin (6*2=12) + frame stroke (~2) + scrollbar (~16)
-    const OVERHEAD: f32 = 30.0;
+    // Overhead: card inner margin (6*2=12) + frame stroke (~2) + scrollbar (~16) + extra padding (~14)
+    const OVERHEAD: f32 = 44.0;
 
     let style = ctx.style();
     // Approximate monospace char width as 0.6 × font size (accurate for typical monospace fonts).
@@ -268,9 +268,11 @@ fn compute_left_panel_width(ctx: &egui::Context, gs: &powergrid_core::GameStateV
                 (false, true) => res_w,
                 (false, false) => 0.0,
             };
+            // House icon (ICON wide) + item_spacing.x (6) precedes the name in the header row.
+            let icon_w = left_panel::ICON + 6.0;
             max_content = max_content
                 .max(row_w)
-                .max(measure(&header, mono_char_w))
+                .max(icon_w + measure(&header, mono_char_w))
                 .max(measure(&capacity_line, small_char_w));
         }
     }

@@ -9,7 +9,7 @@ use crate::{card_painter, state::player_color_to_egui, theme};
 use super::helpers::{dim_color, is_active_player, resource_color, resource_image};
 
 pub(super) const PLANT_RES_GAP: f32 = 6.0;
-const ICON: f32 = 16.0;
+pub(super) const ICON: f32 = 16.0;
 const ICON_GAP: f32 = 2.0;
 const MAX_PER_ROW: u8 = 3;
 
@@ -47,6 +47,17 @@ pub(super) fn left_panel_contents(ui: &mut Ui, gs: &GameStateView, my_id: Player
                 .show(ui, |ui| {
                     // Header row
                     ui.horizontal(|ui| {
+                        // House icon — same shape as the map city markers.
+                        let (resp, painter) =
+                            ui.allocate_painter(egui::vec2(ICON, ICON), egui::Sense::hover());
+                        let center = resp.rect.center();
+                        let r = ICON / 2.2;
+                        painter.add(egui::Shape::convex_polygon(
+                            crate::map_panel::house_points(center, r),
+                            player_color_to_egui(p.color),
+                            egui::Stroke::new(1.5, egui::Color32::WHITE),
+                        ));
+
                         let name_color = player_color_to_egui(p.color);
                         ui.colored_label(name_color, RichText::new(&p.name).monospace().strong());
                         if is_me {

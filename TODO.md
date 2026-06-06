@@ -106,29 +106,39 @@
 * Make one dollar plant more visible
 * Removed opponents money from display (also simplifies training)
 
+# v0.12.0
+
+* USA map
+
+
+# v0.13.0
+
+* Splash screen
+* Highlight nominated plant in the market
+* Add "capacity" to player card (how many you could power) - where resource are
+
+# v0.14.0
+
+* Sound when it's your turn
+* Fix city graph size
 
 
 # To do...
 
 ## Takeaways from multiplayer game
 
-* sound on your turn
 * put turn order thing 
 
 ## Client/UI
 
-* Splash screen
 * More layout adjustments - action panels need to be pop-ups or something
 * More layout adjustments - get things to fit better in top bar
 * Show version number somewhere?
-* Sound when it's your turn
-* Highlight nominated plant in the market
 * add resource icons to right of plant
-* Add "capacity" to player card (how many you could power) - where resource are
+* animate turn order shuffle
 
 ## Game play
 
-* USA map
 * Check payouts based on players
 
 ## Lobby

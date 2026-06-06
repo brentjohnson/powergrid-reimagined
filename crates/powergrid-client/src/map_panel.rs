@@ -457,7 +457,7 @@ pub fn draw(ui: &mut Ui, state: &mut AppState, game_state: &GameStateView, my_id
 
 /// Returns the 5 vertices of a house shape (square body + triangular roof)
 /// centered at `center` with approximate half-width `r`.
-fn house_points(center: Pos2, r: f32) -> Vec<Pos2> {
+pub(crate) fn house_points(center: Pos2, r: f32) -> Vec<Pos2> {
     let hw = r * 0.9; // half-width of walls
     let bottom = center.y + r * 0.7;
     let wall_top = center.y - r * 0.1;
