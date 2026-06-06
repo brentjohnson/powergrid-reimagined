@@ -738,16 +738,20 @@ pub(super) fn city_history_graph(
     players_info: &[(PlayerId, PlayerColor)],
     end_game_cities: u8,
     gs: &GameStateView,
+    max_height: f32,
 ) {
     const PAD_L: f32 = 26.0;
     const PAD_B: f32 = 18.0;
-    const H: f32 = 342.0;
+    const FRAME_V: f32 = 16.0;
+    const TOP_PAD: f32 = 6.0;
+    const MIN_H: f32 = 120.0;
     const DOT_R: f32 = 4.0;
     const STEP2_CITIES: usize = 7;
 
+    let h = (max_height - PAD_B - FRAME_V - TOP_PAD).max(MIN_H);
     let w = (ui.available_width() - PAD_L).max(100.0);
     let total_w = PAD_L + w;
-    let total_h = PAD_B + H;
+    let total_h = PAD_B + h;
 
     let (rect, _) = ui.allocate_exact_size(egui::vec2(total_w, total_h), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -778,11 +782,11 @@ pub(super) fn city_history_graph(
     };
 
     painter.line_segment(
-        [egui::pos2(ox, oy), egui::pos2(ox, oy + H)],
+        [egui::pos2(ox, oy), egui::pos2(ox, oy + h)],
         Stroke::new(1.0, theme::TEXT_DIM),
     );
     painter.line_segment(
-        [egui::pos2(ox, oy + H), egui::pos2(ox + w, oy + H)],
+        [egui::pos2(ox, oy + h), egui::pos2(ox + w, oy + h)],
         Stroke::new(1.0, theme::TEXT_DIM),
     );
 
@@ -794,7 +798,7 @@ pub(super) fn city_history_graph(
         theme::TEXT_DIM,
     );
     painter.text(
-        egui::pos2(ox - 2.0, oy + H),
+        egui::pos2(ox - 2.0, oy + h),
         Align2::RIGHT_BOTTOM,
         "0",
         FontId::monospace(13.0),
@@ -802,7 +806,7 @@ pub(super) fn city_history_graph(
     );
 
     painter.text(
-        egui::pos2(ox, oy + H + PAD_B),
+        egui::pos2(ox, oy + h + PAD_B),
         Align2::LEFT_BOTTOM,
         "1",
         FontId::monospace(13.0),
@@ -810,7 +814,7 @@ pub(super) fn city_history_graph(
     );
     if rounds > 1 {
         painter.text(
-            egui::pos2(ox + w, oy + H + PAD_B),
+            egui::pos2(ox + w, oy + h + PAD_B),
             Align2::RIGHT_BOTTOM,
             format!("{}", rounds + 1),
             FontId::monospace(13.0),
@@ -818,7 +822,7 @@ pub(super) fn city_history_graph(
         );
     }
 
-    let step2_y = oy + H - (STEP2_CITIES as f32 / max_cities as f32) * H;
+    let step2_y = oy + h - (STEP2_CITIES as f32 / max_cities as f32) * h;
     let step2_color = theme::city_graph_step2();
     let dash_len = 4.0_f32;
     let gap_len = 3.0_f32;
@@ -839,7 +843,7 @@ pub(super) fn city_history_graph(
         step2_color,
     );
 
-    let end_y = oy + H - (end_game_cities as f32 / max_cities as f32) * H;
+    let end_y = oy + h - (end_game_cities as f32 / max_cities as f32) * h;
     let end_color = theme::city_graph_end();
     let mut x = ox;
     while x < ox + w {
@@ -869,7 +873,7 @@ pub(super) fn city_history_graph(
                     .find(|(id, _)| id == player_id)
                     .map(|(_, count)| {
                         let x = x_for(round_idx);
-                        let y = oy + H - (*count as f32 / max_cities as f32) * H;
+                        let y = oy + h - (*count as f32 / max_cities as f32) * h;
                         egui::pos2(x, y)
                     })
             })
@@ -887,7 +891,7 @@ pub(super) fn city_history_graph(
             if let Some(player) = gs.players.iter().find(|p| p.id == *player_id) {
                 let proj_count = gs.player_city_count(player.id);
                 let proj_x = x_for(rounds);
-                let proj_y = oy + H - (proj_count as f32 / max_cities as f32) * H;
+                let proj_y = oy + h - (proj_count as f32 / max_cities as f32) * h;
                 let proj_pt = egui::pos2(proj_x, proj_y);
                 let dim = dim_color(color);
                 painter.line_segment([last_pt, proj_pt], Stroke::new(2.5, dim));

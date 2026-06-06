@@ -421,6 +421,8 @@ fn bottom_info_panel(
 
             ui.separator();
 
+            let content_h = ui.available_height();
+
             // Tab content
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -439,6 +441,7 @@ fn bottom_info_panel(
                                     &players_info,
                                     gs.end_game_cities,
                                     gs,
+                                    content_h,
                                 );
                             });
                         } else {
