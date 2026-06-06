@@ -253,7 +253,7 @@ fn compute_left_panel_width(ctx: &egui::Context, gs: &powergrid_core::GameStateV
     for pid in &gs.player_order {
         if let Some(p) = gs.player(*pid) {
             let capacity: u32 = p.plants.iter().map(|pl| pl.cities as u32).sum();
-            let header = format!("{} (you) ◀ ACTIVE", p.name);
+            let header = format!("{} (you)", p.name);
             let capacity_line = format!(
                 "capacity {} / cities {}",
                 capacity,

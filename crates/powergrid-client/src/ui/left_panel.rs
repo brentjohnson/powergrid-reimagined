@@ -90,14 +90,6 @@ fn draw_player_card(ui: &mut Ui, gs: &GameStateView, p: &Player, is_me: bool, ac
                             .monospace(),
                     );
                 }
-                if active {
-                    ui.label(
-                        RichText::new("◀ ACTIVE")
-                            .color(theme::NEON_AMBER)
-                            .small()
-                            .monospace(),
-                    );
-                }
             });
 
             // Cities + capacity row (single combined label — no width competition)
