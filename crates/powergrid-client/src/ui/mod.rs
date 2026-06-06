@@ -1,5 +1,5 @@
 mod event_log;
-mod helpers;
+pub(crate) mod helpers;
 mod left_panel;
 mod lobby;
 mod local_setup;

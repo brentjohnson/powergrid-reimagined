@@ -1,14 +1,22 @@
-use egui::{Color32, CornerRadius, FontFamily, FontId, Rect, Stroke, StrokeKind, Vec2};
-use powergrid_core::types::{PlantKind, PowerPlant};
+use egui::{
+    Color32, CornerRadius, FontFamily, FontId, Layout, Rect, RichText, Stroke, StrokeKind, Vec2,
+};
+use powergrid_core::types::{PlantKind, PowerPlant, Resource};
 
-use crate::theme;
+use crate::{
+    theme,
+    ui::helpers::{resource_color, resource_image},
+};
+
+const RES_ICON: f32 = 22.0;
+const RES_ICON_GAP: f32 = 1.5;
 
 // ---------------------------------------------------------------------------
 // Card dimensions
 // ---------------------------------------------------------------------------
 
-pub const CARD_W: f32 = 120.0;
-pub const CARD_H: f32 = 26.0;
+pub const CARD_W: f32 = 150.0;
+pub const CARD_H: f32 = 34.0;
 
 // ---------------------------------------------------------------------------
 // PlantKind color + label
@@ -22,17 +30,6 @@ fn kind_color(kind: PlantKind) -> Color32 {
         PlantKind::Gas => theme::CARD_GAS,
         PlantKind::Uranium => theme::CARD_URANIUM,
         PlantKind::Wind => theme::CARD_WIND,
-    }
-}
-
-fn kind_label(kind: PlantKind) -> &'static str {
-    match kind {
-        PlantKind::Coal => "COAL",
-        PlantKind::Oil => "OIL",
-        PlantKind::GasOrOil => "GAS/OIL",
-        PlantKind::Gas => "GAS",
-        PlantKind::Uranium => "URANIUM",
-        PlantKind::Wind => "WIND",
     }
 }
 
@@ -121,38 +118,56 @@ fn paint_card(
         num_box.center(),
         egui::Align2::CENTER_CENTER,
         plant.number.to_string(),
-        FontId::new(13.0, FontFamily::Monospace),
+        FontId::new(16.0, FontFamily::Monospace),
         theme::TEXT_BRIGHT,
     );
 
-    // Kind label — left of center, after number box
-    let label_x = num_box_w + 6.0 + rect.min.x;
-    let label_color = if nominated { Color32::BLACK } else { color };
-    painter.text(
-        egui::pos2(label_x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        kind_label(plant.kind),
-        FontId::new(9.0, FontFamily::Monospace),
-        label_color,
-    );
-
-    // Stats — right-aligned: "2 → 1" or "→ 1"
-    let stats = if plant.kind.needs_resources() {
-        format!("{} \u{2192} {}", plant.cost, plant.cities)
+    // Stats — right side: resource icons (cost × kind) then "→ cities"
+    let text_color = if nominated {
+        Color32::BLACK
     } else {
-        format!("\u{2192} {}", plant.cities)
+        theme::TEXT_MID
     };
-    painter.text(
-        egui::pos2(rect.max.x - 5.0, rect.center().y),
-        egui::Align2::RIGHT_CENTER,
-        stats,
-        FontId::new(9.0, FontFamily::Monospace),
-        if nominated {
-            Color32::BLACK
-        } else {
-            theme::TEXT_MID
-        },
-    );
+    let arrow_text = format!("\u{2192} {}", plant.cities);
+    let is_gas_oil = plant.kind == PlantKind::GasOrOil;
+
+    let right_rect = Rect::from_min_max(egui::pos2(rect.min.x + num_box_w, rect.min.y), rect.max);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(right_rect), |ui| {
+        ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = RES_ICON_GAP;
+            ui.label(
+                RichText::new(&arrow_text)
+                    .monospace()
+                    .size(11.0)
+                    .color(text_color),
+            );
+            if is_gas_oil {
+                // Each slot is a single forward-slash split icon: gas (top) / oil (bottom)
+                for _ in 0..plant.cost {
+                    let (slot_rect, _) =
+                        ui.allocate_exact_size(Vec2::splat(RES_ICON), egui::Sense::hover());
+                    draw_split_icon(ui, slot_rect, nominated);
+                }
+            } else {
+                let res_types = plant.kind.resources();
+                if !res_types.is_empty() {
+                    for i in (0..plant.cost as usize).rev() {
+                        let res = res_types[i % res_types.len()];
+                        let tint = if nominated {
+                            Color32::BLACK
+                        } else {
+                            resource_color(res)
+                        };
+                        ui.add(
+                            egui::Image::new(resource_image(res))
+                                .tint(tint)
+                                .fit_to_exact_size(Vec2::new(RES_ICON, RES_ICON)),
+                        );
+                    }
+                }
+            }
+        });
+    });
 
     // Discount token — "$1" in white centered horizontally, raised to upper half
     if discounted {
@@ -163,5 +178,107 @@ fn paint_card(
             FontId::new(15.0, FontFamily::Monospace),
             Color32::WHITE,
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid split icon
+// ---------------------------------------------------------------------------
+
+/// Draw a forward-slash `/` split icon in `rect`.
+///
+/// The upper-left triangle (above the diagonal) shows the **gas** icon; the
+/// lower-right triangle (below the diagonal) shows the **oil** icon.  Vertices:
+///   gas  triangle: TL, TR, BL   (UVs 0,0 / 1,0 / 0,1)
+///   oil  triangle: TR, BR, BL   (UVs 1,0 / 1,1 / 0,1)
+///
+/// When `nominated` both halves are tinted black; otherwise each uses its
+/// resource color (matching the behavior of single-resource icons).
+fn draw_split_icon(ui: &mut egui::Ui, rect: Rect, nominated: bool) {
+    let gas_tint = if nominated {
+        Color32::BLACK
+    } else {
+        resource_color(Resource::Gas)
+    };
+    let oil_tint = if nominated {
+        Color32::BLACK
+    } else {
+        resource_color(Resource::Oil)
+    };
+
+    let tl = rect.left_top();
+    let tr = rect.right_top();
+    let bl = rect.left_bottom();
+    let br = rect.right_bottom();
+
+    let gas_tex =
+        egui::Image::new(resource_image(Resource::Gas)).load_for_size(ui.ctx(), rect.size());
+    let oil_tex =
+        egui::Image::new(resource_image(Resource::Oil)).load_for_size(ui.ctx(), rect.size());
+
+    let painter = ui.painter_at(rect);
+
+    match (gas_tex, oil_tex) {
+        (
+            Ok(egui::load::TexturePoll::Ready { texture: gas }),
+            Ok(egui::load::TexturePoll::Ready { texture: oil }),
+        ) => {
+            // Gas: upper-left triangle — TL, TR, BL
+            let mut mesh = egui::Mesh::with_texture(gas.id);
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: tl,
+                uv: egui::pos2(0.0, 0.0),
+                color: gas_tint,
+            });
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: tr,
+                uv: egui::pos2(1.0, 0.0),
+                color: gas_tint,
+            });
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: bl,
+                uv: egui::pos2(0.0, 1.0),
+                color: gas_tint,
+            });
+            mesh.add_triangle(0, 1, 2);
+            painter.add(egui::Shape::mesh(mesh));
+
+            // Oil: lower-right triangle — TR, BR, BL
+            let mut mesh = egui::Mesh::with_texture(oil.id);
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: tr,
+                uv: egui::pos2(1.0, 0.0),
+                color: oil_tint,
+            });
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: br,
+                uv: egui::pos2(1.0, 1.0),
+                color: oil_tint,
+            });
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: bl,
+                uv: egui::pos2(0.0, 1.0),
+                color: oil_tint,
+            });
+            mesh.add_triangle(0, 1, 2);
+            painter.add(egui::Shape::mesh(mesh));
+        }
+        _ => {
+            // Textures not yet loaded — fall back to flat colored triangles so the
+            // slot still conveys the gas/oil split on the first frame.
+            let mut mesh = egui::Mesh::default();
+            mesh.colored_vertex(tl, gas_tint);
+            mesh.colored_vertex(tr, gas_tint);
+            mesh.colored_vertex(bl, gas_tint);
+            mesh.add_triangle(0, 1, 2);
+            painter.add(egui::Shape::mesh(mesh));
+
+            let mut mesh = egui::Mesh::default();
+            mesh.colored_vertex(tr, oil_tint);
+            mesh.colored_vertex(br, oil_tint);
+            mesh.colored_vertex(bl, oil_tint);
+            mesh.add_triangle(0, 1, 2);
+            painter.add(egui::Shape::mesh(mesh));
+        }
     }
 }
