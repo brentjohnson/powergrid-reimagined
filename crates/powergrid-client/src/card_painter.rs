@@ -46,6 +46,21 @@ pub fn draw_plant_card(ui: &mut egui::Ui, plant: &PowerPlant) -> egui::Response 
     draw_plant_card_ex(ui, plant, false, false)
 }
 
+/// Draw an empty plant slot (CARD_W × CARD_H) as a subtle grey outline, reserving the
+/// same space as a real plant card so player panels don't resize when plants are bought.
+pub fn draw_plant_placeholder(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(CARD_W, CARD_H), egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(3),
+            Stroke::new(1.0, Color32::from_gray(40)),
+            StrokeKind::Inside,
+        );
+    }
+    response
+}
+
 /// Like `draw_plant_card` but shows a discount badge when `discounted` is true.
 /// Pass `nominated = true` to render the card with the resource color as background
 /// (used to highlight the plant currently up for auction in the market column).

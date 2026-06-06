@@ -121,7 +121,8 @@
 
 * Sound when it's your turn
 * Fix city graph size
-
+* Bring back step number to first phase display
+* Animate player order in the first phase
 
 # To do...
 
@@ -135,7 +136,6 @@
 * More layout adjustments - get things to fit better in top bar
 * Show version number somewhere?
 * add resource icons to right of plant
-* animate turn order shuffle
 
 ## Game play
 
