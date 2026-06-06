@@ -166,6 +166,10 @@ pub struct AppState {
     pub peer_hints: PeerHints,
     // Tracks local selection changes for outgoing hint emission
     pub hint_tracker: LocalHintTracker,
+
+    /// Set to `true` when it transitions to being the local player's turn.
+    /// Consumed (and gated on online-only) by `PowerGridApp::update` in main.rs.
+    pub play_turn_sound: bool,
 }
 
 impl AppState {
@@ -266,6 +270,7 @@ impl AppState {
             phase_column_rects: [None; 4],
             top_panel_bottom: 0.0,
             left_panel_width: 220.0,
+            play_turn_sound: false,
         }
     }
 
@@ -436,6 +441,18 @@ impl AppState {
                 .collect();
             self.city_history.push(snapshot);
             self.last_recorded_round = view.round;
+        }
+
+        // Detect transition into "it's now my turn" for the turn-notification sound.
+        if let Some(my_id) = self.my_id {
+            let was_active = self
+                .game_state
+                .as_ref()
+                .map(|gs| crate::ui::is_active_player(gs, my_id))
+                .unwrap_or(false);
+            if !was_active && crate::ui::is_active_player(&view, my_id) {
+                self.play_turn_sound = true;
+            }
         }
 
         // Move to game screen on first state.

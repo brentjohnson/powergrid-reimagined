@@ -1,3 +1,4 @@
+mod audio;
 mod auth;
 mod card_painter;
 mod effects;
@@ -52,6 +53,7 @@ struct PowerGridApp {
     state: AppState,
     ws: Option<WsChannels>,
     local: Option<LocalHandle>,
+    audio: Option<audio::Audio>,
 }
 
 impl PowerGridApp {
@@ -60,6 +62,7 @@ impl PowerGridApp {
             state,
             ws: None,
             local: None,
+            audio: audio::Audio::new(),
         }
     }
 }
@@ -69,6 +72,14 @@ impl eframe::App for PowerGridApp {
         // Per-frame polling: drain background thread results before drawing.
         state::process_auth_events(&mut self.state);
         ws::process_ws_events(&mut self.state, self.ws.as_ref());
+
+        // Play the turn-notification sound once per transition into "it's my turn",
+        // but only in online (lobby) games — not local-vs-bots play.
+        if std::mem::take(&mut self.state.play_turn_sound) && self.local.is_none() {
+            if let Some(audio) = &self.audio {
+                audio.play_turn_sound();
+            }
+        }
 
         // Auto-connect for online play: trigger once when pending and not yet connected.
         if self.state.pending_connect && self.ws.is_none() {

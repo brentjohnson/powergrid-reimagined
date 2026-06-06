@@ -1,5 +1,6 @@
 mod event_log;
 mod helpers;
+pub(crate) use helpers::is_active_player;
 mod left_panel;
 mod lobby;
 mod local_setup;
