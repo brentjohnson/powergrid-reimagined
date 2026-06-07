@@ -36,9 +36,19 @@ pub struct AuctionWeights {
     /// from this plant)`. 0.0 disables opponent-aware bidding (easy/normal);
     /// >0.0 makes the bot pay extra to keep strong plants away from rivals.
     pub denial_weight: f32,
-    /// Weight on the fuel-risk penalty, applied as
-    /// `fuel_risk_weight × plant_fuel_scarcity × plant.cost × remaining_rounds`
-    /// — a thirsty plant on a scarce/contested resource is worth less in Elektro.
+    /// Weight on the operating-cost term, applied as `operating_cost_weight ×
+    /// fuel_feasibility × expected_firing_cost × remaining_rounds` — turns
+    /// gross income into net income by charging the plant's forward,
+    /// demand/replenishment-aware fuel spend over the rounds it actually runs
+    /// (the unfed rounds are priced separately, by `fuel_risk`). Without this,
+    /// a 1-coal plant and a thirstier 2-gas plant of equal capacity would be
+    /// valued identically — fuel type would be invisible (see `expected_firing_cost`).
+    pub operating_cost_weight: f32,
+    /// Weight on the fuel-risk penalty, applied as `fuel_risk_weight ×
+    /// (1 − fuel_feasibility) × remaining_rounds × (income_gain + fuel_price)`
+    /// — a thirsty plant the player likely can't keep fed is worth less in
+    /// Elektro, in proportion to the income it won't reliably earn and the
+    /// absolute cost of the fuel it burns (see `fuel_feasibility`).
     pub fuel_risk_weight: f32,
     /// Weight on the replacement-waste penalty: `replacement_waste_weight ×
     /// remaining_rounds × (income the discarded plant still contributes)`.
@@ -132,6 +142,7 @@ mod tests {
         assert_eq!(w.buildable_lookahead, 2);
         // Normal is opponent-blind: denial is a hard-only feature.
         assert_eq!(w.denial_weight, 0.0);
+        assert_eq!(w.operating_cost_weight, 1.0);
         assert_eq!(registry.normal.jitter, 0.3);
         assert_eq!(registry.normal.max_jitter, 3);
         assert_eq!(registry.normal.buy.fuel_reserve_multiplier, 4.0);
@@ -164,6 +175,10 @@ mod tests {
             &registry.normal.auction,
             &registry.hard.auction,
         );
+        // Net-income thinking is fundamental economics, not a sophistication
+        // tier — every difficulty nets fuel operating cost out the same way.
+        assert_eq!(easy.operating_cost_weight, normal.operating_cost_weight);
+        assert_eq!(normal.operating_cost_weight, hard.operating_cost_weight);
         // Harder bots price fuel risk and replacement waste more aggressively...
         assert!(easy.fuel_risk_weight <= normal.fuel_risk_weight);
         assert!(normal.fuel_risk_weight <= hard.fuel_risk_weight);

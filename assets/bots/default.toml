@@ -22,6 +22,7 @@ min_open_score      = 10.0   # lower = opens auctions on lower-value plants (les
 buildable_lookahead = 3      # cities beyond owned counted as "usefully planned for" (relaxed for easy)
 endgame_weight            = 5.0    # mild reward for capacity that closes the gap to end_game_cities
 denial_weight             = 0.0    # opponent-blind — no denial bidding
+operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
 fuel_risk_weight          = 1.0    # mild Elektro penalty for thirsty plants on scarce fuel
 replacement_waste_weight  = 0.5    # mild penalty for discarding a plant that still earns
 
@@ -52,6 +53,7 @@ min_open_score      = 20.0   # minimum PlantValue (Elektro) for a plant to be wo
 buildable_lookahead = 2      # cities beyond owned counted as "usefully planned for"
 endgame_weight            = 10.0   # reward for capacity that closes the gap to end_game_cities
 denial_weight             = 0.0    # opponent-blind — no denial bidding
+operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
 fuel_risk_weight          = 2.0    # Elektro penalty for thirsty plants on scarce/contested fuel
 replacement_waste_weight  = 1.0    # penalty for discarding a plant that still has income to earn
 
@@ -83,6 +85,7 @@ buildable_lookahead = 1      # very tight ceiling: only 1 city ahead of owned (p
 # Non-zero weights activate opponent/endgame awareness:
 endgame_weight            = 20.0   # strongly rewards capacity that closes the gap to end_game_cities
 denial_weight             = 0.35   # bids up plants that would meaningfully help the strongest opponent
+operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
 fuel_risk_weight          = 3.0    # strong Elektro penalty for thirsty plants on scarce/contested fuel
 replacement_waste_weight  = 1.5    # strong penalty for discarding a plant that still has income to earn
 

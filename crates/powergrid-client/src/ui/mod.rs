@@ -418,9 +418,9 @@ fn valuation_window(
 }
 
 /// Component breakdown for a single plant valuation — shown on cell hover.
-/// Mirrors the six signed terms of `PlantValuation` plus the floored total
+/// Mirrors the seven signed terms of `PlantValuation` plus the floored total
 /// (LOGIC.md's `PlantValue ≈ IncomeGain + FuelSavings + EndgameBonus +
-/// DenialBonus − FuelRisk − ReplacementWaste`).
+/// DenialBonus − OperatingCost − FuelRisk − ReplacementWaste`).
 fn valuation_breakdown(ui: &mut egui::Ui, v: &PlantValuation) {
     ui.set_width(230.0);
     let row = |ui: &mut egui::Ui, label: &str, value: f32, color: Color32| {
@@ -450,6 +450,7 @@ fn valuation_breakdown(ui: &mut egui::Ui, v: &PlantValuation) {
     row(ui, "Fuel savings", v.fuel_savings, theme::NEON_CYAN);
     row(ui, "Capacity premium", v.capacity_premium, theme::NEON_CYAN);
     row(ui, "Denial bonus", v.denial, theme::NEON_CYAN);
+    row(ui, "Operating cost", -v.operating_cost, theme::NEON_RED);
     row(ui, "Fuel risk", -v.fuel_risk, theme::NEON_RED);
     row(
         ui,

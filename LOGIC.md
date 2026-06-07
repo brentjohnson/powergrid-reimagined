@@ -415,6 +415,15 @@ Savings = 5/round
 FuelSavings = 20
 ```
 
+**Implementation note:** `FuelSavings` only fires when a purchase forces a discard
+(replacing one rack plant with another). Absent that, gross income alone would make a
+1-coal plant and a thirstier 2-gas plant of equal capacity look identical — fuel type
+would be invisible. So the bot also nets out an `OperatingCost` term: the plant's
+*forward*, demand-and-replenishment-aware fuel spend (`expected_firing_cost` — not just
+the table's current snapshot price, since several players draining a resource can outpace
+its refill rate) over the rounds `FuelFeasibility` says it'll actually run. This turns
+gross income into genuine net income, exactly the "Resource Efficiency" comparison in §1B.
+
 ---
 
 # 3. Capacity Premium
@@ -545,6 +554,16 @@ Consume 3 coal.
 
 Risk = 36
 ```
+
+**Implementation note:** rather than forecasting future prices directly, the bot
+estimates *feasibility* — the fraction of remaining rounds it could realistically keep
+a plant fed, given replenishment split fairly among every player burning that resource,
+plus the market's existing stock drawn down over the rounds left, against the player's
+total demand on that resource (existing rack + the candidate). The unfed fraction
+(`1 - feasibility`) then prices the risk as forgone income plus the resource's *current*
+absolute price — so a thirsty plant on a scarce, dear, contested resource (uranium late
+in the game is the canonical case) is penalized hard, while plants on flush, uncontested
+fuels carry no penalty at all.
 
 ---
 

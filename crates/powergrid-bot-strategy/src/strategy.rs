@@ -652,8 +652,8 @@ mod tests {
 
     use crate::{
         features::{
-            auction_reserve, estimate_firing_cost, evaluate_plant, fuel_scarcity,
-            plant_fuel_scarcity, remaining_rounds, useful_city_target,
+            auction_reserve, estimate_firing_cost, evaluate_plant, expected_firing_cost,
+            fuel_feasibility, remaining_rounds, useful_city_target,
         },
         profile::default_registry,
     };
@@ -1297,92 +1297,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Resource-scarcity tests
+    // Fuel-feasibility / fuel-risk tests
     // -----------------------------------------------------------------------
-
-    /// Build a 1-player state and give that player coal plants so total coal
-    /// demand exceeds the 1-player (≈6-player) replenishment of 7/round.
-    fn state_with_coal_demand(demand_cost: u8) -> GameState {
-        let player = bot_with_money(100);
-        let mut state = state_with_player(&player);
-        // Give the single player a coal plant that burns `demand_cost` units.
-        state.players[0].plants.push(coal_plant(20, demand_cost, 3));
-        state
-    }
-
-    #[test]
-    fn fuel_scarcity_rises_with_lower_availability() {
-        // demand=10 > replen_coal=7 (step 1, 1 player → "6-player" bracket) → shortfall=3.
-        // scarcity = shortfall / (avail + replen + 1).  Lower avail → lower denominator → higher.
-        let mut state = state_with_coal_demand(10);
-
-        state.resources.coal = 23; // flush market
-        let flush = fuel_scarcity(&state, Resource::Coal);
-
-        state.resources.coal = 3; // depleted market
-        let scarce = fuel_scarcity(&state, Resource::Coal);
-
-        assert!(
-            scarce > flush,
-            "scarcity should rise when availability drops: flush={flush:.3} scarce={scarce:.3}"
-        );
-    }
-
-    #[test]
-    fn fuel_scarcity_rises_with_higher_demand() {
-        let player = bot_with_money(100);
-        let mut state = state_with_player(&player);
-        state.resources.coal = 10;
-
-        // No coal plants → demand=0, shortfall=0, scarcity=0.
-        let low = fuel_scarcity(&state, Resource::Coal);
-
-        // Add a high-demand coal plant (cost=20 > replen=7).
-        state.players[0].plants.push(coal_plant(20, 20, 3));
-        let high = fuel_scarcity(&state, Resource::Coal);
-
-        assert!(
-            high > low,
-            "scarcity should rise when demand exceeds replenishment: low={low:.3} high={high:.3}"
-        );
-    }
-
-    #[test]
-    fn hybrid_demand_splits_gas_oil_not_coal() {
-        // A GasOrOil hybrid should add demand to gas and oil but NOT to coal.
-        // We set coal very low — if hybrid mistakenly contributed coal demand,
-        // coal scarcity would be nonzero (demand would exceed replenishment).
-        let player = bot_with_money(100);
-        let mut state = state_with_player(&player);
-
-        // Add a hybrid plant with high cost so demand/2 exceeds replen for both gas and oil.
-        // replen_gas=3, replen_oil=5 (1-player → "6-player" bracket, step 1).
-        // cost=14 → gas_demand=7 > 3, oil_demand=7 > 5.  Coal demand stays 0.
-        state.players[0].plants.push(PowerPlant {
-            number: 10,
-            kind: PlantKind::GasOrOil,
-            cost: 14,
-            cities: 2,
-        });
-        state.resources.coal = 1; // very scarce — would drive coal scarcity up if demand existed
-
-        let coal_sc = fuel_scarcity(&state, Resource::Coal);
-        let gas_sc = fuel_scarcity(&state, Resource::Gas);
-        let oil_sc = fuel_scarcity(&state, Resource::Oil);
-
-        assert_eq!(
-            coal_sc, 0.0,
-            "hybrid plant must not contribute to coal demand (scarcity={coal_sc:.4})"
-        );
-        assert!(
-            gas_sc > 0.0,
-            "hybrid must contribute to gas demand (scarcity={gas_sc:.4})"
-        );
-        assert!(
-            oil_sc > 0.0,
-            "hybrid must contribute to oil demand (scarcity={oil_sc:.4})"
-        );
-    }
 
     #[test]
     fn scarce_fuel_lowers_plant_value_via_fuel_risk() {
@@ -1423,17 +1339,19 @@ mod tests {
         );
     }
 
-    /// Regression test: a thirsty candidate plant's *own* fuel demand must factor
-    /// into its fuel-scarcity penalty, not just demand from plants the player(s)
-    /// already own. Before this fix, `fuel_scarcity` only summed demand across
-    /// `state.players[..].plants` — so a not-yet-owned 2-uranium candidate looked
-    /// just as safe as a flush-market plant even when uranium replenishes at 1/round
-    /// and only 2 units remain, because its own appetite never entered the shortfall.
+    /// Regression test for the reported bug: a thirsty candidate plant's *own*
+    /// fuel appetite must weigh against it — not just demand from plants the
+    /// player(s) already own (during an auction the candidate isn't in anyone's
+    /// rack yet). `fuel_feasibility` → `resource_feasibility` folds the
+    /// candidate's own `per_round_demand` directly into the `demand` side of its
+    /// sustainable-vs-needed ratio, so a not-yet-owned 2-uranium candidate is
+    /// correctly seen as hard to keep fed when uranium replenishes at 1/round,
+    /// the market holds only 2, and a competitor already burns uranium too.
     ///
-    /// Scenario mirrors the reported bug: round-3-ish, 4 players (uranium replen=1
-    /// at step 1), an opponent already owns a 1-uranium plant, and the market holds
-    /// only 2 uranium. A 2-uranium candidate should now carry a real fuel_risk
-    /// penalty and be valued below the same plant in a flush uranium market.
+    /// Scenario mirrors the report: round-3-ish, 4 players (uranium replen=1 at
+    /// step 1), an opponent already owns a 1-uranium plant, and the market holds
+    /// only 2 uranium. The candidate should now carry a real `fuel_risk` penalty
+    /// and be valued below the same plant in a flush, uncontested uranium market.
     #[test]
     fn thirsty_candidate_plant_demand_counts_toward_its_own_fuel_risk() {
         let player = bot_with_money(200);
@@ -1480,7 +1398,7 @@ mod tests {
     fn wind_plant_value_unaffected_by_fuel_scarcity() {
         // Even with all resources depleted and heavy fuel demand, a Wind plant's
         // fuel_risk (and thus total value) should be identical — it burns no fuel
-        // (plant_fuel_scarcity returns 0.0).
+        // (fuel_feasibility returns 1.0 unconditionally for Wind).
         //
         // The demand is placed on a SECOND player so the scored player's `plants`
         // vector (which drives capacity_bump / income projections) is the same in
@@ -1524,10 +1442,10 @@ mod tests {
     }
 
     #[test]
-    fn plant_fuel_scarcity_wind_is_zero() {
+    fn fuel_feasibility_wind_is_one() {
         let player = bot_with_money(100);
         let mut state = state_with_player(&player);
-        // Deplete everything to make the test maximally sensitive.
+        // Deplete everything and pile on demand to make the test maximally sensitive.
         state.resources.coal = 0;
         state.resources.gas = 0;
         state.resources.oil = 0;
@@ -1541,9 +1459,311 @@ mod tests {
             cities: 2,
         };
         assert_eq!(
-            plant_fuel_scarcity(&wind, &state),
-            0.0,
-            "Wind plants have zero fuel scarcity by definition"
+            fuel_feasibility(&wind, &state.players[0], &state),
+            1.0,
+            "Wind plants are always fully feasible — they burn no fuel"
+        );
+    }
+
+    #[test]
+    fn feasibility_drops_with_competition() {
+        // The reported scenario, isolated to `fuel_feasibility`: a 2-uranium
+        // candidate should look fully feasible in an uncontested, flush market,
+        // but become clearly infeasible once uranium is nearly depleted (replen
+        // is only 1/round) and a competitor is already drawing on the same pool.
+        let player = bot_with_money(100);
+        let candidate = uranium_plant(30, 2, 3);
+
+        let mut state_flush = state_with_player(&player);
+        state_flush.resources.uranium = 12;
+        let flush = fuel_feasibility(&candidate, &state_flush.players[0], &state_flush);
+        assert_eq!(flush, 1.0, "uncontested + flush uranium → fully feasible");
+
+        let mut state_tight = state_with_player(&player);
+        state_tight.resources.uranium = 2;
+        let mut opponent = bot_with_money(100);
+        opponent.plants.push(uranium_plant(31, 1, 2));
+        state_tight.players.push(opponent);
+        let tight = fuel_feasibility(&candidate, &state_tight.players[0], &state_tight);
+
+        assert!(
+            tight < 1.0,
+            "contested, nearly-empty, slow-replenishing uranium should reduce \
+             feasibility below 1.0, got {tight:.3}"
+        );
+    }
+
+    #[test]
+    fn feasibility_accounts_for_owned_demand() {
+        // `resource_feasibility` weighs the candidate's demand *plus* whatever
+        // the player's existing rack already draws from the same pool — a player
+        // already running a heavy coal plant can't treat a second one as "fully
+        // fed" just because the new plant alone would fit the fair share.
+        let candidate = coal_plant(40, 3, 2);
+
+        let empty_player = bot_with_money(100);
+        let state_empty = state_with_player(&empty_player);
+        let empty_feas = fuel_feasibility(&candidate, &state_empty.players[0], &state_empty);
+
+        let mut laden_player = bot_with_money(100);
+        laden_player.plants.push(coal_plant(20, 20, 3)); // already burns 20 coal/round
+        let state_laden = state_with_player(&laden_player);
+        let laden_feas = fuel_feasibility(&candidate, &state_laden.players[0], &state_laden);
+
+        assert!(
+            laden_feas < empty_feas,
+            "a player already drawing heavily on coal should see lower feasibility \
+             for a new coal plant than a player with an empty rack: \
+             laden={laden_feas:.3} empty={empty_feas:.3}"
+        );
+    }
+
+    #[test]
+    fn hybrid_feasibility_uses_easier_pool() {
+        // A hybrid sources from whichever of gas/oil is easier — mirrors
+        // `estimate_firing_cost`'s "prefer the more-available resource". With oil
+        // empty but gas maxed out, the hybrid's gas-side draw is fully sustainable
+        // (its `max` over the two pools lands at 1.0), so it escapes the empty oil
+        // pool entirely. A pure-oil plant with the same per-pool demand has no such
+        // escape and is throttled by oil's fair share alone.
+        let player = bot_with_money(100);
+        let mut state = state_with_player(&player);
+        state.resources.gas = 24; // maxed out — gas_sustainable lands exactly at 6/round
+        state.resources.oil = 0; // empty — oil_sustainable is just its fair share, 5/round
+
+        let hybrid = hybrid_plant(40, 12, 3); // 6 gas + 6 oil demand if split evenly
+        let pure_oil = PowerPlant {
+            number: 41,
+            kind: PlantKind::Oil,
+            cost: 6, // matches the hybrid's oil-side demand
+            cities: 3,
+        };
+
+        let hybrid_feas = fuel_feasibility(&hybrid, &state.players[0], &state);
+        let oil_feas = fuel_feasibility(&pure_oil, &state.players[0], &state);
+
+        assert!(
+            hybrid_feas > oil_feas,
+            "hybrid should escape the empty oil pool by sourcing fully-sustainable gas \
+             instead, while a pure-oil plant of equal per-pool demand stays throttled: \
+             hybrid={hybrid_feas:.3} pure_oil={oil_feas:.3}"
+        );
+        assert_eq!(
+            hybrid_feas, 1.0,
+            "hybrid should be fully fed via the maxed gas pool"
+        );
+        assert!(
+            oil_feas < 1.0,
+            "pure oil plant should be throttled by oil's fair share alone"
+        );
+    }
+
+    /// Pin the `fuel_risk` formula — `fuel_risk_weight × (1 - feasibility) ×
+    /// remaining_rounds × (income_gain + fuel_price)` — by hand-deriving every
+    /// term from its own public building block (`fuel_feasibility`,
+    /// `remaining_rounds`, `estimate_firing_cost`, and `capacity_bump` +
+    /// `useful_city_target` + `income_for` for `income_gain`) and checking
+    /// `evaluate_plant` agrees. This is what proves the two factors this phase
+    /// adds — *absolute fuel price* and *replenishment-vs-competition
+    /// feasibility* — are actually wired into the valuation, not merely computed
+    /// and discarded.
+    #[test]
+    fn fuel_risk_reflects_feasibility_and_absolute_price() {
+        let player = bot_with_money(200);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let candidate = uranium_plant(30, 2, 3);
+
+        // The reported scenario — both feasibility and absolute price should bite.
+        let mut state = state_with_player(&player);
+        state.resources.uranium = 2;
+        let mut opponent = bot_with_money(100);
+        opponent.plants.push(uranium_plant(31, 1, 2));
+        state.players.push(opponent);
+
+        let me = &state.players[0];
+        let valuation = evaluate_plant(&candidate, me, &state, w);
+
+        let feasibility = fuel_feasibility(&candidate, me, &state);
+        let rounds = remaining_rounds(&state);
+        let fuel_price = estimate_firing_cost(&candidate, &state.resources) as f32;
+
+        // Hand-reproduce `projected_income_gain`'s `income_gain` from public parts.
+        let bump = capacity_bump(&candidate, me);
+        let target = useful_city_target(me, &state, w) as i32;
+        let current_capacity: i32 = me.plants.iter().map(|p| p.cities as i32).sum();
+        let old_powered = current_capacity.clamp(0, target) as u8;
+        let new_powered = (current_capacity + bump).clamp(0, target) as u8;
+        let income_gain = income_for(new_powered) as f32 - income_for(old_powered) as f32;
+
+        assert!(feasibility < 1.0, "sanity: scenario should be infeasible");
+        assert!(
+            fuel_price > 0.0,
+            "sanity: uranium should carry a real price here"
+        );
+
+        let expected =
+            w.fuel_risk_weight * (1.0 - feasibility) * rounds * (income_gain + fuel_price);
+        assert!(
+            (valuation.fuel_risk - expected).abs() < 0.05,
+            "fuel_risk should equal fuel_risk_weight × (1 - feasibility) × rounds × \
+             (income_gain + fuel_price): got {:.3}, expected {:.3} (feasibility={:.3}, \
+             rounds={}, fuel_price={}, income_gain={})",
+            valuation.fuel_risk,
+            expected,
+            feasibility,
+            rounds,
+            fuel_price,
+            income_gain,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Operating-cost tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cheaper_fuel_out_values_pricier_same_capacity() {
+        // Reproduces the reported bug: at the opening, every one-city plant
+        // scored identically because gross income was the only signal — fuel
+        // type was invisible. A 1-coal plant should clearly out-value a
+        // thirstier 2-gas plant of the same capacity once the forward fuel
+        // spend is netted out of gross income.
+        let player = bot_with_money(100);
+        let state = state_with_player(&player);
+        let me = &state.players[0];
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let coal_candidate = coal_plant(50, 1, 1);
+        let gas_candidate = gas_plant(51, 2, 1);
+
+        let coal_val = evaluate_plant(&coal_candidate, me, &state, w);
+        let gas_val = evaluate_plant(&gas_candidate, me, &state, w);
+
+        assert_eq!(
+            coal_val.incremental_income, gas_val.incremental_income,
+            "sanity: both plants gain the same single city, so gross income \
+             should be identical — the only thing that should differ is fuel cost"
+        );
+        assert!(
+            coal_val.operating_cost < gas_val.operating_cost,
+            "a 1-coal plant should be cheaper to run than a thirstier 2-gas \
+             plant: coal={:.1} gas={:.1}",
+            coal_val.operating_cost,
+            gas_val.operating_cost
+        );
+        assert!(
+            coal_val.total > gas_val.total,
+            "the cheaper-to-fire coal plant should out-value the pricier gas \
+             plant of equal capacity — fuel type should matter: \
+             coal={:.1} gas={:.1}",
+            coal_val.total,
+            gas_val.total
+        );
+    }
+
+    #[test]
+    fn operating_cost_zero_for_wind() {
+        // Wind burns no fuel — `expected_firing_cost` and `operating_cost`
+        // should both be zero regardless of weight or market state.
+        let player = bot_with_money(100);
+        let state = state_with_player(&player);
+        let me = &state.players[0];
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let wind = PowerPlant {
+            number: 52,
+            kind: PlantKind::Wind,
+            cost: 0,
+            cities: 1,
+        };
+
+        assert_eq!(expected_firing_cost(&wind, &state), 0.0);
+        assert_eq!(evaluate_plant(&wind, me, &state, w).operating_cost, 0.0);
+    }
+
+    #[test]
+    fn operating_cost_rises_with_market_demand() {
+        // `expected_firing_cost` should see further than `estimate_firing_cost`'s
+        // snapshot: the same candidate, in markets that start *identically*
+        // priced, costs more to keep fed on average once several opponents are
+        // already racing to burn the same fuel and out-pace its replenishment —
+        // the forward-looking demand/replenishment effect the absolute-price
+        // model lacked before.
+        let player = bot_with_money(100);
+        let candidate = coal_plant(50, 3, 2);
+
+        let state_uncontested = state_with_player(&player);
+        let mut state_contested = state_with_player(&player);
+        for n in 0..2u8 {
+            let mut rival = bot_with_money(100);
+            rival.plants.push(coal_plant(60 + n, 10, 3));
+            state_contested.players.push(rival);
+        }
+
+        // Both markets start at the same stock, so the snapshot price matches —
+        // any difference below comes purely from simulating the market forward.
+        assert_eq!(
+            estimate_firing_cost(&candidate, &state_uncontested.resources),
+            estimate_firing_cost(&candidate, &state_contested.resources),
+            "sanity: both states start with identical market stock and price"
+        );
+
+        let forward_uncontested = expected_firing_cost(&candidate, &state_uncontested);
+        let forward_contested = expected_firing_cost(&candidate, &state_contested);
+
+        assert!(
+            forward_contested > forward_uncontested,
+            "heavier market-wide demand on the same fuel should drive the \
+             forward-looking price above the uncontested case, even though \
+             both markets start identically: uncontested={forward_uncontested:.2} \
+             contested={forward_contested:.2}"
+        );
+    }
+
+    #[test]
+    fn operating_cost_reflects_feasibility_and_forward_price() {
+        // Pin the `operating_cost` formula: `operating_cost_weight ×
+        // fuel_feasibility × expected_firing_cost × remaining_rounds`. The
+        // `feasibility` factor is what makes this partition cleanly with
+        // `fuel_risk` — a plant that can only be kept fed `feasibility` of the
+        // time is charged fuel for that fraction of the game only; the rest is
+        // priced as lost income + dearness by `fuel_risk` instead, with no
+        // double-count.
+        let player = bot_with_money(200);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let candidate = uranium_plant(30, 2, 3);
+        let mut state = state_with_player(&player);
+        state.resources.uranium = 2;
+        let mut opponent = bot_with_money(100);
+        opponent.plants.push(uranium_plant(31, 1, 2));
+        state.players.push(opponent);
+
+        let me = &state.players[0];
+        let valuation = evaluate_plant(&candidate, me, &state, w);
+
+        let feasibility = fuel_feasibility(&candidate, me, &state);
+        let rounds = remaining_rounds(&state);
+        let forward_price = expected_firing_cost(&candidate, &state);
+
+        assert!(feasibility < 1.0, "sanity: scenario should be infeasible");
+
+        let expected = w.operating_cost_weight * feasibility * forward_price * rounds;
+        assert!(
+            (valuation.operating_cost - expected).abs() < 0.05,
+            "operating_cost should equal operating_cost_weight × feasibility × \
+             expected_firing_cost × rounds: got {:.3}, expected {:.3} \
+             (feasibility={:.3}, forward_price={:.3}, rounds={})",
+            valuation.operating_cost,
+            expected,
+            feasibility,
+            forward_price,
+            rounds,
         );
     }
 

@@ -23,25 +23,50 @@ pub fn plant_score(plant: &PowerPlant) -> f32 {
 // Resource-market helpers
 // ---------------------------------------------------------------------------
 
-/// Per-round fuel pressure for one resource, roughly in [0, 1+].
+/// Per-round fuel demand a plant places on `resource`.
 ///
-/// Combines three factors the user requested:
-/// - **availability**: low market stock → denominator shrinks → scarcity rises
-/// - **demand**: total units all players' plants need each round → shortfall rises
-/// - **replenishment rate**: at this step/player-count → shortfall rises when slow
-///
-/// `GasOrOil` hybrids contribute `plant.cost / 2` to *each* of gas and oil
-/// (caller is responsible for choosing which resource to query).
-pub fn fuel_scarcity(state: &GameState, resource: Resource) -> f32 {
-    fuel_scarcity_with_extra(state, resource, 0.0)
+/// - Wind, and pure-fuel plants that don't burn `resource` → 0
+/// - `GasOrOil` hybrids split `cost / 2` between gas and oil — the balanced-load
+///   assumption `decide_buy_resources` follows when both pools are healthy
+/// - Matching pure-fuel plants → their full `cost`
+fn per_round_demand(plant: &PowerPlant, resource: Resource) -> f32 {
+    let cost = plant.cost as f32;
+    match plant.kind {
+        PlantKind::GasOrOil => match resource {
+            Resource::Gas | Resource::Oil => cost / 2.0,
+            _ => 0.0,
+        },
+        _ => {
+            if plant.kind.resources().contains(&resource) {
+                cost
+            } else {
+                0.0
+            }
+        }
+    }
 }
 
-/// `fuel_scarcity`, plus an `extra_demand` (in fuel units/round) folded into the
-/// shortfall before scoring. Lets a not-yet-owned candidate plant's own appetite
-/// be weighed against the existing market — see `plant_fuel_scarcity`, which is
-/// the only caller that passes a nonzero `extra_demand`.
-fn fuel_scarcity_with_extra(state: &GameState, resource: Resource, extra_demand: f32) -> f32 {
-    let avail = state.resources.available(resource) as f32;
+/// Fraction of the remaining game, in `[0, 1]`, that `player` could realistically
+/// keep `plant` (plus any rack-mates sharing its fuel) supplied with `resource`.
+///
+/// Two supply streams feed the player each round:
+/// - **fair share of replenishment**: the per-round restock split evenly among
+///   every player who burns this resource (this player included)
+/// - **drawdown of existing market stock**: spread evenly over the rounds left
+///
+/// weighed against **total demand**: the candidate's own appetite *plus* everything
+/// the player already owns that draws on the same resource — a player running a
+/// heavy coal plant can't treat a second one as "fully fed" just because the new
+/// plant alone would fit inside the fair share.
+///
+/// `1.0` when there's no demand on this resource at all (e.g. the unused half of
+/// a hybrid's pool, or any plant that doesn't burn it).
+fn resource_feasibility(
+    plant: &PowerPlant,
+    player: &Player,
+    state: &GameState,
+    resource: Resource,
+) -> f32 {
     let (coal_r, oil_r, gas_r, uranium_r) = replenishment_amounts(state.step, state.players.len());
     let replen = match resource {
         Resource::Coal => coal_r,
@@ -50,62 +75,60 @@ fn fuel_scarcity_with_extra(state: &GameState, resource: Resource, extra_demand:
         Resource::Uranium => uranium_r,
     } as f32;
 
-    // Sum per-round demand across every player's installed plants.
-    let mut demand = extra_demand;
-    for player in &state.players {
-        for plant in &player.plants {
-            let cost = plant.cost as f32;
-            match plant.kind {
-                // Hybrid splits half/half between gas and oil.
-                PlantKind::GasOrOil => match resource {
-                    Resource::Gas | Resource::Oil => demand += cost / 2.0,
-                    _ => {}
-                },
-                // Pure-fuel plant: only contributes if its resource matches.
-                _ => {
-                    if plant.kind.resources().contains(&resource) {
-                        demand += cost;
-                    }
-                }
-            }
-        }
-    }
+    // This player plus everyone else whose rack draws on `resource` — they all
+    // compete for the same replenishment stream.
+    let competitors = 1.0
+        + state
+            .players
+            .iter()
+            .filter(|p| p.id != player.id)
+            .filter(|p| {
+                p.plants
+                    .iter()
+                    .any(|owned| per_round_demand(owned, resource) > 0.0)
+            })
+            .count() as f32;
+    let fair_share = replen / competitors;
 
-    let shortfall = (demand - replen).max(0.0);
-    // Denominator +1 prevents division by zero when both avail and replen are 0.
-    shortfall / (avail + replen + 1.0)
+    let rounds = remaining_rounds(state);
+    let market_drawdown = state.resources.available(resource) as f32 / rounds;
+    let sustainable = fair_share + market_drawdown;
+
+    let demand = per_round_demand(plant, resource)
+        + player
+            .plants
+            .iter()
+            .map(|owned| per_round_demand(owned, resource))
+            .sum::<f32>();
+
+    if demand <= 0.0 {
+        1.0
+    } else {
+        (sustainable / demand).clamp(0.0, 1.0)
+    }
 }
 
-/// Fuel scarcity for the resource a specific plant would burn — *including that
-/// plant's own per-round demand* in the shortfall. This matters most for a candidate
-/// being evaluated in an auction: it isn't in `state.players[..].plants` yet, so
-/// without folding its appetite in here, `fuel_scarcity` would be blind to the very
-/// thing that makes a thirsty plant risky (e.g. a 2-uranium plant when uranium
-/// replenishes at 1/round and the market is nearly empty would otherwise score 0).
+/// How reliably `player` could keep `plant` fueled for the rest of the game, in
+/// `[0, 1]` (`1.0` = always fed, `0.0` = essentially never). Feeds the fuel-risk
+/// term of `evaluate_plant`: a thirsty plant on a contested, slow-replenishing
+/// resource is worth less than its raw income suggests, because that income won't
+/// reliably materialize.
 ///
-/// - Wind (no fuel) → 0.0
-/// - `GasOrOil` → min(gas_scarcity, oil_scarcity), each charged half the plant's
-///   cost as extra demand (mirrors the hybrid split `fuel_scarcity` already applies
-///   to owned plants): the bot will buy whichever is cheaper, so use the easier
-///   resource's pressure.
-/// - All other kinds → scarcity of their single resource, charged the full cost.
-pub fn plant_fuel_scarcity(plant: &PowerPlant, state: &GameState) -> f32 {
+/// - Wind → `1.0` (nothing to run out of)
+/// - `GasOrOil` → the better of its two pools — the bot sources from whichever is
+///   easier (mirrors `estimate_firing_cost`'s "prefer the more-available resource")
+/// - All other kinds → feasibility of their single resource
+pub fn fuel_feasibility(plant: &PowerPlant, player: &Player, state: &GameState) -> f32 {
     match plant.kind {
-        PlantKind::Wind => 0.0,
-        PlantKind::GasOrOil => {
-            let half = plant.cost as f32 / 2.0;
-            fuel_scarcity_with_extra(state, Resource::Gas, half).min(fuel_scarcity_with_extra(
-                state,
-                Resource::Oil,
-                half,
-            ))
-        }
+        PlantKind::Wind => 1.0,
+        PlantKind::GasOrOil => resource_feasibility(plant, player, state, Resource::Gas)
+            .max(resource_feasibility(plant, player, state, Resource::Oil)),
         _ => plant
             .kind
             .resources()
             .first()
-            .map(|&r| fuel_scarcity_with_extra(state, r, plant.cost as f32))
-            .unwrap_or(0.0),
+            .map(|&r| resource_feasibility(plant, player, state, r))
+            .unwrap_or(1.0),
     }
 }
 
@@ -150,6 +173,57 @@ pub fn estimate_firing_cost(plant: &PowerPlant, market: &ResourceMarket) -> u32 
     let shortfall = amount.saturating_sub(avail) as u32;
     // 9 is the maximum per-unit price across all resource price tables.
     avail_cost + shortfall * 9
+}
+
+/// Average elektro it would cost to fire `plant` per round, simulated forward
+/// over the rest of the game as every player's rack draws the market down each
+/// round and `replenishment_amounts` refills it.
+///
+/// `estimate_firing_cost` alone only sees a *snapshot* — a coal plant looks
+/// cheap at the table's current price even if five players are about to drain
+/// it dry. This walks the market forward `remaining_rounds` times: each round,
+/// price one firing at the current table, then drain it by total per-round
+/// demand (every player's rack plus this candidate, balanced-split for
+/// hybrids — the same model `fuel_feasibility` uses) and replenish it. A
+/// plentiful, lightly-contested fuel stays near its cheap snapshot price the
+/// whole way; a contested, slow-refilling one drifts toward the table's
+/// expensive end, and the average reflects that forward dearness. Market-wide,
+/// so it doesn't depend on which player is asking.
+pub fn expected_firing_cost(plant: &PowerPlant, state: &GameState) -> f32 {
+    if !plant.kind.needs_resources() {
+        return 0.0;
+    }
+
+    let rounds = (remaining_rounds(state).round() as usize).max(1);
+    let (coal_r, oil_r, gas_r, uranium_r) = replenishment_amounts(state.step, state.players.len());
+    let mut market = state.resources.clone();
+    let mut total = 0.0f32;
+
+    for _ in 0..rounds {
+        total += estimate_firing_cost(plant, &market) as f32;
+
+        for (resource, replen) in [
+            (Resource::Coal, coal_r),
+            (Resource::Oil, oil_r),
+            (Resource::Gas, gas_r),
+            (Resource::Uranium, uranium_r),
+        ] {
+            // Total per-round draw on `resource`: every player's rack (this
+            // player's included) plus the candidate the player is evaluating.
+            let demand = per_round_demand(plant, resource)
+                + state
+                    .players
+                    .iter()
+                    .flat_map(|p| p.plants.iter())
+                    .map(|owned| per_round_demand(owned, resource))
+                    .sum::<f32>();
+            let drain = (demand.round() as u8).min(market.available(resource));
+            market.take(resource, drain);
+            market.replenish(resource, replen);
+        }
+    }
+
+    total / rounds as f32
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +284,7 @@ pub fn should_skip_auction(
 // they can be summed, compared, and used directly as a bid ceiling:
 //
 //     PlantValue ≈ IncrementalIncome + FuelSavings + CapacityPremium + Denial
-//                   - FuelRisk - ReplacementWaste
+//                   - OperatingCost - FuelRisk - ReplacementWaste
 //     MaximumBid  = PlantValue
 
 /// Rough estimate of how many productive rounds remain before the game ends.
@@ -316,13 +390,22 @@ pub struct PlantValuation {
     /// Value of denying the plant to the opponent who'd benefit most from it.
     /// Zero unless `denial_weight > 0` (hard-only). (LOGIC.md §7 "Denial Value")
     pub denial: f32,
-    /// Penalty for relying on fuel that's scarce, contested, or slow to
-    /// replenish. (LOGIC.md §6 "Resource Risk")
+    /// Expected fuel spend over the rounds the plant will actually run —
+    /// `expected_firing_cost` (a forward, demand/replenishment-aware price)
+    /// times the fed fraction of the remaining game (`fuel_feasibility`).
+    /// Turns gross income into *net* income: a 1-coal plant and a 2-gas plant
+    /// powering the same city are no longer worth the same. Zero for Wind.
+    /// (LOGIC.md §2 "Fuel Savings" / "Resource Efficiency")
+    pub operating_cost: f32,
+    /// Penalty for relying on fuel the player likely can't keep supplied — the
+    /// expected income and fuel-cost exposure of the rounds `fuel_feasibility`
+    /// says will go unfed. Zero on flush, uncontested markets (or Wind).
+    /// (LOGIC.md §6 "Resource Risk")
     pub fuel_risk: f32,
     /// Value thrown away on a forced full-rack discard of a plant that still had
     /// useful income left to earn. (LOGIC.md §8 "Replacement Waste")
     pub replacement_waste: f32,
-    /// Sum of every positive term above minus `fuel_risk` and
+    /// Sum of every positive term above minus `operating_cost`, `fuel_risk` and
     /// `replacement_waste`, floored at 0 — a plant is never worth bidding
     /// *negative* Elektro for.
     pub total: f32,
@@ -378,8 +461,37 @@ pub fn evaluate_plant(
         0.0
     };
 
+    // Shared between the two fuel terms below: the fraction of the remaining
+    // game the plant can realistically be kept fed.
+    let feasibility = if plant.kind.needs_resources() {
+        fuel_feasibility(plant, player, state)
+    } else {
+        1.0
+    };
+
+    // Gross income alone overstates a plant's worth — running it costs fuel.
+    // Charge the forward, demand/replenishment-aware price (`expected_firing_cost`,
+    // not just the table snapshot) over the *fed* rounds only — the unfed rounds
+    // are already priced into `fuel_risk` below, so the two terms partition the
+    // game's rounds with no double-count. This is what makes a 1-coal plant
+    // worth more than an equal-capacity 2-gas plant: net, not gross, income.
+    let operating_cost = if plant.kind.needs_resources() {
+        let per_round = expected_firing_cost(plant, state);
+        w.operating_cost_weight * feasibility * per_round * rounds
+    } else {
+        0.0
+    };
+
+    // Penalize plants whose fuel the player likely can't keep flowing — weighted
+    // value-at-risk over the rounds `fuel_feasibility` says will go unfed:
+    // the income those rounds would have earned, plus the absolute cost of the
+    // fuel itself (so a thirsty plant on a *dear*, scarce resource — e.g. uranium
+    // at ~9 Elektro/unit — is penalized harder than an equally infeasible one on
+    // a cheap resource). Zero on flush/uncontested markets, where feasibility is 1.
     let fuel_risk = if plant.kind.needs_resources() {
-        w.fuel_risk_weight * plant_fuel_scarcity(plant, state) * plant.cost as f32 * rounds
+        let infeasibility = 1.0 - feasibility;
+        let fuel_price = estimate_firing_cost(plant, &state.resources) as f32;
+        w.fuel_risk_weight * infeasibility * rounds * (income_gain + fuel_price)
     } else {
         0.0
     };
@@ -397,6 +509,7 @@ pub fn evaluate_plant(
         .unwrap_or(0.0);
 
     let total = (incremental_income + fuel_savings + capacity_premium + denial
+        - operating_cost
         - fuel_risk
         - replacement_waste)
         .max(0.0);
@@ -406,6 +519,7 @@ pub fn evaluate_plant(
         fuel_savings,
         capacity_premium,
         denial,
+        operating_cost,
         fuel_risk,
         replacement_waste,
         total,
