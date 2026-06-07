@@ -90,14 +90,15 @@ pub(in crate::ui) fn buy_resources_panel(
         }
 
         if let Some(cost) = state.resource_cart_cost {
-            let cost_color = if cost > my_money {
+            let balance = my_money as i64 - cost as i64;
+            let balance_color = if balance < 0 {
                 theme::NEON_RED
             } else {
                 theme::NEON_GREEN
             };
             ui.label(
-                RichText::new(format!("TOTAL: ${cost}  BALANCE: ${my_money}"))
-                    .color(cost_color)
+                RichText::new(format!("TOTAL: ${cost}  BALANCE: ${balance}"))
+                    .color(balance_color)
                     .monospace(),
             );
         }
