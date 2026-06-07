@@ -1973,6 +1973,23 @@ mod tests {
         assert!(price.is_some());
     }
 
+    #[test]
+    fn test_resource_market_price_zero_amount_on_empty_market() {
+        // Regression test: pricing zero units of a fully depleted resource must not
+        // panic with a subtract-with-overflow (previously `current - 1` underflowed
+        // when `current == 0`). Buying zero units always costs zero.
+        let market = ResourceMarket {
+            coal: 0,
+            oil: 0,
+            gas: 0,
+            uranium: 0,
+        };
+        assert_eq!(market.price(Resource::Uranium, 0), Some(0));
+        assert_eq!(market.batch_price(&[(Resource::Uranium, 0)]), Some(0));
+        // Sanity: a positive amount on an empty market is correctly unavailable.
+        assert_eq!(market.price(Resource::Uranium, 1), None);
+    }
+
     /// Set up a two-player game in the BuildCities phase with `first` as the current actor.
     fn two_player_build_phase() -> (GameState, PlayerId, PlayerId) {
         let (mut state, p1, p2) = two_player_game();

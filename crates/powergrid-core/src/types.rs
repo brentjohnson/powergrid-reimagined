@@ -132,6 +132,9 @@ impl ResourceMarket {
     /// Cost to buy `amount` units of `resource`.
     /// Prices are on a sliding scale — cheaper when plentiful, pricier when scarce.
     pub fn price(&self, resource: Resource, amount: u8) -> Option<u32> {
+        if amount == 0 {
+            return Some(0);
+        }
         let current = self.available(resource);
         if current < amount {
             return None;
