@@ -15,7 +15,7 @@ use crate::{
     ws::WsChannels,
 };
 
-use super::helpers::{dim_color, resource_image, send};
+use super::helpers::{dim_color, neon_button, resource_image, send};
 use super::player_summary::player_summary;
 
 pub(super) fn top_panel_contents(
@@ -27,8 +27,6 @@ pub(super) fn top_panel_contents(
 ) {
     let room = state.current_room.clone();
     let room = room.as_deref();
-    let my_buy_turn = matches!(&gs.phase, Phase::BuyResources { remaining }
-        if remaining.first() == Some(&my_id));
 
     let is_auction = matches!(
         &gs.phase,
@@ -149,53 +147,10 @@ pub(super) fn top_panel_contents(
         ui.add_space(8.0);
 
         // ── Phase 3: Buy Resources ─────────────────────────────────────────
+        // The market grid itself now lives in its own fixed-size overlay,
+        // pinned to the bottom-right corner — see `resource_market_overlay`.
         let buy_col = ui.vertical(|ui| {
             phase_col_header(ui, "BUY RESOURCES", is_buy, &gs, PhaseKind::BuyResources);
-
-            let cart_snapshot = state.resource_cart.clone();
-            let peer_carts: Vec<(Color32, HashMap<Resource, u8>)> = state
-                .peer_hints
-                .hints
-                .iter()
-                .filter_map(|(pid, hint)| {
-                    if let HintPayload::Cart { items } = hint {
-                        let color = gs
-                            .player(*pid)
-                            .map(|p| player_color_to_egui(p.color))
-                            .unwrap_or(Color32::GRAY);
-                        let cart: HashMap<Resource, u8> = items.iter().cloned().collect();
-                        Some((color, cart))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let replenish = if matches!(&gs.phase, Phase::Lobby | Phase::GameOver { .. }) {
-                (0, 0, 0, 0)
-            } else {
-                replenishment_amounts(gs.step, gs.players.len())
-            };
-            let target_scale = if is_buy { 1.0_f32 } else { 0.5 };
-            let scale = ui.ctx().animate_value_with_time(
-                egui::Id::new("resource_market_scale"),
-                target_scale,
-                0.25,
-            );
-            let click = theme::neon_frame().show(ui, |ui| {
-                resource_market_grid(
-                    ui,
-                    &gs.resources,
-                    &cart_snapshot,
-                    &peer_carts,
-                    my_buy_turn,
-                    replenish,
-                    scale,
-                )
-            });
-            if let Some((resource, amount)) = click.inner {
-                state.set_cart_amount(resource, amount);
-            }
         });
         state.phase_column_rects[1] = Some(buy_col.response.rect);
 
@@ -533,7 +488,90 @@ pub(super) fn step_replenish_columns(ui: &mut Ui, current_step: u8, n_players: u
     });
 }
 
-// ── Resource market grid ───────────────────────────────────────────────────────
+// ── Resource market overlay (fixed, bottom-right corner) ──────────────────────
+
+/// Slightly larger than the old "zoomed in" buy-phase scale (1.0) — the market
+/// now lives in its own corner overlay at a constant size; no more
+/// animated zoom between phases.
+const MARKET_SCALE: f32 = 1.15;
+
+/// Fixed-size resource market, pinned to the bottom-right corner of the
+/// screen. Always visible (every phase), matching the old always-on behavior —
+/// just relocated out of the top panel and no longer resized/animated.
+///
+/// The `[ ▲ INFO ]` toggle for `bottom_info_panel` is drawn directly above the
+/// market (when the panel is closed), and the market's measured height is
+/// stashed in `state.resource_market_height` so the info panel can stack
+/// directly above the market when it is open instead of covering it.
+pub(super) fn resource_market_overlay(
+    ctx: &egui::Context,
+    state: &mut AppState,
+    gs: &GameStateView,
+    my_id: PlayerId,
+) {
+    let my_buy_turn = matches!(&gs.phase, Phase::BuyResources { remaining }
+        if remaining.first() == Some(&my_id));
+
+    let cart_snapshot = state.resource_cart.clone();
+    let peer_carts: Vec<(Color32, HashMap<Resource, u8>)> = state
+        .peer_hints
+        .hints
+        .iter()
+        .filter_map(|(pid, hint)| {
+            if let HintPayload::Cart { items } = hint {
+                let color = gs
+                    .player(*pid)
+                    .map(|p| player_color_to_egui(p.color))
+                    .unwrap_or(Color32::GRAY);
+                let cart: HashMap<Resource, u8> = items.iter().cloned().collect();
+                Some((color, cart))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let replenish = if matches!(&gs.phase, Phase::Lobby | Phase::GameOver { .. }) {
+        (0, 0, 0, 0)
+    } else {
+        replenishment_amounts(gs.step, gs.players.len())
+    };
+
+    egui::Area::new(egui::Id::new("resource_market_overlay"))
+        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.vertical(|ui| {
+                if !state.bottom_panel_open {
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                        if ui
+                            .add(neon_button("[ ▲ INFO ]", theme::NEON_CYAN))
+                            .clicked()
+                        {
+                            state.bottom_panel_open = true;
+                        }
+                    });
+                }
+
+                let frame = theme::neon_frame().show(ui, |ui| {
+                    resource_market_grid(
+                        ui,
+                        &gs.resources,
+                        &cart_snapshot,
+                        &peer_carts,
+                        my_buy_turn,
+                        replenish,
+                        MARKET_SCALE,
+                    )
+                });
+                state.resource_market_height = frame.response.rect.height();
+                state.resource_market_width = frame.response.rect.width();
+                if let Some((resource, amount)) = frame.inner {
+                    state.set_cart_amount(resource, amount);
+                }
+            });
+        });
+}
 
 fn resource_market_grid(
     ui: &mut Ui,

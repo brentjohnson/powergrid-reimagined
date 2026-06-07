@@ -218,22 +218,19 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
         valuation_window(ctx, state, &gs, my_id);
     }
 
+    // ── Resource market (fixed size, pinned bottom-right) ─────────────────────
+    // Renders before the info panel and cart below so `resource_market_height`
+    // / `resource_market_width` are fresh this frame — both anchor against the
+    // market's measured rect. The `[ ▲ INFO ]` toggle (when the panel is closed)
+    // is drawn at the top of this overlay, sitting directly on top of the market.
+    top_panel::resource_market_overlay(ctx, state, &gs, my_id);
+
+    // ── Buy-resources cart (anchored directly left of the market) ─────────────
+    buy_cart_panel(ctx, state, channels, &gs, my_id);
+
     // ── Bottom-right info panel (Space or toggle button) ──────────────────────
     if state.bottom_panel_open {
         bottom_info_panel(ctx, state, &gs);
-    } else {
-        // Small tab visible when panel is closed
-        egui::Area::new(egui::Id::new("info_toggle_area"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                if ui
-                    .add(helpers::neon_button("[ ▲ INFO ]", theme::NEON_CYAN))
-                    .clicked()
-                {
-                    state.bottom_panel_open = true;
-                }
-            });
     }
 }
 
@@ -540,7 +537,9 @@ fn floating_action_panel(
 ) {
     let (col_idx, show): (usize, bool) = match &gs.phase {
         Phase::Auction { .. } | Phase::DiscardPlant { .. } => (0, true),
-        Phase::BuyResources { .. } | Phase::DiscardResource { .. } => (1, true),
+        // BuyResources is handled by `buy_cart_panel`, anchored to the
+        // bottom-right resource market overlay rather than this column.
+        Phase::DiscardResource { .. } => (1, true),
         Phase::BuildCities { .. } => (2, true),
         Phase::Bureaucracy { .. } | Phase::PowerCitiesFuel { .. } => (3, true),
         _ => (0, false),
@@ -580,9 +579,6 @@ fn floating_action_panel(
                     Phase::DiscardPlant { .. } => {
                         discard_plant_panel(ui, state, channels, gs, my_id);
                     }
-                    Phase::BuyResources { .. } => {
-                        buy_resources_panel(ui, state, channels, gs, my_id);
-                    }
                     Phase::DiscardResource { .. } => {
                         discard_resource_panel(ui, state, channels, gs, my_id);
                     }
@@ -602,10 +598,49 @@ fn floating_action_panel(
 }
 
 // ---------------------------------------------------------------------------
+// Buy-resources cart (anchored directly left of the resource market overlay)
+// ---------------------------------------------------------------------------
+
+/// Cart UI for the Buy Resources phase — resource counts, TOTAL/BALANCE,
+/// 1 SET / 2 SETS shortcuts, CLEAR / DONE BUYING. Anchored to sit directly to
+/// the left of `top_panel::resource_market_overlay` (which you click to fill
+/// the cart), bottom-aligned with it via `state.resource_market_width`.
+fn buy_cart_panel(
+    ctx: &egui::Context,
+    state: &mut crate::state::AppState,
+    channels: Option<&crate::ws::WsChannels>,
+    gs: &powergrid_core::GameStateView,
+    my_id: PlayerId,
+) {
+    if !matches!(&gs.phase, Phase::BuyResources { .. }) {
+        return;
+    }
+
+    let x_offset = -(CORNER_MARGIN + state.resource_market_width + STACK_GAP);
+
+    egui::Area::new(egui::Id::new("buy_cart_panel"))
+        .anchor(
+            egui::Align2::RIGHT_BOTTOM,
+            egui::vec2(x_offset, -CORNER_MARGIN),
+        )
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            theme::neon_frame().show(ui, |ui| {
+                ui.set_max_width(240.0);
+                buy_resources_panel(ui, state, channels, gs, my_id);
+            });
+        });
+}
+
+// ---------------------------------------------------------------------------
 // Bottom-right tabbed info panel
 // ---------------------------------------------------------------------------
 
 const PANEL_HEIGHT: f32 = 280.0;
+// Corner margin shared with the resource market overlay's anchor offset
+// (top_panel::resource_market_overlay), plus a small gap between the two.
+const CORNER_MARGIN: f32 = 8.0;
+const STACK_GAP: f32 = 8.0;
 
 fn bottom_info_panel(
     ctx: &egui::Context,
@@ -615,12 +650,15 @@ fn bottom_info_panel(
     #[allow(deprecated)]
     let panel_w = (ctx.screen_rect().width() * 0.5).max(320.0);
 
+    // Stack directly above the resource market overlay rather than covering it.
+    let y_offset = -(CORNER_MARGIN + state.resource_market_height + STACK_GAP);
+
     egui::Window::new("info_panel")
         .title_bar(false)
         .resizable(false)
         .movable(false)
         .collapsible(false)
-        .anchor(egui::Align2::RIGHT_BOTTOM, egui::Vec2::ZERO)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(0.0, y_offset))
         .fixed_size(egui::vec2(panel_w, PANEL_HEIGHT))
         .frame(theme::panel_frame(4))
         .show(ctx, |ui| {
