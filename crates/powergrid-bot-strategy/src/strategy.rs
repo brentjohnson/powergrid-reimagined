@@ -313,10 +313,58 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
     let mut plants = player.plants.clone();
     plants.sort_by(|a, b| b.cities.cmp(&a.cities).then(a.number.cmp(&b.number)));
 
-    for plant in &plants {
+    // `buy_for_plant` raises a *shared* fuel pool up to `target` total units, so the
+    // targets passed in must be cumulative across every plant drawing on that pool —
+    // otherwise a second coal plant sees the first plant's purchase as "already have
+    // enough" and buys nothing (the bug this fixes: two coal plants needing 3 + 2
+    // ended up with only 3 coal total). Track running cumulative targets per pool.
+    let (mut coal_target, mut oil_target, mut gas_target, mut uranium_target) =
+        (0u8, 0u8, 0u8, 0u8);
+    // Gas and oil share both storage and market, so pure Gas/Oil demand must be
+    // folded into the hybrid (GasOrOil) target too — see the second pass below.
+    let mut gasoil_combined_target = 0u8;
+
+    // Pass 1: pure-fuel plants first, so hybrids only need to cover the incremental
+    // shortfall on the shared gas+oil pool once pure demand is already accounted for.
+    for plant in plants.iter().filter(|p| p.kind != PlantKind::GasOrOil) {
+        let target = match plant.kind {
+            PlantKind::Coal => {
+                coal_target = coal_target.saturating_add(plant.cost);
+                coal_target
+            }
+            PlantKind::Oil => {
+                oil_target = oil_target.saturating_add(plant.cost);
+                gasoil_combined_target = gasoil_combined_target.saturating_add(plant.cost);
+                oil_target
+            }
+            PlantKind::Gas => {
+                gas_target = gas_target.saturating_add(plant.cost);
+                gasoil_combined_target = gasoil_combined_target.saturating_add(plant.cost);
+                gas_target
+            }
+            PlantKind::Uranium => {
+                uranium_target = uranium_target.saturating_add(plant.cost);
+                uranium_target
+            }
+            PlantKind::Wind | PlantKind::GasOrOil => continue,
+        };
         buy_for_plant(
             plant,
-            plant.cost,
+            target,
+            &mut sim_market,
+            &mut sim_player,
+            &mut budget,
+            &mut purchases,
+        );
+    }
+
+    // Pass 2: hybrids draw on the same combined gas+oil pool; each one's cumulative
+    // target includes all pure gas/oil demand plus every hybrid's cost so far.
+    for plant in plants.iter().filter(|p| p.kind == PlantKind::GasOrOil) {
+        gasoil_combined_target = gasoil_combined_target.saturating_add(plant.cost);
+        buy_for_plant(
+            plant,
+            gasoil_combined_target,
             &mut sim_market,
             &mut sim_player,
             &mut budget,
@@ -404,30 +452,43 @@ fn try_buy(
     budget: &mut u32,
     purchases: &mut Vec<(Resource, u8)>,
 ) {
-    let available = market.available(resource);
-    let cap = want.min(available);
-    if cap == 0 {
-        return;
-    }
-    for n in (1..=cap).rev() {
-        if !player.can_add_resource(resource, n) {
-            continue;
+    // Keep buying chunks until `want` is satisfied or nothing more can be bought —
+    // a single chunk can fall short of `want` under budget/storage pressure (e.g. the
+    // largest affordable chunk is smaller than `want`), and settling for that first
+    // chunk would leave affordable, storable units on the table.
+    let mut remaining = want;
+    while remaining > 0 {
+        let available = market.available(resource);
+        let cap = remaining.min(available);
+        if cap == 0 {
+            break;
         }
-        if let Some(cost) = market.price(resource, n) {
-            if cost <= *budget {
-                debug!("Buying {} {:?} for {} elektro", n, resource, cost);
-                purchases.push((resource, n));
-                market.take(resource, n);
-                player.resources.add(resource, n);
-                *budget -= cost;
-                return;
+        let mut bought = false;
+        for n in (1..=cap).rev() {
+            if !player.can_add_resource(resource, n) {
+                continue;
+            }
+            if let Some(cost) = market.price(resource, n) {
+                if cost <= *budget {
+                    debug!("Buying {} {:?} for {} elektro", n, resource, cost);
+                    purchases.push((resource, n));
+                    market.take(resource, n);
+                    player.resources.add(resource, n);
+                    *budget -= cost;
+                    remaining -= n;
+                    bought = true;
+                    break;
+                }
             }
         }
+        if !bought {
+            debug!(
+                "Cannot afford/store any more {:?} (remaining {}, budget {})",
+                resource, remaining, budget
+            );
+            break;
+        }
     }
-    debug!(
-        "Cannot afford any {:?} (want {}, budget {})",
-        resource, want, budget
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +674,42 @@ mod tests {
             cost,
             cities,
         }
+    }
+
+    fn gas_plant(number: u8, cost: u8, cities: u8) -> PowerPlant {
+        PowerPlant {
+            number,
+            kind: PlantKind::Gas,
+            cost,
+            cities,
+        }
+    }
+
+    fn uranium_plant(number: u8, cost: u8, cities: u8) -> PowerPlant {
+        PowerPlant {
+            number,
+            kind: PlantKind::Uranium,
+            cost,
+            cities,
+        }
+    }
+
+    /// Build a normal-profile bot whose id matches `player`'s, so
+    /// `decide_buy_resources` (which looks the player up via `state.player(bot.id)`)
+    /// finds the player pushed by `state_with_player`.
+    fn bot_for(player: &Player) -> Bot {
+        let mut bot = normal_bot();
+        bot.id = player.id;
+        bot
+    }
+
+    /// Sum the quantities of `resource` across a `BuyResourceBatch` purchase list.
+    fn bought(purchases: &[(Resource, u8)], resource: Resource) -> u8 {
+        purchases
+            .iter()
+            .filter(|(r, _)| *r == resource)
+            .map(|(_, n)| n)
+            .sum()
     }
 
     fn bot_with_money(money: u32) -> Player {
@@ -1067,6 +1164,101 @@ mod tests {
         );
     }
 
+    /// Regression test for the bug where a bot with two coal plants (burning 3 and 2
+    /// coal respectively) bought only 3 coal total instead of 5 — because
+    /// `decide_buy_resources` passed each plant's *own* cost as the target against the
+    /// shared coal pool, so the second plant saw "already have enough" and bought
+    /// nothing. Targets must be cumulative across plants sharing a fuel pool.
+    #[test]
+    fn two_coal_plants_buy_combined_fuel() {
+        let mut player = bot_with_money(168);
+        player.plants.push(coal_plant(33, 3, 6));
+        player.plants.push(coal_plant(29, 2, 5));
+
+        let state = state_with_player(&player);
+        let mut bot = bot_for(&player);
+
+        let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
+        let Action::BuyResourceBatch { purchases } = action else {
+            panic!("expected BuyResourceBatch, got {action:?}");
+        };
+
+        let coal_bought = bought(&purchases, Resource::Coal);
+        assert!(
+            coal_bought >= 5,
+            "expected combined coal purchase >= 5 (3 + 2) so both plants can fire, got {}",
+            coal_bought
+        );
+    }
+
+    /// Two coal plants plus a hybrid: pure coal demand and shared gas/oil demand must
+    /// each accumulate independently across all plants drawing on their pool.
+    #[test]
+    fn two_coal_plus_hybrid_combined_targets() {
+        let mut player = bot_with_money(300);
+        player.plants.push(coal_plant(10, 3, 6));
+        player.plants.push(coal_plant(11, 2, 5));
+        player.plants.push(hybrid_plant(12, 2, 4));
+
+        let state = state_with_player(&player);
+        let mut bot = bot_for(&player);
+
+        let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
+        let Action::BuyResourceBatch { purchases } = action else {
+            panic!("expected BuyResourceBatch, got {action:?}");
+        };
+
+        let coal_bought = bought(&purchases, Resource::Coal);
+        let gasoil_bought = bought(&purchases, Resource::Gas) + bought(&purchases, Resource::Oil);
+        assert!(
+            coal_bought >= 5,
+            "expected combined coal purchase >= 5 (3 + 2), got {}",
+            coal_bought
+        );
+        assert!(
+            gasoil_bought >= 2,
+            "expected combined gas+oil purchase >= 2 for the hybrid, got {}",
+            gasoil_bought
+        );
+    }
+
+    /// A pure Gas plant and a hybrid share the gas+oil pool. The pure plant must still
+    /// be guaranteed its gas (it cannot burn oil), while the hybrid's cumulative target
+    /// folds in the pure plant's demand so the combined pool covers both.
+    #[test]
+    fn pure_gas_and_hybrid_share_pool() {
+        let mut player = bot_with_money(200);
+        player.plants.push(gas_plant(20, 2, 4));
+        player.plants.push(hybrid_plant(21, 3, 5));
+
+        let mut state = state_with_player(&player);
+        state.resources = ResourceMarket {
+            coal: 23,
+            gas: 18,
+            oil: 2,
+            uranium: 2,
+        };
+        let mut bot = bot_for(&player);
+
+        let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
+        let Action::BuyResourceBatch { purchases } = action else {
+            panic!("expected BuyResourceBatch, got {action:?}");
+        };
+
+        let gas_bought = bought(&purchases, Resource::Gas);
+        let gasoil_bought = gas_bought + bought(&purchases, Resource::Oil);
+        assert!(
+            gas_bought >= 2,
+            "pure gas plant must be guaranteed its 2 gas, got {}",
+            gas_bought
+        );
+        assert!(
+            gasoil_bought >= 5,
+            "expected combined gas+oil purchase >= 5 (2 pure + 3 hybrid), got {}",
+            gasoil_bought
+        );
+    }
+
     #[test]
     fn softmax_temperature_zero_gives_best() {
         // Normal profile has temperature = 0 → pure argmax.
@@ -1228,6 +1420,59 @@ mod tests {
             "coal plant should be worth less when coal is scarce: flush={:.1} scarce={:.1}",
             flush.total,
             scarce.total
+        );
+    }
+
+    /// Regression test: a thirsty candidate plant's *own* fuel demand must factor
+    /// into its fuel-scarcity penalty, not just demand from plants the player(s)
+    /// already own. Before this fix, `fuel_scarcity` only summed demand across
+    /// `state.players[..].plants` — so a not-yet-owned 2-uranium candidate looked
+    /// just as safe as a flush-market plant even when uranium replenishes at 1/round
+    /// and only 2 units remain, because its own appetite never entered the shortfall.
+    ///
+    /// Scenario mirrors the reported bug: round-3-ish, 4 players (uranium replen=1
+    /// at step 1), an opponent already owns a 1-uranium plant, and the market holds
+    /// only 2 uranium. A 2-uranium candidate should now carry a real fuel_risk
+    /// penalty and be valued below the same plant in a flush uranium market.
+    #[test]
+    fn thirsty_candidate_plant_demand_counts_toward_its_own_fuel_risk() {
+        let player = bot_with_money(200);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let candidate = uranium_plant(30, 2, 3); // needs 2 uranium per firing
+
+        // Tight market: an opponent already burns 1 uranium/round, replen=1, only
+        // 2 uranium left. Candidate's own 2-unit appetite isn't owned anywhere yet.
+        let mut state_tight = state_with_player(&player);
+        state_tight.resources.uranium = 2;
+        let mut opponent = bot_with_money(100);
+        opponent.plants.push(uranium_plant(31, 1, 2));
+        state_tight.players.push(opponent);
+
+        // Flush market, no other uranium plants anywhere → scarcity should stay 0.
+        let mut state_flush = state_with_player(&player);
+        state_flush.resources.uranium = 12;
+
+        let tight = evaluate_plant(&candidate, &state_tight.players[0], &state_tight, w);
+        let flush = evaluate_plant(&candidate, &state_flush.players[0], &state_flush, w);
+
+        assert_eq!(
+            flush.fuel_risk, 0.0,
+            "flush uranium market should carry no fuel_risk"
+        );
+        assert!(
+            tight.fuel_risk > 0.0,
+            "a 2-uranium candidate in a near-empty, slow-replenishing market should \
+             carry a fuel_risk penalty driven by its own demand, got {:.3}",
+            tight.fuel_risk
+        );
+        assert!(
+            tight.total < flush.total,
+            "the thirsty candidate should be valued lower in the tight market: \
+             tight={:.1} flush={:.1}",
+            tight.total,
+            flush.total
         );
     }
 

@@ -33,6 +33,14 @@ pub fn plant_score(plant: &PowerPlant) -> f32 {
 /// `GasOrOil` hybrids contribute `plant.cost / 2` to *each* of gas and oil
 /// (caller is responsible for choosing which resource to query).
 pub fn fuel_scarcity(state: &GameState, resource: Resource) -> f32 {
+    fuel_scarcity_with_extra(state, resource, 0.0)
+}
+
+/// `fuel_scarcity`, plus an `extra_demand` (in fuel units/round) folded into the
+/// shortfall before scoring. Lets a not-yet-owned candidate plant's own appetite
+/// be weighed against the existing market — see `plant_fuel_scarcity`, which is
+/// the only caller that passes a nonzero `extra_demand`.
+fn fuel_scarcity_with_extra(state: &GameState, resource: Resource, extra_demand: f32) -> f32 {
     let avail = state.resources.available(resource) as f32;
     let (coal_r, oil_r, gas_r, uranium_r) = replenishment_amounts(state.step, state.players.len());
     let replen = match resource {
@@ -43,7 +51,7 @@ pub fn fuel_scarcity(state: &GameState, resource: Resource) -> f32 {
     } as f32;
 
     // Sum per-round demand across every player's installed plants.
-    let mut demand = 0.0f32;
+    let mut demand = extra_demand;
     for player in &state.players {
         for plant in &player.plants {
             let cost = plant.cost as f32;
@@ -68,23 +76,35 @@ pub fn fuel_scarcity(state: &GameState, resource: Resource) -> f32 {
     shortfall / (avail + replen + 1.0)
 }
 
-/// Fuel scarcity for the resource a specific plant would burn.
+/// Fuel scarcity for the resource a specific plant would burn — *including that
+/// plant's own per-round demand* in the shortfall. This matters most for a candidate
+/// being evaluated in an auction: it isn't in `state.players[..].plants` yet, so
+/// without folding its appetite in here, `fuel_scarcity` would be blind to the very
+/// thing that makes a thirsty plant risky (e.g. a 2-uranium plant when uranium
+/// replenishes at 1/round and the market is nearly empty would otherwise score 0).
 ///
 /// - Wind (no fuel) → 0.0
-/// - `GasOrOil` → min(gas_scarcity, oil_scarcity): the bot will buy whichever
-///   is cheaper, so use the easier resource's pressure.
-/// - All other kinds → scarcity of their single resource.
+/// - `GasOrOil` → min(gas_scarcity, oil_scarcity), each charged half the plant's
+///   cost as extra demand (mirrors the hybrid split `fuel_scarcity` already applies
+///   to owned plants): the bot will buy whichever is cheaper, so use the easier
+///   resource's pressure.
+/// - All other kinds → scarcity of their single resource, charged the full cost.
 pub fn plant_fuel_scarcity(plant: &PowerPlant, state: &GameState) -> f32 {
     match plant.kind {
         PlantKind::Wind => 0.0,
         PlantKind::GasOrOil => {
-            fuel_scarcity(state, Resource::Gas).min(fuel_scarcity(state, Resource::Oil))
+            let half = plant.cost as f32 / 2.0;
+            fuel_scarcity_with_extra(state, Resource::Gas, half).min(fuel_scarcity_with_extra(
+                state,
+                Resource::Oil,
+                half,
+            ))
         }
         _ => plant
             .kind
             .resources()
             .first()
-            .map(|&r| fuel_scarcity(state, r))
+            .map(|&r| fuel_scarcity_with_extra(state, r, plant.cost as f32))
             .unwrap_or(0.0),
     }
 }
