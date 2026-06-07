@@ -130,7 +130,15 @@ fn decide_auction(
             .find(|p| p.number == bid.plant_number)?;
 
         let min_bid = effective_min_bid(&state.market, bid.plant_number);
-        let ceiling = bid_ceiling(plant, my_player, state.round, w, buy, min_bid);
+        let ceiling = bid_ceiling(
+            plant,
+            my_player,
+            state.round,
+            w,
+            buy,
+            min_bid,
+            Some(&state.resources),
+        );
         let ceiling_jittered = bot
             .maybe_jitter(ceiling, bot.profile.max_jitter)
             .min(my_player.money);
@@ -575,7 +583,10 @@ mod tests {
     };
 
     use crate::{
-        features::{auction_reserve, plant_score_contextual, useful_city_target},
+        features::{
+            auction_reserve, estimate_firing_cost, fuel_scarcity, plant_fuel_scarcity,
+            plant_score_contextual, useful_city_target,
+        },
         profile::default_registry,
     };
 
@@ -774,7 +785,7 @@ mod tests {
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
         assert_eq!(
-            bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32),
+            bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None),
             15
         );
     }
@@ -790,7 +801,15 @@ mod tests {
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
         assert_eq!(
-            bid_ceiling(&candidate, &player, 3, w, buy, candidate.number as u32),
+            bid_ceiling(
+                &candidate,
+                &player,
+                3,
+                w,
+                buy,
+                candidate.number as u32,
+                None
+            ),
             20
         );
     }
@@ -802,7 +821,15 @@ mod tests {
         let registry = default_registry();
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
-        let ceiling = bid_ceiling(&candidate, &player, 2, w, buy, candidate.number as u32);
+        let ceiling = bid_ceiling(
+            &candidate,
+            &player,
+            2,
+            w,
+            buy,
+            candidate.number as u32,
+            None,
+        );
         assert!(
             ceiling > 15 && ceiling <= 21,
             "expected a small premium above 15, got {}",
@@ -818,11 +845,11 @@ mod tests {
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
         assert_eq!(
-            bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32),
+            bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None),
             10
         );
         assert_eq!(
-            bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32),
+            bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32, None),
             10
         );
         let mut bot = normal_bot();
@@ -831,7 +858,7 @@ mod tests {
             // Production code applies .min(player.money) after jitter; mirror that here.
             assert!(
                 bot.maybe_jitter(
-                    bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32),
+                    bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None),
                     max_jitter
                 )
                 .min(player.money)
@@ -839,7 +866,7 @@ mod tests {
             );
             assert!(
                 bot.maybe_jitter(
-                    bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32),
+                    bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32, None),
                     max_jitter
                 )
                 .min(player.money)
@@ -965,7 +992,10 @@ mod tests {
         let registry = default_registry();
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
-        assert_eq!(auction_reserve(&candidate, &player, w, buy), 8 + 30 + 5);
+        assert_eq!(
+            auction_reserve(&candidate, &player, w, buy, None),
+            8 + 30 + 5
+        );
     }
 
     #[test]
@@ -1008,11 +1038,12 @@ mod tests {
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
 
-        let ceiling_with = bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32);
+        let ceiling_with = bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32, None);
 
         let mut w_zero = w.clone();
         w_zero.high_capacity_bid_premium = 0.0;
-        let ceiling_without = bid_ceiling(&plant, &player, 2, &w_zero, buy, plant.number as u32);
+        let ceiling_without =
+            bid_ceiling(&plant, &player, 2, &w_zero, buy, plant.number as u32, None);
 
         assert!(
             ceiling_with > ceiling_without,
@@ -1027,7 +1058,7 @@ mod tests {
         let registry = default_registry();
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
-        let base = bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32);
+        let base = bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None);
 
         // With seed 42 and 200 trials, count how many jitter.
         let mut bot = normal_bot();
@@ -1122,6 +1153,288 @@ mod tests {
         assert!(
             saw_other,
             "high temperature should occasionally pick non-best"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Resource-scarcity tests
+    // -----------------------------------------------------------------------
+
+    /// Build a 1-player state and give that player coal plants so total coal
+    /// demand exceeds the 1-player (≈6-player) replenishment of 7/round.
+    fn state_with_coal_demand(demand_cost: u8) -> GameState {
+        let player = bot_with_money(100);
+        let mut state = state_with_player(&player);
+        // Give the single player a coal plant that burns `demand_cost` units.
+        state.players[0].plants.push(coal_plant(20, demand_cost, 3));
+        state
+    }
+
+    #[test]
+    fn fuel_scarcity_rises_with_lower_availability() {
+        // demand=10 > replen_coal=7 (step 1, 1 player → "6-player" bracket) → shortfall=3.
+        // scarcity = shortfall / (avail + replen + 1).  Lower avail → lower denominator → higher.
+        let mut state = state_with_coal_demand(10);
+
+        state.resources.coal = 23; // flush market
+        let flush = fuel_scarcity(&state, Resource::Coal);
+
+        state.resources.coal = 3; // depleted market
+        let scarce = fuel_scarcity(&state, Resource::Coal);
+
+        assert!(
+            scarce > flush,
+            "scarcity should rise when availability drops: flush={flush:.3} scarce={scarce:.3}"
+        );
+    }
+
+    #[test]
+    fn fuel_scarcity_rises_with_higher_demand() {
+        let player = bot_with_money(100);
+        let mut state = state_with_player(&player);
+        state.resources.coal = 10;
+
+        // No coal plants → demand=0, shortfall=0, scarcity=0.
+        let low = fuel_scarcity(&state, Resource::Coal);
+
+        // Add a high-demand coal plant (cost=20 > replen=7).
+        state.players[0].plants.push(coal_plant(20, 20, 3));
+        let high = fuel_scarcity(&state, Resource::Coal);
+
+        assert!(
+            high > low,
+            "scarcity should rise when demand exceeds replenishment: low={low:.3} high={high:.3}"
+        );
+    }
+
+    #[test]
+    fn hybrid_demand_splits_gas_oil_not_coal() {
+        // A GasOrOil hybrid should add demand to gas and oil but NOT to coal.
+        // We set coal very low — if hybrid mistakenly contributed coal demand,
+        // coal scarcity would be nonzero (demand would exceed replenishment).
+        let player = bot_with_money(100);
+        let mut state = state_with_player(&player);
+
+        // Add a hybrid plant with high cost so demand/2 exceeds replen for both gas and oil.
+        // replen_gas=3, replen_oil=5 (1-player → "6-player" bracket, step 1).
+        // cost=14 → gas_demand=7 > 3, oil_demand=7 > 5.  Coal demand stays 0.
+        state.players[0].plants.push(PowerPlant {
+            number: 10,
+            kind: PlantKind::GasOrOil,
+            cost: 14,
+            cities: 2,
+        });
+        state.resources.coal = 1; // very scarce — would drive coal scarcity up if demand existed
+
+        let coal_sc = fuel_scarcity(&state, Resource::Coal);
+        let gas_sc = fuel_scarcity(&state, Resource::Gas);
+        let oil_sc = fuel_scarcity(&state, Resource::Oil);
+
+        assert_eq!(
+            coal_sc, 0.0,
+            "hybrid plant must not contribute to coal demand (scarcity={coal_sc:.4})"
+        );
+        assert!(
+            gas_sc > 0.0,
+            "hybrid must contribute to gas demand (scarcity={gas_sc:.4})"
+        );
+        assert!(
+            oil_sc > 0.0,
+            "hybrid must contribute to oil demand (scarcity={oil_sc:.4})"
+        );
+    }
+
+    #[test]
+    fn scarce_fuel_lowers_plant_score_contextual() {
+        // Normal profile has fuel_scarcity_weight = 10.0.
+        // A coal plant in a scarce coal market should score lower than in a flush market.
+        let player = bot_with_money(100);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+
+        let candidate = coal_plant(15, 3, 2); // cost=3 coal per firing
+
+        // Flush market, no other plants → scarcity=0, penalty=0.
+        let mut state_flush = state_with_player(&player);
+        state_flush.resources.coal = 23;
+
+        // Scarce market: give the player a heavy coal plant so demand > replen.
+        let mut state_scarce = state_with_player(&player);
+        state_scarce.resources.coal = 2;
+        state_scarce.players[0].plants.push(coal_plant(20, 20, 3)); // demand=20
+
+        let score_flush =
+            plant_score_contextual(&candidate, &state_flush.players[0], &state_flush, w);
+        let score_scarce =
+            plant_score_contextual(&candidate, &state_scarce.players[0], &state_scarce, w);
+
+        assert!(
+            score_scarce < score_flush,
+            "coal plant should score lower when coal is scarce: flush={score_flush:.1} scarce={score_scarce:.1}"
+        );
+    }
+
+    #[test]
+    fn wind_plant_score_unaffected_by_fuel_scarcity() {
+        // Even with all resources depleted and heavy fuel demand, a Wind plant's score
+        // should be identical — it burns no fuel (plant_fuel_scarcity returns 0.0).
+        //
+        // The demand is placed on a SECOND player so the scored player's `plants` vector
+        // (which drives overshoot / capacity_bump) is the same in both states.
+        let player = bot_with_money(100);
+        let registry = default_registry();
+        let w = &registry.hard.auction; // hard has the highest fuel_scarcity_weight
+
+        let wind = PowerPlant {
+            number: 44,
+            kind: PlantKind::Wind,
+            cost: 0,
+            cities: 2,
+        };
+
+        // Second player owns a heavy coal plant — creates non-zero coal scarcity in both
+        // states via demand (to make the test meaningful when resources are depleted).
+        let mut coal_bot = bot_with_money(50);
+        coal_bot.plants.push(coal_plant(20, 20, 3));
+
+        let mut state_flush = state_with_player(&player);
+        state_flush.players.push(coal_bot.clone());
+
+        let mut state_scarce = state_with_player(&player);
+        state_scarce.players.push(coal_bot.clone());
+        // Deplete all resources — only difference between the two states.
+        state_scarce.resources.coal = 0;
+        state_scarce.resources.oil = 0;
+        state_scarce.resources.gas = 0;
+        state_scarce.resources.uranium = 0;
+
+        let score_flush = plant_score_contextual(&wind, &state_flush.players[0], &state_flush, w);
+        let score_scarce =
+            plant_score_contextual(&wind, &state_scarce.players[0], &state_scarce, w);
+
+        assert_eq!(
+            score_flush, score_scarce,
+            "Wind plant score must not depend on resource scarcity"
+        );
+    }
+
+    #[test]
+    fn plant_fuel_scarcity_wind_is_zero() {
+        let player = bot_with_money(100);
+        let mut state = state_with_player(&player);
+        // Deplete everything to make the test maximally sensitive.
+        state.resources.coal = 0;
+        state.resources.gas = 0;
+        state.resources.oil = 0;
+        state.resources.uranium = 0;
+        state.players[0].plants.push(coal_plant(20, 20, 3));
+
+        let wind = PowerPlant {
+            number: 44,
+            kind: PlantKind::Wind,
+            cost: 0,
+            cities: 2,
+        };
+        assert_eq!(
+            plant_fuel_scarcity(&wind, &state),
+            0.0,
+            "Wind plants have zero fuel scarcity by definition"
+        );
+    }
+
+    #[test]
+    fn bid_ceiling_lower_in_scarce_market() {
+        // Depleted coal market makes estimate_firing_cost >> flat plant.cost, inflating the
+        // reserve and leaving less affordable headroom, which lowers the ceiling.
+        //
+        // candidate: coal, number=20, cost=3, cities=3.
+        // Flat reserve  = 3×4 + 30 + 5 = 47.  affordable = 100-47 = 53.
+        //   premium = bump(3)×2.0 + 0 = 6.  ceiling = min(26, 53).max(20) = 26.
+        // Scarce market (coal=3): price(coal, 3) = 8+9+9 = 26.
+        //   reserve = 26×4 + 30 + 5 = 139.  affordable = max(0, 100-139) = 0.
+        //   ceiling = min(26, 0).max(20) = 20.
+        let candidate = coal_plant(20, 3, 3);
+        let player = bot_with_money(100);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+        let buy = &registry.normal.buy;
+
+        let mut scarce_market = ResourceMarket::initial();
+        scarce_market.coal = 3;
+
+        let ceiling_scarce = bid_ceiling(
+            &candidate,
+            &player,
+            2,
+            w,
+            buy,
+            candidate.number as u32,
+            Some(&scarce_market),
+        );
+        let ceiling_flat = bid_ceiling(
+            &candidate,
+            &player,
+            2,
+            w,
+            buy,
+            candidate.number as u32,
+            None,
+        );
+
+        assert!(
+            ceiling_scarce < ceiling_flat,
+            "bid ceiling should drop when fuel is scarce: scarce={ceiling_scarce} flat={ceiling_flat}"
+        );
+    }
+
+    #[test]
+    fn estimate_firing_cost_prices_cheapest_units_first() {
+        // With a full coal market (coal=23), two cheap coal units cost 2+2=4.
+        // (price_table Coal: index 21=2, index 22=2; last_occupied = 22.)
+        let plant = coal_plant(5, 2, 1);
+        let market = ResourceMarket::initial(); // coal=23
+        let cost = estimate_firing_cost(&plant, &market);
+        assert_eq!(
+            cost, 4,
+            "2 coal from flush market should cost 4 (slots 22+21 = 2+2)"
+        );
+    }
+
+    #[test]
+    fn estimate_firing_cost_wind_is_zero() {
+        let wind = PowerPlant {
+            number: 44,
+            kind: PlantKind::Wind,
+            cost: 0,
+            cities: 2,
+        };
+        let market = ResourceMarket::initial();
+        assert_eq!(estimate_firing_cost(&wind, &market), 0);
+    }
+
+    #[test]
+    fn estimate_firing_cost_hybrid_prefers_more_available_resource() {
+        // Hybrid with gas plentiful (18) and oil scarce (1) should price gas.
+        let hybrid = PowerPlant {
+            number: 10,
+            kind: PlantKind::GasOrOil,
+            cost: 2,
+            cities: 2,
+        };
+        let mut market = ResourceMarket::initial();
+        market.gas = 18; // gas is cheap (plenty available)
+        market.oil = 1; // oil is very expensive
+
+        let cost_actual = estimate_firing_cost(&hybrid, &market);
+
+        // Gas price for 2 units from market.gas=18: last_occupied=17.
+        // Gas table: [8,8,8,7,7,7,6,6,6,5,5,5,4,4,4,3,3,3,2,2,2,1,1,1]
+        // slot 17=3, slot 16=3 → total 6.
+        // Oil price for 2 units from market.oil=1: can only supply 1 → fallback (more expensive).
+        // So actual should equal the gas price (6).
+        assert_eq!(
+            cost_actual, 6,
+            "hybrid should price the more available (gas) resource: got {cost_actual}"
         );
     }
 }

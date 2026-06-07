@@ -30,6 +30,7 @@ opponent_gap_weight        = 0.0
 endgame_weight             = 0.0
 pipeline_weight            = 0.0
 upgrade_efficiency_weight  = 5.0   # mild penalty for small-gain upgrades when rack is full
+fuel_scarcity_weight       = 5.0   # mild penalty for plants burning scarce/contested fuel
 
 [easy.buy]
 fuel_reserve_multiplier = 4.0
@@ -68,6 +69,7 @@ opponent_gap_weight        = 0.0
 endgame_weight             = 0.0
 pipeline_weight            = 0.0
 upgrade_efficiency_weight  = 10.0  # moderate penalty for small-gain upgrades when rack is full
+fuel_scarcity_weight       = 10.0  # moderate penalty for plants burning scarce/contested fuel
 
 [normal.buy]
 fuel_reserve_multiplier = 4.0   # spend 4× plant cost on fuel reserves
@@ -107,6 +109,7 @@ opponent_gap_weight = 3.0   # bonus per city the leading opponent is ahead of us
 endgame_weight      = 5.0   # bonus proportional to how close we are to game end
 pipeline_weight            = 2.0   # bonus when this plant is better than the upcoming deck
 upgrade_efficiency_weight  = 15.0  # strong penalty for small-gain upgrades when rack is full
+fuel_scarcity_weight       = 20.0  # strong penalty for plants burning scarce/contested fuel
 
 [hard.buy]
 fuel_reserve_multiplier = 4.0

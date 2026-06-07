@@ -1,6 +1,7 @@
 use powergrid_core::{
+    rules::replenishment_amounts,
     state::GameState,
-    types::{PlantKind, Player, PowerPlant},
+    types::{PlantKind, Player, PowerPlant, Resource, ResourceMarket},
 };
 
 use crate::profile::{AuctionWeights, BuyWeights};
@@ -21,6 +22,119 @@ fn high_capacity_steps(cities: u8, threshold: u8) -> u32 {
 
 pub fn is_green(plant: &PowerPlant) -> bool {
     matches!(plant.kind, PlantKind::Wind)
+}
+
+// ---------------------------------------------------------------------------
+// Resource-market helpers
+// ---------------------------------------------------------------------------
+
+/// Per-round fuel pressure for one resource, roughly in [0, 1+].
+///
+/// Combines three factors the user requested:
+/// - **availability**: low market stock → denominator shrinks → scarcity rises
+/// - **demand**: total units all players' plants need each round → shortfall rises
+/// - **replenishment rate**: at this step/player-count → shortfall rises when slow
+///
+/// `GasOrOil` hybrids contribute `plant.cost / 2` to *each* of gas and oil
+/// (caller is responsible for choosing which resource to query).
+pub fn fuel_scarcity(state: &GameState, resource: Resource) -> f32 {
+    let avail = state.resources.available(resource) as f32;
+    let (coal_r, oil_r, gas_r, uranium_r) = replenishment_amounts(state.step, state.players.len());
+    let replen = match resource {
+        Resource::Coal => coal_r,
+        Resource::Oil => oil_r,
+        Resource::Gas => gas_r,
+        Resource::Uranium => uranium_r,
+    } as f32;
+
+    // Sum per-round demand across every player's installed plants.
+    let mut demand = 0.0f32;
+    for player in &state.players {
+        for plant in &player.plants {
+            let cost = plant.cost as f32;
+            match plant.kind {
+                // Hybrid splits half/half between gas and oil.
+                PlantKind::GasOrOil => match resource {
+                    Resource::Gas | Resource::Oil => demand += cost / 2.0,
+                    _ => {}
+                },
+                // Pure-fuel plant: only contributes if its resource matches.
+                _ => {
+                    if plant.kind.resources().contains(&resource) {
+                        demand += cost;
+                    }
+                }
+            }
+        }
+    }
+
+    let shortfall = (demand - replen).max(0.0);
+    // Denominator +1 prevents division by zero when both avail and replen are 0.
+    shortfall / (avail + replen + 1.0)
+}
+
+/// Fuel scarcity for the resource a specific plant would burn.
+///
+/// - Wind (no fuel) → 0.0
+/// - `GasOrOil` → min(gas_scarcity, oil_scarcity): the bot will buy whichever
+///   is cheaper, so use the easier resource's pressure.
+/// - All other kinds → scarcity of their single resource.
+pub fn plant_fuel_scarcity(plant: &PowerPlant, state: &GameState) -> f32 {
+    match plant.kind {
+        PlantKind::Wind => 0.0,
+        PlantKind::GasOrOil => {
+            fuel_scarcity(state, Resource::Gas).min(fuel_scarcity(state, Resource::Oil))
+        }
+        _ => plant
+            .kind
+            .resources()
+            .first()
+            .map(|&r| fuel_scarcity(state, r))
+            .unwrap_or(0.0),
+    }
+}
+
+/// Estimated elektro cost to buy one full firing (`plant.cost` units) at
+/// current market prices.
+///
+/// - Wind → 0.
+/// - `GasOrOil` → prices the more-available (cheaper) resource.
+/// - If the market cannot supply the full amount from any viable resource,
+///   prices what is available and charges 9 elektro per missing unit (the
+///   maximum slot price across all resource tables) as a conservative overrun.
+pub fn estimate_firing_cost(plant: &PowerPlant, market: &ResourceMarket) -> u32 {
+    if !plant.kind.needs_resources() {
+        return 0;
+    }
+    let amount = plant.cost;
+
+    // Determine the order of resources to try. Hybrids prefer the more-available one.
+    let resources: Vec<Resource> = match plant.kind {
+        PlantKind::GasOrOil => {
+            if market.available(Resource::Gas) >= market.available(Resource::Oil) {
+                vec![Resource::Gas, Resource::Oil]
+            } else {
+                vec![Resource::Oil, Resource::Gas]
+            }
+        }
+        _ => plant.kind.resources(),
+    };
+
+    // Return the cost from the first resource that can fully supply the amount.
+    for &resource in &resources {
+        if let Some(cost) = market.price(resource, amount) {
+            return cost;
+        }
+    }
+
+    // Fallback: market too depleted to supply the full amount from any resource.
+    // Price what's available from the preferred resource and charge max rate for the rest.
+    let resource = resources[0];
+    let avail = market.available(resource);
+    let avail_cost = market.price(resource, avail).unwrap_or(0);
+    let shortfall = amount.saturating_sub(avail) as u32;
+    // 9 is the maximum per-unit price across all resource price tables.
+    avail_cost + shortfall * 9
 }
 
 /// Base desirability score for a plant, using profile weights.
@@ -96,6 +210,12 @@ pub fn plant_score_contextual(
         score -= w.overshoot_weight * projected_surplus as f32;
     }
 
+    // Penalise plants whose fuel is scarce, heavily demanded, or slowly replenished.
+    // Scaled by plant.cost so a thirsty plant on a contested resource loses more.
+    if w.fuel_scarcity_weight > 0.0 && plant.kind.needs_resources() {
+        score -= w.fuel_scarcity_weight * plant_fuel_scarcity(plant, state) * plant.cost as f32;
+    }
+
     score
 }
 
@@ -145,20 +265,34 @@ pub fn should_skip_auction(player: &Player, candidate: &PowerPlant, w: &AuctionW
 }
 
 /// Cash to keep in reserve after winning an auction: fuel for all plants plus city builds.
+///
+/// When `market` is `Some`, uses live market prices (`estimate_firing_cost`) to
+/// value one firing of each plant, so scarce fuels inflate the reserve and push the
+/// bid ceiling down.  When `None`, falls back to the static `plant.cost ×
+/// fuel_reserve_multiplier` estimate (used by isolated unit tests).
 pub fn auction_reserve(
     plant: &PowerPlant,
     player: &Player,
     w: &AuctionWeights,
     buy: &BuyWeights,
+    market: Option<&ResourceMarket>,
 ) -> u32 {
     let mut reserve = 0u32;
     for p in &player.plants {
         if p.kind.needs_resources() {
-            reserve += (p.cost as f32 * buy.fuel_reserve_multiplier) as u32;
+            let fuel_cost = match market {
+                Some(m) => estimate_firing_cost(p, m) as f32,
+                None => p.cost as f32,
+            };
+            reserve += (fuel_cost * buy.fuel_reserve_multiplier) as u32;
         }
     }
     if plant.kind.needs_resources() {
-        reserve += (plant.cost as f32 * buy.fuel_reserve_multiplier) as u32;
+        let fuel_cost = match market {
+            Some(m) => estimate_firing_cost(plant, m) as f32,
+            None => plant.cost as f32,
+        };
+        reserve += (fuel_cost * buy.fuel_reserve_multiplier) as u32;
     }
     reserve += w.city_reserve as u32;
     reserve += w.safety_buffer as u32;
@@ -168,6 +302,11 @@ pub fn auction_reserve(
 /// Deterministic bid ceiling for a plant.
 /// `min_bid` is the effective minimum (1 if the discount token is on this plant,
 /// else the printed plant number).
+///
+/// Pass `market = Some(&state.resources)` in production to have the reserve
+/// calculated from live market prices (scarce fuel → higher reserve → lower
+/// ceiling).  Pass `None` to use the flat `plant.cost × multiplier` estimate
+/// (preserves exact values expected by isolated unit tests).
 pub fn bid_ceiling(
     plant: &PowerPlant,
     player: &Player,
@@ -175,9 +314,10 @@ pub fn bid_ceiling(
     w: &AuctionWeights,
     buy: &BuyWeights,
     min_bid: u32,
+    market: Option<&ResourceMarket>,
 ) -> u32 {
     let listed = min_bid;
-    let reserve = auction_reserve(plant, player, w, buy);
+    let reserve = auction_reserve(plant, player, w, buy, market);
 
     let raw_ceiling = if round == 1 {
         listed

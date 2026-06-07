@@ -44,6 +44,10 @@ pub struct AuctionWeights {
     /// Penalty per city lost when forced to discard at full capacity.
     /// Applied as (capacity_bump - plant.cities) * weight — always ≤ 0 when rack is full.
     pub upgrade_efficiency_weight: f32,
+    /// Score penalty for plants whose fuel is scarce, heavily demanded, or slowly
+    /// replenished.  Applied as `weight × plant_fuel_scarcity × plant.cost` so a
+    /// thirsty plant on a contested resource loses more score.  0.0 disables.
+    pub fuel_scarcity_weight: f32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
