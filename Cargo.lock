@@ -2996,6 +2996,7 @@ dependencies = [
  "egui_extras",
  "futures-util",
  "image",
+ "powergrid-bot-strategy",
  "powergrid-core",
  "powergrid-session",
  "reqwest",

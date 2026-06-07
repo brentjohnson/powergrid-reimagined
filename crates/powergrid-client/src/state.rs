@@ -143,6 +143,8 @@ pub struct AppState {
     // Bottom-right info panel (Space toggles)
     pub bottom_panel_open: bool,
     pub bottom_panel_tab: BottomTab,
+    // Bot valuation popup (local play only — "b" toggles)
+    pub valuation_open: bool,
 
     // Floating action panel positioning (captured from top-bar column rects each frame)
     // Indices: 0=Auction, 1=BuyResources, 2=BuildCities, 3=Bureaucracy
@@ -256,6 +258,7 @@ impl AppState {
             menu_open: false,
             bottom_panel_open: false,
             bottom_panel_tab: BottomTab::EventLog,
+            valuation_open: false,
             fullscreen,
             no_preferences: cli.no_preferences,
             local_name: "Human".to_string(),

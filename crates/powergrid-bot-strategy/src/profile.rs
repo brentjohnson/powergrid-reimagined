@@ -11,43 +11,39 @@ const DEFAULT_PROFILES_TOML: &str = include_str!("../../../assets/bots/default.t
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuctionWeights {
-    pub cities_weight: f32,
-    pub green_bonus: f32,
-    pub efficiency_weight: f32,
-    /// Fuel reserve per resource-consuming plant (multiplied by plant.cost).
+    /// Elektro reserved per resource-consuming plant for fuel (see `auction_reserve`),
+    /// plus a flat allowance kept aside for ~2 city builds.
     pub city_reserve: f32,
+    /// Flat elektro safety buffer on top of `city_reserve` and fuel reserves.
     pub safety_buffer: f32,
-    /// Minimum plant-score improvement to justify replacing a rack plant.
+    /// Minimum total `PlantValue` (Elektro) improvement required to justify
+    /// replacing a rack plant when full — compared against `evaluate_plant(...).total`,
+    /// which already nets out the forced discard.
     pub upgrade_margin: f32,
-    /// Minimum plant score to be worth opening an auction for.
+    /// Minimum `PlantValue` (Elektro) for a plant to be worth opening an auction
+    /// for; doubles as the `Pass` baseline score.
     pub min_open_score: f32,
-    /// Score penalty per city of capacity that would exceed the useful ceiling *after*
-    /// acquiring the candidate plant.  "Useful ceiling" = min(owned + buildable_lookahead,
-    /// end_game_cities).  Higher → bot avoids overshooting more aggressively.
-    pub overshoot_weight: f32,
-    /// How many cities beyond currently owned are considered "usefully planned for"
-    /// when computing the overshoot ceiling.  2 = mild planning ahead; 1 = tight (hard);
-    /// 3+ = relaxed (easy / early game).  The ceiling is always capped at end_game_cities.
+    /// How many cities beyond currently owned are considered "usefully planned
+    /// for" when capping projected income (`useful_city_target`). 2 = mild
+    /// planning ahead; 1 = tight (hard); 3+ = relaxed (easy / early game). The
+    /// target is always capped at `end_game_cities`.
     pub buildable_lookahead: u8,
-    /// Extra elektro per city of capacity gained when computing bid ceiling.
-    pub capacity_premium: f32,
-    /// Capacity threshold at/above which the high-capacity premium activates.
-    pub high_capacity_threshold: u8,
-    /// Score-space bonus per step at/above the threshold (graduated). 0.0 disables.
-    pub high_capacity_bonus: f32,
-    /// Elektro added to the bid ceiling per step at/above the threshold. 0.0 disables.
-    pub high_capacity_bid_premium: f32,
-    // Hard-only features (0.0 in easy/normal):
-    pub opponent_gap_weight: f32,
+    /// Weight on the endgame capacity premium (Elektro per city of gap closed,
+    /// scaled by how close the leader is to the end-game city count). Higher →
+    /// the bot pays more for capacity that helps it cross the finish line first.
     pub endgame_weight: f32,
-    pub pipeline_weight: f32,
-    /// Penalty per city lost when forced to discard at full capacity.
-    /// Applied as (capacity_bump - plant.cities) * weight — always ≤ 0 when rack is full.
-    pub upgrade_efficiency_weight: f32,
-    /// Score penalty for plants whose fuel is scarce, heavily demanded, or slowly
-    /// replenished.  Applied as `weight × plant_fuel_scarcity × plant.cost` so a
-    /// thirsty plant on a contested resource loses more score.  0.0 disables.
-    pub fuel_scarcity_weight: f32,
+    /// Weight on denial value: `denial_weight × (best opponent's projected gain
+    /// from this plant)`. 0.0 disables opponent-aware bidding (easy/normal);
+    /// >0.0 makes the bot pay extra to keep strong plants away from rivals.
+    pub denial_weight: f32,
+    /// Weight on the fuel-risk penalty, applied as
+    /// `fuel_risk_weight × plant_fuel_scarcity × plant.cost × remaining_rounds`
+    /// — a thirsty plant on a scarce/contested resource is worth less in Elektro.
+    pub fuel_risk_weight: f32,
+    /// Weight on the replacement-waste penalty: `replacement_waste_weight ×
+    /// remaining_rounds × (income the discarded plant still contributes)`.
+    /// Applies only when a full-rack purchase forces a discard.
+    pub replacement_waste_weight: f32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,20 +122,16 @@ mod tests {
     }
 
     #[test]
-    fn normal_profile_matches_legacy_constants() {
+    fn normal_profile_auction_weights() {
         let registry = default_registry();
         let w = &registry.normal.auction;
-        // Verify the normal profile reproduces the original magic numbers.
-        assert_eq!(w.cities_weight, 15.0);
-        assert_eq!(w.green_bonus, 25.0);
-        assert_eq!(w.efficiency_weight, 10.0);
         assert_eq!(w.city_reserve, 30.0);
         assert_eq!(w.safety_buffer, 5.0);
-        assert_eq!(w.upgrade_margin, 10.0);
+        assert_eq!(w.upgrade_margin, 20.0);
         assert_eq!(w.min_open_score, 20.0);
-        assert_eq!(w.capacity_premium, 2.0);
-        assert_eq!(w.opponent_gap_weight, 0.0);
-        assert_eq!(w.endgame_weight, 0.0);
+        assert_eq!(w.buildable_lookahead, 2);
+        // Normal is opponent-blind: denial is a hard-only feature.
+        assert_eq!(w.denial_weight, 0.0);
         assert_eq!(registry.normal.jitter, 0.3);
         assert_eq!(registry.normal.max_jitter, 3);
         assert_eq!(registry.normal.buy.fuel_reserve_multiplier, 4.0);
@@ -149,34 +141,37 @@ mod tests {
     fn hard_profile_has_nonzero_opponent_features() {
         let registry = default_registry();
         let w = &registry.hard.auction;
-        assert!(w.opponent_gap_weight > 0.0);
-        assert!(w.endgame_weight > 0.0);
-        assert!(w.pipeline_weight > 0.0);
+        assert!(w.denial_weight > 0.0, "hard should value denying opponents");
+        assert!(w.endgame_weight > 0.0, "hard should value endgame capacity");
+        assert!(w.fuel_risk_weight > 0.0, "hard should price fuel risk");
         assert!(registry.hard.build.block_weight > 0.0);
     }
 
     #[test]
-    fn high_capacity_premium_tiers() {
+    fn easy_and_normal_profiles_are_opponent_blind() {
         let registry = default_registry();
-        assert!(
-            registry.normal.auction.high_capacity_bonus > 0.0,
-            "normal should have high-capacity score bonus"
+        // Denial requires reasoning about every opponent's board state — reserved
+        // for the hard tier. Easy/normal must keep it disabled.
+        assert_eq!(registry.easy.auction.denial_weight, 0.0);
+        assert_eq!(registry.normal.auction.denial_weight, 0.0);
+    }
+
+    #[test]
+    fn weight_tiers_escalate_with_difficulty() {
+        let registry = default_registry();
+        let (easy, normal, hard) = (
+            &registry.easy.auction,
+            &registry.normal.auction,
+            &registry.hard.auction,
         );
-        assert!(
-            registry.normal.auction.high_capacity_bid_premium > 0.0,
-            "normal should have high-capacity bid premium"
-        );
-        assert!(
-            registry.hard.auction.high_capacity_bonus > 0.0,
-            "hard should have high-capacity score bonus"
-        );
-        assert_eq!(
-            registry.easy.auction.high_capacity_bonus, 0.0,
-            "easy should have no high-capacity bonus"
-        );
-        assert_eq!(
-            registry.easy.auction.high_capacity_bid_premium, 0.0,
-            "easy should have no high-capacity bid premium"
-        );
+        // Harder bots price fuel risk and replacement waste more aggressively...
+        assert!(easy.fuel_risk_weight <= normal.fuel_risk_weight);
+        assert!(normal.fuel_risk_weight <= hard.fuel_risk_weight);
+        assert!(easy.replacement_waste_weight <= normal.replacement_waste_weight);
+        assert!(normal.replacement_waste_weight <= hard.replacement_waste_weight);
+        // ...and plan capacity further ahead of their current city count (lower
+        // lookahead = tighter ceiling = more disciplined).
+        assert!(hard.buildable_lookahead <= normal.buildable_lookahead);
+        assert!(normal.buildable_lookahead <= easy.buildable_lookahead);
     }
 }

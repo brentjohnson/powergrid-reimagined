@@ -325,3 +325,342 @@ That's why the same plant can be a bargain at 34 in one game and a terrible purc
 [2]: https://www.reddit.com/r/boardgames/comments/cost7k?utm_source=chatgpt.com "Power Grid rules"
 [3]: https://www.myboardgameguides.com/game-strategy/game-specific-strategy/power-grid-strategy-tips-dos-and-donts/?utm_source=chatgpt.com "Power Grid Strategy Tips: Do’s and Don’ts - My Board Game Guides"
 [4]: https://www.reddit.com/r/boardgames/comments/1p1arw3/is_power_grid_that_difficult/?utm_source=chatgpt.com "Is Power Grid that difficult?"
+
+If you're trying to build an actual valuation model, I'd treat every term as **expected future Elektro impact**. The key is to convert everything into a common currency (future money earned or saved).
+
+## Overall Formula
+
+```text
+PlantValue =
+    IncrementalIncome
+  + FuelSavings
+  + CapacityPremium
+  + DenialValue
+  + MarketManipulationValue
+  - ResourceRisk
+  - OpportunityCost
+  - ReplacementWaste
+```
+
+---
+
+# 1. Incremental Income
+
+How much extra money will this plant earn before the game ends?
+
+```text
+AdditionalCitiesPowered =
+    NewPortfolioCapacity - OldPortfolioCapacity
+
+IncrementalIncome =
+    AdditionalCitiesPowered
+    * AvgIncomePerCityPerRound
+    * RemainingRounds
+```
+
+More accurately:
+
+```text
+IncrementalIncome =
+Σ (Income(NewCapacity_t) - Income(OldCapacity_t))
+```
+
+for each remaining round.
+
+Example:
+
+```text
+Current capacity = 10
+New capacity = 14
+
+Income(14) = 112
+Income(10) = 85
+
+Gain = 27 per round
+
+4 rounds remaining
+
+IncrementalIncome = 108
+```
+
+---
+
+# 2. Fuel Savings
+
+How much cheaper is this plant to operate?
+
+```text
+FuelCostPerRound =
+    FuelConsumed × ExpectedFuelPrice
+
+FuelSavings =
+    (OldPlantFuelCost
+     - NewPlantFuelCost)
+    × RemainingRounds
+```
+
+Example:
+
+```text
+Old plant:
+3 coal @ 5 = 15
+
+New plant:
+2 coal @ 5 = 10
+
+Savings = 5/round
+
+4 rounds left
+
+FuelSavings = 20
+```
+
+---
+
+# 3. Capacity Premium
+
+Some capacity matters more than its direct income.
+
+Crossing critical thresholds has value.
+
+```text
+CapacityPremium =
+    ThresholdBonus
+    × ProbabilityThresholdMatters
+```
+
+Example:
+
+```text
+Current capacity = 18
+
+Need 20 to compete for win
+
+New plant raises capacity to 21
+
+ThresholdBonus = 40
+Probability = .75
+
+CapacityPremium = 30
+```
+
+This term is highly subjective.
+
+---
+
+# 4. Denial Value
+
+Value gained by preventing an opponent from acquiring the plant.
+
+```text
+DenialValue =
+    OpponentGain
+    × ProbabilityOpponentGetsPlant
+```
+
+Where
+
+```text
+OpponentGain =
+      OpponentIncomeIncrease
+    + OpponentFuelSavings
+    + OpponentCapacityPremium
+```
+
+Example:
+
+```text
+Opponent would gain:
+
+30 future income
+15 fuel savings
+
+= 45 total value
+
+80% chance they'd get it
+
+DenialValue = 36
+```
+
+---
+
+# 5. Market Manipulation Value
+
+Value of causing a different future plant to enter the market.
+
+```text
+MarketManipulationValue =
+Σ(
+    FuturePlantValue
+    × ProbabilityItAppears
+    × ProbabilityYouAcquireIt
+)
+```
+
+Example:
+
+```text
+Buying plant 34 reveals plant 46.
+
+Plant 46 worth +20 to you.
+
+60% chance you'll obtain it.
+
+Value = 12
+```
+
+This is one of the hardest terms to estimate.
+
+---
+
+# 6. Resource Risk
+
+Penalty for future fuel uncertainty.
+
+```text
+ResourceRisk =
+    ExpectedExtraFuelCost
+    × RemainingRounds
+```
+
+More formally:
+
+```text
+ResourceRisk =
+Σ(
+    FutureFuelPrice
+    - CurrentFuelPrice
+)
+× ConsumptionRate
+```
+
+Example:
+
+```text
+Expect coal to rise by 3.
+
+Consume 3 coal.
+
+4 rounds left.
+
+Risk = 36
+```
+
+---
+
+# 7. Opportunity Cost
+
+Money that cannot be spent elsewhere.
+
+```text
+OpportunityCost =
+    LostCityExpansionValue
+  + LostFuelPurchaseValue
+  + LostFutureAuctionValue
+```
+
+Example:
+
+You spend 50 instead of 35.
+
+```text
+Overbid = 15
+```
+
+That 15 might represent:
+
+```text
+1 city connection = 10 value
+fuel stockpile = 5 value
+
+OpportunityCost = 15
+```
+
+---
+
+# 8. Replacement Waste
+
+How much of the replaced plant's value are you throwing away?
+
+```text
+ReplacementWaste =
+    RemainingUsefulValueOfDiscardedPlant
+```
+
+One approach:
+
+```text
+ReplacementWaste =
+    RemainingRounds
+    × NetIncomeGeneratedByDiscardedPlant
+```
+
+Example:
+
+```text
+Plant 20 still powers 5 cities.
+
+Would have remained useful for 3 rounds.
+
+Produces 8 net value/round.
+
+ReplacementWaste = 24
+```
+
+---
+
+# Practical Version
+
+During an actual game, I'd use a much simpler approximation:
+
+```text
+PlantValue ≈
+
+(Expected Income Gain)
++
+(Expected Fuel Savings)
++
+(Endgame Capacity Bonus)
++
+(Denial Bonus)
+
+-
+(Expected Fuel Risk)
+-
+(Replacement Waste)
+```
+
+Then set:
+
+```text
+MaximumBid = PlantValue
+```
+
+and never exceed it.
+
+---
+
+## What Strong Players Actually Do
+
+Most experienced Power Grid players implicitly estimate:
+
+```text
+PlantValue ≈
+
+10 × AdditionalCitiesPowered
+
++ FuelEfficiencyBonus
+
++ EndgameBonus
+
++ DenialBonus
+```
+
+Where:
+
+* Additional city powered ≈ 8–15 Elektro value
+* Efficient hybrid plant ≈ +5 to +15
+* Crossing a winning threshold ≈ +20 to +50
+* Blocking a key opponent ≈ +10 to +40
+
+The exact numbers vary by stage of the game, but thinking in those terms gets surprisingly close to expert auction decisions. The strongest players are constantly estimating the *future net worth* of capacity rather than the printed plant number.

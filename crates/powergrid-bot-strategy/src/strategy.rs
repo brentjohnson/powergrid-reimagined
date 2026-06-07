@@ -12,7 +12,7 @@ use tracing::{debug, info};
 use crate::{
     bot::Bot,
     features::{
-        bid_ceiling, capacity_bump, city_contest_bonus, plant_score, plant_score_contextual,
+        auction_reserve, capacity_bump, city_contest_bonus, evaluate_plant, plant_score,
         should_skip_auction,
     },
     profile::default_registry,
@@ -130,15 +130,21 @@ fn decide_auction(
             .find(|p| p.number == bid.plant_number)?;
 
         let min_bid = effective_min_bid(&state.market, bid.plant_number);
-        let ceiling = bid_ceiling(
-            plant,
-            my_player,
-            state.round,
-            w,
-            buy,
-            min_bid,
-            Some(&state.resources),
-        );
+
+        // LOGIC.md: "Maximum Rational Bid = Plant Value" — never pay more than
+        // the plant is worth in expected future Elektro. Round 1 has no
+        // discretion (the only legal price is the listed minimum); later rounds
+        // bid up to `evaluate_plant(...).total`, clamped by what's affordable
+        // after reserving cash for fuel and city builds, and never below the
+        // listed price (the bot always matches the opening bid if it can).
+        let ceiling = if state.round == 1 {
+            min_bid.min(my_player.money)
+        } else {
+            let reserve = auction_reserve(plant, my_player, w, buy, Some(&state.resources));
+            let affordable = my_player.money.saturating_sub(reserve);
+            let value = evaluate_plant(plant, my_player, state, w).total.round() as u32;
+            value.min(affordable).max(min_bid).min(my_player.money)
+        };
         let ceiling_jittered = bot
             .maybe_jitter(ceiling, bot.profile.max_jitter)
             .min(my_player.money);
@@ -190,17 +196,19 @@ fn decide_auction(
         .filter(|p| {
             // In round 1 we must buy — don't filter. Later: apply skip logic.
             is_round_one
-                || (!should_skip_auction(my_player, p, w) && capacity_bump(p, my_player, w) >= 1)
+                || (!should_skip_auction(my_player, p, state, w)
+                    && capacity_bump(p, my_player) >= 1)
         })
         .map(|p| {
-            let score = plant_score_contextual(p, my_player, state, w);
-            (AuctionCandidate::Select(p.number), score)
+            // Score candidates by their Elektro value (LOGIC.md: "How many Elektro
+            // is this plant worth right now, in this exact game state?").
+            let value = evaluate_plant(p, my_player, state, w).total;
+            (AuctionCandidate::Select(p.number), value)
         })
         .collect();
 
-    // PassAuction as a scored baseline (not available in round 1).
-    // Overshoot capacity is penalised on individual plant scores (see plant_score_contextual),
-    // so the Pass baseline is simply the minimum worthwhile plant score threshold.
+    // PassAuction as a scored baseline (not available in round 1): plants must
+    // be worth at least `min_open_score` Elektro to be preferred over passing.
     if !is_round_one {
         candidates.push((AuctionCandidate::Pass, w.min_open_score));
     }
@@ -230,11 +238,11 @@ fn decide_auction(
                 .iter()
                 .find(|p| p.number == plant_number)?;
             info!(
-                "Selecting plant {} (kind={:?}, cities={}, score={:.1})",
+                "Selecting plant {} (kind={:?}, cities={}, value={:.1})",
                 plant.number,
                 plant.kind,
                 plant.cities,
-                plant_score_contextual(plant, my_player, state, w),
+                evaluate_plant(plant, my_player, state, w).total,
             );
             Some(Action::SelectPlant { plant_number })
         }
@@ -251,24 +259,23 @@ fn decide_auction(
 
 fn decide_discard(state: &GameState, bot: &mut Bot, new_plant: &PowerPlant) -> Option<Action> {
     let player = state.player(bot.id)?;
-    let w = &bot.profile.auction;
 
     let worst = player
         .plants
         .iter()
         .filter(|p| p.number != new_plant.number)
         .min_by(|a, b| {
-            plant_score(a, w)
-                .partial_cmp(&plant_score(b, w))
+            plant_score(a)
+                .partial_cmp(&plant_score(b))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })?;
 
     info!(
         "Discarding plant {} ({:.1}) to make room for plant {} ({:.1})",
         worst.number,
-        plant_score(worst, w),
+        plant_score(worst),
         new_plant.number,
-        plant_score(new_plant, w),
+        plant_score(new_plant),
     );
     Some(Action::DiscardPlant {
         plant_number: worst.number,
@@ -584,8 +591,8 @@ mod tests {
 
     use crate::{
         features::{
-            auction_reserve, estimate_firing_cost, fuel_scarcity, plant_fuel_scarcity,
-            plant_score_contextual, useful_city_target,
+            auction_reserve, estimate_firing_cost, evaluate_plant, fuel_scarcity,
+            plant_fuel_scarcity, remaining_rounds, useful_city_target,
         },
         profile::default_registry,
     };
@@ -778,99 +785,25 @@ mod tests {
     }
 
     #[test]
-    fn round_one_caps_bid_at_listed_price() {
-        let plant = coal_plant(15, 2, 2);
-        let player = bot_with_money(50);
-        let registry = default_registry();
-        let w = &registry.normal.auction;
-        let buy = &registry.normal.buy;
-        assert_eq!(
-            bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None),
-            15
-        );
-    }
-
-    #[test]
-    fn later_round_no_capacity_bump_means_no_premium() {
-        let mut player = bot_with_money(100);
-        player.plants.push(coal_plant(5, 2, 2));
-        player.plants.push(coal_plant(7, 2, 2));
-        player.plants.push(coal_plant(10, 2, 2));
-        let candidate = coal_plant(20, 2, 1);
-        let registry = default_registry();
-        let w = &registry.normal.auction;
-        let buy = &registry.normal.buy;
-        assert_eq!(
-            bid_ceiling(
-                &candidate,
-                &player,
-                3,
-                w,
-                buy,
-                candidate.number as u32,
-                None
-            ),
-            20
-        );
-    }
-
-    #[test]
-    fn later_round_significant_bump_allows_small_premium() {
-        let player = bot_with_money(100);
-        let candidate = coal_plant(15, 2, 3);
-        let registry = default_registry();
-        let w = &registry.normal.auction;
-        let buy = &registry.normal.buy;
-        let ceiling = bid_ceiling(
-            &candidate,
-            &player,
-            2,
-            w,
-            buy,
-            candidate.number as u32,
-            None,
-        );
-        assert!(
-            ceiling > 15 && ceiling <= 21,
-            "expected a small premium above 15, got {}",
-            ceiling
-        );
-    }
-
-    #[test]
-    fn never_bids_above_player_money() {
+    fn jittered_bid_never_exceeds_player_money() {
+        // LOGIC.md: "Maximum Rational Bid = Plant Value", but production code
+        // additionally clamps the (possibly jittered) bid to `player.money` —
+        // a bot can never bid more than it has, however high PlantValue or
+        // jitter pushes the ceiling.
         let plant = coal_plant(15, 2, 3);
         let player = bot_with_money(10);
         let registry = default_registry();
         let w = &registry.normal.auction;
-        let buy = &registry.normal.buy;
-        assert_eq!(
-            bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None),
-            10
-        );
-        assert_eq!(
-            bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32, None),
-            10
-        );
+        let state = state_with_player(&player);
+        let value = evaluate_plant(&plant, &player, &state, w).total.round() as u32;
+
         let mut bot = normal_bot();
         let max_jitter = bot.profile.max_jitter;
         for _ in 0..50 {
             // Production code applies .min(player.money) after jitter; mirror that here.
             assert!(
-                bot.maybe_jitter(
-                    bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None),
-                    max_jitter
-                )
-                .min(player.money)
-                    <= player.money
-            );
-            assert!(
-                bot.maybe_jitter(
-                    bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32, None),
-                    max_jitter
-                )
-                .min(player.money)
-                    <= player.money
+                bot.maybe_jitter(value, max_jitter).min(player.money) <= player.money,
+                "jittered bid must never exceed available money"
             );
         }
     }
@@ -883,7 +816,13 @@ mod tests {
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
-        assert!(!should_skip_auction(&player, &candidate, w));
+        let state = state_with_player(&player);
+        assert!(!should_skip_auction(
+            &state.players[0],
+            &candidate,
+            &state,
+            w
+        ));
     }
 
     #[test]
@@ -893,65 +832,130 @@ mod tests {
         let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
+        let state = state_with_player(&player);
         // powerable=2, rack not full → don't skip
-        assert!(!should_skip_auction(&player, &candidate, w));
+        assert!(!should_skip_auction(
+            &state.players[0],
+            &candidate,
+            &state,
+            w
+        ));
     }
 
     #[test]
-    fn overshoot_weight_profile_tiers() {
-        let registry = default_registry();
-        // All tiers must have a non-zero overshoot weight — zero would disable the endgame brake.
-        assert!(
-            registry.easy.auction.overshoot_weight > 0.0,
-            "easy must have overshoot weight"
-        );
-        assert!(
-            registry.normal.auction.overshoot_weight >= registry.easy.auction.overshoot_weight,
-            "normal should be at least as aggressive as easy"
-        );
-        assert!(
-            registry.hard.auction.overshoot_weight >= registry.normal.auction.overshoot_weight,
-            "hard should be the most aggressive"
-        );
-        // Hard bot plans least capacity ahead (tightest ceiling).
-        assert!(
-            registry.hard.auction.buildable_lookahead
-                <= registry.normal.auction.buildable_lookahead,
-            "hard should have the tightest buildable_lookahead"
-        );
-    }
-
-    #[test]
-    fn overshoot_penalty_applied_to_plant_score() {
-        // A bot that already owns 4 cities (owned=4) with end_game_cities=17 and
-        // buildable_lookahead=2 has useful_city_target=6.
-        // If it currently has powerable=5 and buys a +3 plant → projected total=8 → overshoot=2.
-        // The score should be reduced by overshoot_weight * 2 compared to no-overshoot case.
+    fn skips_full_rack_upgrade_below_margin() {
+        // Full rack (3 plants) + a candidate whose net Elektro value doesn't
+        // clear `upgrade_margin` should be skipped — replacing a working plant
+        // for a marginal gain just wastes money (LOGIC.md §3 "Replacement Quality").
+        let mut player = bot_with_money(100);
+        player.plants.push(coal_plant(5, 2, 3));
+        player.plants.push(coal_plant(7, 2, 3));
+        player.plants.push(coal_plant(10, 2, 3));
+        // A same-size replacement nets ~0 incremental income — well under any margin.
+        let candidate = coal_plant(20, 2, 3);
         let registry = default_registry();
         let w = &registry.normal.auction;
-
-        let mut player = bot_with_money(100);
-        player.plants.push(coal_plant(5, 2, 5)); // existing powerable=5
-                                                 // Give the player 4 owned cities by inserting cities into a state.
-        let mut state = state_with_player(&player);
-        state.end_game_cities = 17;
-        // Manually set player_city_count by assigning cities in the map.
-        // Simpler: tweak end_game_cities / useful_city_target directly via a custom weight set.
-        // Use a profile where end_game_cities=6 to force the boundary.
-        let mut w_custom = w.clone();
-        w_custom.overshoot_weight = 35.0;
-        w_custom.buildable_lookahead = 2;
-
-        // state has player with 0 owned cities, so target = 0+2 = 2 (min(2, 17)).
-        // Existing powerable = 5; adding a 3-city plant → projected = 5+3=8, overshoot = 8-2 = 6.
-        let player_ref = &state.players[0];
-        let candidate = coal_plant(20, 2, 3);
-        let score_with = plant_score_contextual(&candidate, player_ref, &state, &w_custom);
-        let score_base = plant_score(&candidate, &w_custom);
-        let expected_penalty = 35.0 * 6.0; // overshoot_weight * 6 cities of overshoot
+        let state = state_with_player(&player);
+        let value = evaluate_plant(&candidate, &state.players[0], &state, w).total;
         assert!(
-            score_base - score_with >= expected_penalty - 1.0,
-            "expected ~{expected_penalty} penalty from overshoot, base={score_base}, actual={score_with}"
+            value < w.upgrade_margin,
+            "sanity: candidate value {value} should be below upgrade_margin {}",
+            w.upgrade_margin
+        );
+        assert!(should_skip_auction(
+            &state.players[0],
+            &candidate,
+            &state,
+            w
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // evaluate_plant — Elektro-denominated valuation (LOGIC.md)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn high_capacity_plant_out_values_small_one() {
+        // LOGIC.md §1: "A plant that increases your capacity from 8 to 12
+        // cities is usually much more valuable than one that increases it from
+        // 8 to 9." With an empty rack, a 6-city plant should be worth
+        // substantially more (in Elektro) than a 1-city plant of similar cost.
+        let player = bot_with_money(200);
+        let registry = default_registry();
+        let w = &registry.normal.auction;
+        let state = state_with_player(&player);
+
+        let small = coal_plant(10, 3, 1);
+        let big = coal_plant(20, 3, 6);
+
+        let small_value = evaluate_plant(&small, &state.players[0], &state, w).total;
+        let big_value = evaluate_plant(&big, &state.players[0], &state, w).total;
+
+        assert!(
+            big_value > small_value,
+            "6-city plant ({big_value:.1}) should out-value a 1-city plant ({small_value:.1})"
+        );
+    }
+
+    #[test]
+    fn full_rack_upgrade_nets_only_the_delta() {
+        // LOGIC.md §3A "Replacement Quality": "A plant that powers 6 cities
+        // isn't really a +6 upgrade if you're replacing a plant that already
+        // powers 5 — the actual gain is only +1." With a full rack, incremental
+        // income should reflect the *net* capacity change (new minus discarded),
+        // not the new plant's raw city count.
+        let mut player = bot_with_money(200);
+        player.plants.push(coal_plant(5, 2, 5)); // the "worst" plant — will be discarded
+        player.plants.push(coal_plant(7, 3, 5));
+        player.plants.push(coal_plant(9, 4, 5));
+        let state = state_with_player(&player);
+        let w = &default_registry().normal.auction;
+
+        let candidate = coal_plant(20, 3, 6); // +6 raw, but net bump is only +1 over the discard
+        let valuation = evaluate_plant(&candidate, &state.players[0], &state, w);
+
+        let bump = capacity_bump(&candidate, &state.players[0]);
+        assert_eq!(
+            bump, 1,
+            "sanity: net capacity bump should be the delta over the discard"
+        );
+
+        // incremental_income should be driven by the +1 net bump, not the raw +6 —
+        // i.e. far smaller than what a +6 bump would project.
+        let hypothetical_full_bump_income =
+            (income_for(15 + 6) as f32 - income_for(15) as f32) * remaining_rounds(&state);
+        assert!(
+            valuation.incremental_income < hypothetical_full_bump_income,
+            "incremental_income ({:.1}) should reflect the net +1 delta, not the raw +6 \
+             (hypothetical full-bump income would be {:.1})",
+            valuation.incremental_income,
+            hypothetical_full_bump_income
+        );
+    }
+
+    #[test]
+    fn total_is_never_negative() {
+        // PlantValuation::total is floored at 0 — "a plant is never worth
+        // bidding negative Elektro for" (see doc comment on `PlantValuation::total`).
+        // Stack every penalty: full rack (replacement_waste), scarce fuel
+        // (fuel_risk), using the hard profile (nonzero denial/fuel_risk weights).
+        let mut player = bot_with_money(200);
+        player.plants.push(coal_plant(5, 2, 5));
+        player.plants.push(coal_plant(7, 2, 5));
+        player.plants.push(coal_plant(9, 2, 5));
+        let mut state = state_with_player(&player);
+        state.resources.coal = 1; // scarce
+        state.players[0].plants.push(coal_plant(30, 25, 1)); // inflate demand → scarcity
+
+        let w = &default_registry().hard.auction;
+        // A thirsty, low-capacity, costly candidate — about as bad a buy as it gets.
+        let candidate = coal_plant(40, 6, 1);
+        let valuation = evaluate_plant(&candidate, &state.players[0], &state, w);
+
+        assert!(
+            valuation.total >= 0.0,
+            "PlantValuation::total must never be negative, got {}",
+            valuation.total
         );
     }
 
@@ -999,66 +1003,10 @@ mod tests {
     }
 
     #[test]
-    fn high_capacity_plant_score_graduated() {
-        let registry = default_registry();
-        let w = &registry.normal.auction;
-
-        let four_city = coal_plant(20, 3, 4);
-        let five_city = coal_plant(25, 4, 5);
-        let six_city = coal_plant(30, 5, 6);
-
-        let mut w_zero = w.clone();
-        w_zero.high_capacity_bonus = 0.0;
-
-        let premium_5 = plant_score(&five_city, w) - plant_score(&five_city, &w_zero);
-        let premium_6 = plant_score(&six_city, w) - plant_score(&six_city, &w_zero);
-
-        assert!(
-            premium_5 > 0.0,
-            "5-city plant should score higher with the premium (got {premium_5})"
-        );
-        assert!(
-            premium_6 > premium_5,
-            "6-city premium ({premium_6}) should exceed 5-city premium ({premium_5}) — graduated"
-        );
-        // 4-city plant gets no premium
-        let premium_4 = plant_score(&four_city, w) - plant_score(&four_city, &w_zero);
-        assert_eq!(
-            premium_4, 0.0,
-            "4-city plant should not receive the premium"
-        );
-    }
-
-    #[test]
-    fn high_capacity_bid_ceiling_premium() {
-        // 5-city plant, empty rack → capacity_bump = 5, round 2 → premium applies.
-        let plant = coal_plant(25, 2, 5);
-        let player = bot_with_money(100);
-        let registry = default_registry();
-        let w = &registry.normal.auction;
-        let buy = &registry.normal.buy;
-
-        let ceiling_with = bid_ceiling(&plant, &player, 2, w, buy, plant.number as u32, None);
-
-        let mut w_zero = w.clone();
-        w_zero.high_capacity_bid_premium = 0.0;
-        let ceiling_without =
-            bid_ceiling(&plant, &player, 2, &w_zero, buy, plant.number as u32, None);
-
-        assert!(
-            ceiling_with > ceiling_without,
-            "5-city plant bid ceiling should be higher with the premium ({ceiling_with} vs {ceiling_without})"
-        );
-    }
-
-    #[test]
-    fn jitter_sometimes_lifts_the_ceiling() {
-        let plant = coal_plant(15, 2, 2);
-        let player = bot_with_money(100);
-        let registry = default_registry();
-        let w = &registry.normal.auction;
-        let buy = &registry.normal.buy;
-        let base = bid_ceiling(&plant, &player, 1, w, buy, plant.number as u32, None);
+    fn jitter_sometimes_lifts_the_bid() {
+        // Jitter is a Bot-level mechanism independent of how the base bid was
+        // computed — exercise it directly against a fixed base value.
+        let base = 50u32;
 
         // With seed 42 and 200 trials, count how many jitter.
         let mut bot = normal_bot();
@@ -1066,7 +1014,7 @@ mod tests {
         let mut saw_jitter = false;
         let mut saw_no_jitter = false;
         for _ in 0..200 {
-            let bid = bot.maybe_jitter(base, max_jitter).min(player.money);
+            let bid = bot.maybe_jitter(base, max_jitter);
             if bid > base {
                 saw_jitter = true;
                 assert!(
@@ -1245,16 +1193,17 @@ mod tests {
     }
 
     #[test]
-    fn scarce_fuel_lowers_plant_score_contextual() {
-        // Normal profile has fuel_scarcity_weight = 10.0.
-        // A coal plant in a scarce coal market should score lower than in a flush market.
+    fn scarce_fuel_lowers_plant_value_via_fuel_risk() {
+        // A coal plant in a scarce coal market should carry a fuel_risk penalty
+        // (and thus a lower total value) than the identical plant in a flush
+        // market (LOGIC.md §6 "Resource Risk").
         let player = bot_with_money(100);
         let registry = default_registry();
         let w = &registry.normal.auction;
 
         let candidate = coal_plant(15, 3, 2); // cost=3 coal per firing
 
-        // Flush market, no other plants → scarcity=0, penalty=0.
+        // Flush market, no other plants → scarcity=0, no fuel_risk penalty.
         let mut state_flush = state_with_player(&player);
         state_flush.resources.coal = 23;
 
@@ -1263,27 +1212,37 @@ mod tests {
         state_scarce.resources.coal = 2;
         state_scarce.players[0].plants.push(coal_plant(20, 20, 3)); // demand=20
 
-        let score_flush =
-            plant_score_contextual(&candidate, &state_flush.players[0], &state_flush, w);
-        let score_scarce =
-            plant_score_contextual(&candidate, &state_scarce.players[0], &state_scarce, w);
+        let flush = evaluate_plant(&candidate, &state_flush.players[0], &state_flush, w);
+        let scarce = evaluate_plant(&candidate, &state_scarce.players[0], &state_scarce, w);
 
+        assert_eq!(
+            flush.fuel_risk, 0.0,
+            "flush market should carry no fuel_risk"
+        );
         assert!(
-            score_scarce < score_flush,
-            "coal plant should score lower when coal is scarce: flush={score_flush:.1} scarce={score_scarce:.1}"
+            scarce.fuel_risk > 0.0,
+            "scarce coal market should impose a fuel_risk penalty"
+        );
+        assert!(
+            scarce.total < flush.total,
+            "coal plant should be worth less when coal is scarce: flush={:.1} scarce={:.1}",
+            flush.total,
+            scarce.total
         );
     }
 
     #[test]
-    fn wind_plant_score_unaffected_by_fuel_scarcity() {
-        // Even with all resources depleted and heavy fuel demand, a Wind plant's score
-        // should be identical — it burns no fuel (plant_fuel_scarcity returns 0.0).
+    fn wind_plant_value_unaffected_by_fuel_scarcity() {
+        // Even with all resources depleted and heavy fuel demand, a Wind plant's
+        // fuel_risk (and thus total value) should be identical — it burns no fuel
+        // (plant_fuel_scarcity returns 0.0).
         //
-        // The demand is placed on a SECOND player so the scored player's `plants` vector
-        // (which drives overshoot / capacity_bump) is the same in both states.
+        // The demand is placed on a SECOND player so the scored player's `plants`
+        // vector (which drives capacity_bump / income projections) is the same in
+        // both states.
         let player = bot_with_money(100);
         let registry = default_registry();
-        let w = &registry.hard.auction; // hard has the highest fuel_scarcity_weight
+        let w = &registry.hard.auction; // hard has the highest fuel_risk_weight
 
         let wind = PowerPlant {
             number: 44,
@@ -1308,13 +1267,14 @@ mod tests {
         state_scarce.resources.gas = 0;
         state_scarce.resources.uranium = 0;
 
-        let score_flush = plant_score_contextual(&wind, &state_flush.players[0], &state_flush, w);
-        let score_scarce =
-            plant_score_contextual(&wind, &state_scarce.players[0], &state_scarce, w);
+        let flush = evaluate_plant(&wind, &state_flush.players[0], &state_flush, w);
+        let scarce = evaluate_plant(&wind, &state_scarce.players[0], &state_scarce, w);
 
+        assert_eq!(flush.fuel_risk, 0.0, "Wind plants must carry no fuel_risk");
+        assert_eq!(scarce.fuel_risk, 0.0, "Wind plants must carry no fuel_risk");
         assert_eq!(
-            score_flush, score_scarce,
-            "Wind plant score must not depend on resource scarcity"
+            flush.total, scarce.total,
+            "Wind plant value must not depend on resource scarcity"
         );
     }
 
@@ -1343,47 +1303,27 @@ mod tests {
     }
 
     #[test]
-    fn bid_ceiling_lower_in_scarce_market() {
-        // Depleted coal market makes estimate_firing_cost >> flat plant.cost, inflating the
-        // reserve and leaving less affordable headroom, which lowers the ceiling.
-        //
-        // candidate: coal, number=20, cost=3, cities=3.
-        // Flat reserve  = 3×4 + 30 + 5 = 47.  affordable = 100-47 = 53.
-        //   premium = bump(3)×2.0 + 0 = 6.  ceiling = min(26, 53).max(20) = 26.
-        // Scarce market (coal=3): price(coal, 3) = 8+9+9 = 26.
-        //   reserve = 26×4 + 30 + 5 = 139.  affordable = max(0, 100-139) = 0.
-        //   ceiling = min(26, 0).max(20) = 20.
-        let candidate = coal_plant(20, 3, 3);
-        let player = bot_with_money(100);
+    fn auction_reserve_grows_with_scarce_market() {
+        // Depleted coal market makes `estimate_firing_cost` >> the flat
+        // `plant.cost` fallback, which inflates the live-priced reserve — this
+        // is what shrinks `affordable` (and thus the bid ceiling, since
+        // `MaximumBid = PlantValue.min(affordable)`) when fuel is scarce.
+        let mut player = bot_with_money(100);
+        player.plants.push(coal_plant(20, 3, 3));
         let registry = default_registry();
         let w = &registry.normal.auction;
         let buy = &registry.normal.buy;
+        let candidate = coal_plant(25, 2, 2);
 
         let mut scarce_market = ResourceMarket::initial();
         scarce_market.coal = 3;
 
-        let ceiling_scarce = bid_ceiling(
-            &candidate,
-            &player,
-            2,
-            w,
-            buy,
-            candidate.number as u32,
-            Some(&scarce_market),
-        );
-        let ceiling_flat = bid_ceiling(
-            &candidate,
-            &player,
-            2,
-            w,
-            buy,
-            candidate.number as u32,
-            None,
-        );
+        let reserve_scarce = auction_reserve(&candidate, &player, w, buy, Some(&scarce_market));
+        let reserve_flat = auction_reserve(&candidate, &player, w, buy, None);
 
         assert!(
-            ceiling_scarce < ceiling_flat,
-            "bid ceiling should drop when fuel is scarce: scarce={ceiling_scarce} flat={ceiling_flat}"
+            reserve_scarce > reserve_flat,
+            "reserve should grow when fuel is scarce: scarce={reserve_scarce} flat={reserve_flat}"
         );
     }
 

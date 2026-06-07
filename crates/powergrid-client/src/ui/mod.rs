@@ -12,10 +12,15 @@ mod register;
 mod room_browser;
 mod top_panel;
 
-use egui::RichText;
+use egui::{Color32, RichText};
 use phases::{
     auction_panel, build_cities_panel, bureaucracy_panel, buy_resources_panel, discard_plant_panel,
     discard_resource_panel, power_cities_fuel_panel,
+};
+use powergrid_bot_strategy::{
+    default_registry,
+    features::{evaluate_plant, PlantValuation},
+    BotProfile,
 };
 use powergrid_core::types::{Phase, PlayerColor, PlayerId};
 
@@ -55,6 +60,16 @@ pub fn ui_system(
         && ctx.input(|i| i.key_pressed(egui::Key::Space))
     {
         state.bottom_panel_open = !state.bottom_panel_open;
+    }
+
+    // Bot valuation popup — local play only ("local" is the fixed room name
+    // start_local_session uses; see local.rs).
+    if matches!(state.screen, Screen::Game)
+        && state.current_room.as_deref() == Some("local")
+        && !ctx.wants_keyboard_input()
+        && ctx.input(|i| i.key_pressed(egui::Key::B))
+    {
+        state.valuation_open = !state.valuation_open;
     }
 
     let mut action = UiAction::None;
@@ -198,6 +213,11 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
 
     floating_action_panel(ctx, state, channels, &gs, my_id);
 
+    // ── Bot valuation popup ("b" toggles, local play only) ────────────────────
+    if state.current_room.as_deref() == Some("local") {
+        valuation_window(ctx, state, &gs, my_id);
+    }
+
     // ── Bottom-right info panel (Space or toggle button) ──────────────────────
     if state.bottom_panel_open {
         bottom_info_panel(ctx, state, &gs);
@@ -215,6 +235,230 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
                 }
             });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Bot valuation popup ("b" key, local play only)
+// ---------------------------------------------------------------------------
+
+/// Live Elektro valuation table — one row per market plant, one column per
+/// bot — showing exactly what `evaluate_plant` (LOGIC.md's
+/// `MaximumBid = PlantValue` model) thinks each plant is worth to each bot
+/// right now. **Local play only**: the wire protocol never reveals which seats
+/// are bots or what difficulty they run, so bot identity has to be derived
+/// from the deterministic color→difficulty mapping `start_local_session`
+/// builds (see local.rs: `all_colors` minus the human's color, in order,
+/// zipped with `local_bots`) — a mapping only the local client can reproduce.
+fn valuation_window(
+    ctx: &egui::Context,
+    state: &mut AppState,
+    gs: &powergrid_core::GameStateView,
+    my_id: PlayerId,
+) {
+    if !state.valuation_open {
+        // Small affordance tab visible when the popup is closed.
+        egui::Area::new(egui::Id::new("valuation_toggle_area"))
+            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, -8.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                if ui
+                    .add(helpers::neon_button("[ b: VALUATIONS ]", theme::NEON_GREEN))
+                    .clicked()
+                {
+                    state.valuation_open = true;
+                }
+            });
+        return;
+    }
+
+    let Some(map) = state.map.clone() else {
+        return;
+    };
+
+    // Reproduce start_local_session's color assignment: all six colors, minus
+    // whichever one the human took, in order — index i is "Bot {i+1}", whose
+    // configured difficulty lives at `local_bots[i]`.
+    let human_color = gs.player(my_id).map(|p| p.color);
+    const ALL_COLORS: [PlayerColor; 6] = [
+        PlayerColor::Red,
+        PlayerColor::Blue,
+        PlayerColor::Green,
+        PlayerColor::Yellow,
+        PlayerColor::Purple,
+        PlayerColor::White,
+    ];
+    let bot_colors: Vec<PlayerColor> = ALL_COLORS
+        .iter()
+        .copied()
+        .filter(|&c| Some(c) != human_color)
+        .collect();
+
+    // Reconstruct the full GameState — evaluate_plant needs map/graph access
+    // that the wire-safe GameStateView doesn't carry directly.
+    let gstate = gs.clone().into_game_state(&map);
+    let registry = default_registry();
+
+    let bots: Vec<(&powergrid_core::types::Player, &BotProfile)> = gstate
+        .players
+        .iter()
+        .filter(|p| p.id != my_id)
+        .filter_map(|p| {
+            let idx = bot_colors.iter().position(|&c| c == p.color)?;
+            let difficulty = *state.local_bots.get(idx)?;
+            Some((p, registry.profile_for(difficulty)))
+        })
+        .collect();
+
+    if bots.is_empty() {
+        return;
+    }
+
+    const COL_W: f32 = 150.0;
+    let panel_w = 110.0 + bots.len() as f32 * COL_W;
+
+    egui::Window::new("BOT VALUATIONS")
+        .resizable(false)
+        .collapsible(false)
+        .order(egui::Order::Foreground)
+        .frame(theme::panel_frame(6))
+        .default_width(panel_w)
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, -8.0))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("ELEKTRO VALUE  —  MaxBid = PlantValue (LOGIC.md)")
+                        .color(theme::NEON_GREEN)
+                        .monospace()
+                        .small(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(helpers::neon_button("[ b: close ]", theme::NEON_GREEN))
+                        .clicked()
+                    {
+                        state.valuation_open = false;
+                    }
+                });
+            });
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .max_height(360.0)
+                .show(ui, |ui| {
+                    // Header row: a blank plant-column gutter + one column per bot
+                    // (color dot + bot name + difficulty).
+                    ui.horizontal(|ui| {
+                        ui.add_space(80.0);
+                        for (player, profile) in &bots {
+                            ui.scope(|ui| {
+                                ui.set_width(COL_W);
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(8.0, 8.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().circle_filled(
+                                        rect.center(),
+                                        4.0,
+                                        crate::state::player_color_to_egui(player.color),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} ({})",
+                                            player.name, profile.display_name
+                                        ))
+                                        .color(theme::TEXT_BRIGHT)
+                                        .monospace()
+                                        .small(),
+                                    );
+                                });
+                            });
+                        }
+                    });
+                    ui.separator();
+
+                    // One row per plant currently up for auction.
+                    for plant in &gstate.market.actual {
+                        ui.horizontal(|ui| {
+                            ui.scope(|ui| {
+                                ui.set_width(76.0);
+                                ui.label(
+                                    RichText::new(format!(
+                                        "#{:<3}{:>2}c ${}",
+                                        plant.number, plant.cities, plant.cost
+                                    ))
+                                    .color(theme::TEXT_MID)
+                                    .monospace()
+                                    .small(),
+                                );
+                            });
+
+                            for (player, profile) in &bots {
+                                let valuation =
+                                    evaluate_plant(plant, player, &gstate, &profile.auction);
+                                let color = if valuation.total >= profile.auction.min_open_score {
+                                    theme::NEON_GREEN
+                                } else {
+                                    theme::TEXT_DIM
+                                };
+                                let resp = ui.add_sized(
+                                    egui::vec2(COL_W, ui.spacing().interact_size.y),
+                                    egui::Label::new(
+                                        RichText::new(format!("{:>5.0}", valuation.total))
+                                            .color(color)
+                                            .monospace(),
+                                    ),
+                                );
+                                resp.on_hover_ui(|ui| valuation_breakdown(ui, &valuation));
+                            }
+                        });
+                    }
+                });
+        });
+}
+
+/// Component breakdown for a single plant valuation — shown on cell hover.
+/// Mirrors the six signed terms of `PlantValuation` plus the floored total
+/// (LOGIC.md's `PlantValue ≈ IncomeGain + FuelSavings + EndgameBonus +
+/// DenialBonus − FuelRisk − ReplacementWaste`).
+fn valuation_breakdown(ui: &mut egui::Ui, v: &PlantValuation) {
+    ui.set_width(230.0);
+    let row = |ui: &mut egui::Ui, label: &str, value: f32, color: Color32| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(label)
+                    .color(theme::TEXT_DIM)
+                    .monospace()
+                    .small(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("{value:>+7.1}"))
+                        .color(color)
+                        .monospace()
+                        .small(),
+                );
+            });
+        });
+    };
+    row(
+        ui,
+        "Incremental income",
+        v.incremental_income,
+        theme::NEON_CYAN,
+    );
+    row(ui, "Fuel savings", v.fuel_savings, theme::NEON_CYAN);
+    row(ui, "Capacity premium", v.capacity_premium, theme::NEON_CYAN);
+    row(ui, "Denial bonus", v.denial, theme::NEON_CYAN);
+    row(ui, "Fuel risk", -v.fuel_risk, theme::NEON_RED);
+    row(
+        ui,
+        "Replacement waste",
+        -v.replacement_waste,
+        theme::NEON_RED,
+    );
+    ui.separator();
+    row(ui, "TOTAL = Max Bid", v.total, theme::NEON_GREEN);
 }
 
 // ---------------------------------------------------------------------------

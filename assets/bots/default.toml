@@ -13,24 +13,17 @@ jitter       = 0.5   # 50% chance of bid jitter
 max_jitter   = 5     # up to +5 elektro above ceiling
 
 [easy.auction]
-cities_weight       = 15.0
-green_bonus         = 25.0
-efficiency_weight   = 10.0
-city_reserve        = 30.0
+# Elektro-denominated valuation weights (see LOGIC.md / evaluate_plant). Every
+# plant is valued in expected future Elektro; MaximumBid = PlantValue.
+city_reserve        = 30.0   # ~2 city builds kept in reserve
 safety_buffer       = 5.0
-upgrade_margin      = 5.0   # lower = replaces plants even for small improvements (wastes money)
-min_open_score      = 15.0  # lower = buys plants more aggressively even when suboptimal
-overshoot_weight    = 20.0  # score penalty per city of capacity above the useful ceiling after buying
-buildable_lookahead = 3     # cities beyond owned counted as "usefully planned for" (relaxed for easy)
-capacity_premium    = 3.0   # higher = overbids more
-high_capacity_threshold   = 5    # inert for easy (bonuses are 0)
-high_capacity_bonus       = 0.0
-high_capacity_bid_premium = 0.0
-opponent_gap_weight        = 0.0
-endgame_weight             = 0.0
-pipeline_weight            = 0.0
-upgrade_efficiency_weight  = 5.0   # mild penalty for small-gain upgrades when rack is full
-fuel_scarcity_weight       = 5.0   # mild penalty for plants burning scarce/contested fuel
+upgrade_margin      = 10.0   # lower = replaces rack plants for smaller Elektro gains (wastes money)
+min_open_score      = 10.0   # lower = opens auctions on lower-value plants (less disciplined)
+buildable_lookahead = 3      # cities beyond owned counted as "usefully planned for" (relaxed for easy)
+endgame_weight            = 5.0    # mild reward for capacity that closes the gap to end_game_cities
+denial_weight             = 0.0    # opponent-blind — no denial bidding
+fuel_risk_weight          = 1.0    # mild Elektro penalty for thirsty plants on scarce fuel
+replacement_waste_weight  = 0.5    # mild penalty for discarding a plant that still earns
 
 [easy.buy]
 fuel_reserve_multiplier = 4.0
@@ -52,24 +45,15 @@ jitter       = 0.3  # ~30% chance of bid jitter
 max_jitter   = 3    # up to +3 elektro above ceiling
 
 [normal.auction]
-cities_weight       = 15.0
-green_bonus         = 25.0
-efficiency_weight   = 10.0
 city_reserve        = 30.0   # ~2 city builds kept in reserve
 safety_buffer       = 5.0
-upgrade_margin      = 10.0   # minimum score improvement to justify replacing a plant
-min_open_score      = 20.0   # minimum score for a plant to be worth selecting
-overshoot_weight    = 35.0   # score penalty per city of capacity above the useful ceiling after buying
+upgrade_margin      = 20.0   # minimum PlantValue (Elektro) to justify replacing a rack plant
+min_open_score      = 20.0   # minimum PlantValue (Elektro) for a plant to be worth selecting
 buildable_lookahead = 2      # cities beyond owned counted as "usefully planned for"
-capacity_premium    = 2.0    # extra elektro per city of capacity gained
-high_capacity_threshold   = 5     # plants powering 5+ cities are worth a premium
-high_capacity_bonus       = 20.0  # score bonus per step at/above threshold (graduated)
-high_capacity_bid_premium = 4.0   # extra elektro per step at/above threshold in bid ceiling
-opponent_gap_weight        = 0.0
-endgame_weight             = 0.0
-pipeline_weight            = 0.0
-upgrade_efficiency_weight  = 10.0  # moderate penalty for small-gain upgrades when rack is full
-fuel_scarcity_weight       = 10.0  # moderate penalty for plants burning scarce/contested fuel
+endgame_weight            = 10.0   # reward for capacity that closes the gap to end_game_cities
+denial_weight             = 0.0    # opponent-blind — no denial bidding
+fuel_risk_weight          = 2.0    # Elektro penalty for thirsty plants on scarce/contested fuel
+replacement_waste_weight  = 1.0    # penalty for discarding a plant that still has income to earn
 
 [normal.buy]
 fuel_reserve_multiplier = 4.0   # spend 4× plant cost on fuel reserves
@@ -91,25 +75,16 @@ jitter       = 0.15  # less bid noise — tighter, harder to read
 max_jitter   = 2
 
 [hard.auction]
-cities_weight       = 15.0
-green_bonus         = 25.0
-efficiency_weight   = 10.0
 city_reserve        = 30.0
 safety_buffer       = 5.0
-upgrade_margin      = 10.0
-min_open_score      = 20.0
-overshoot_weight    = 50.0   # strong penalty: 1 city of overshoot beats any high-cap bonus → hard bot builds cities aggressively
-buildable_lookahead = 1      # very tight ceiling: only 1 city ahead of owned (hard bot plans minimal future capacity)
-capacity_premium    = 2.0
-high_capacity_threshold   = 5
-high_capacity_bonus       = 30.0  # stronger premium — hard bot really wants 5+ plants
-high_capacity_bid_premium = 6.0
+upgrade_margin      = 25.0   # highest bar — only replaces rack plants for a real Elektro gain
+min_open_score      = 25.0   # only opens auctions on plants worth real Elektro
+buildable_lookahead = 1      # very tight ceiling: only 1 city ahead of owned (plans minimal future capacity)
 # Non-zero weights activate opponent/endgame awareness:
-opponent_gap_weight = 3.0   # bonus per city the leading opponent is ahead of us
-endgame_weight      = 5.0   # bonus proportional to how close we are to game end
-pipeline_weight            = 2.0   # bonus when this plant is better than the upcoming deck
-upgrade_efficiency_weight  = 15.0  # strong penalty for small-gain upgrades when rack is full
-fuel_scarcity_weight       = 20.0  # strong penalty for plants burning scarce/contested fuel
+endgame_weight            = 20.0   # strongly rewards capacity that closes the gap to end_game_cities
+denial_weight             = 0.35   # bids up plants that would meaningfully help the strongest opponent
+fuel_risk_weight          = 3.0    # strong Elektro penalty for thirsty plants on scarce/contested fuel
+replacement_waste_weight  = 1.5    # strong penalty for discarding a plant that still has income to earn
 
 [hard.buy]
 fuel_reserve_multiplier = 4.0

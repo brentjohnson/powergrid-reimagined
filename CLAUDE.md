@@ -75,6 +75,8 @@ python/                    # PettingZoo RL environment (see docs/rl-environment.
 ```
 
 Dependency graph (Rust): core ← bot-strategy ← {session, powergrid-py} ← {lobby, client}.
+`powergrid-client` also depends on `powergrid-bot-strategy` directly (for the
+bot valuation popup — see below).
 
 `powergrid-py` depends only on `powergrid-core` and `powergrid-bot-strategy` — no server, lobby, or async runtime.
 
@@ -140,7 +142,14 @@ egui GUI client. Supports two modes: **online** (connects to `powergrid-lobby`) 
 - `peer_hints.rs` — `PeerHints` map: stores the latest `HintPayload` from each peer, consumed by the map panel to show peer cursors.
 - `state.rs` — `AppState` resource. Screen enum: `MainMenu | LocalSetup | Login | Register | RoomBrowser | Game`.
 - `ui/` — egui UI systems:
-  - `mod.rs` — `ui_system` dispatch, `setup_egui_theme`
+  - `mod.rs` — `ui_system` dispatch, `setup_egui_theme`. Also hosts the bot
+    valuation popup (`valuation_window`, local play only): press **`b`** to
+    show a live table — rows are market plants, columns are bots — of each
+    bot's `evaluate_plant(...).total` (Elektro `PlantValue`, per LOGIC.md;
+    `MaxBid = PlantValue`), with the six-term `PlantValuation` breakdown on
+    cell hover. Bot identity (color → `BotDifficulty`) is reconstructed from
+    the deterministic mapping `local.rs::start_local_session` builds, since
+    the wire protocol never reveals which seats are bots.
   - `main_menu.rs` — main menu (online vs local fork)
   - `local_setup.rs` — local game config (bot count, color)
   - `login.rs` — online login form

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 powergrid-core = { path = "../powergrid-core" }
 powergrid-session = { path = "../powergrid-session" }
+powergrid-bot-strategy = { path = "../powergrid-bot-strategy" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
