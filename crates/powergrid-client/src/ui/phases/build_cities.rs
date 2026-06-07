@@ -45,6 +45,18 @@ pub(in crate::ui) fn build_cities_panel(
                 .color(cost_color)
                 .monospace(),
             );
+
+            let balance = my_money as i64 - bp.total_cost as i64;
+            let balance_color = if balance < 0 {
+                theme::NEON_RED
+            } else {
+                theme::NEON_GREEN
+            };
+            ui.label(
+                RichText::new(format!("BALANCE: ${balance}"))
+                    .color(balance_color)
+                    .monospace(),
+            );
         }
 
         ui.horizontal(|ui| {
