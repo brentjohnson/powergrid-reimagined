@@ -499,10 +499,11 @@ const MARKET_SCALE: f32 = 1.15;
 /// screen. Always visible (every phase), matching the old always-on behavior —
 /// just relocated out of the top panel and no longer resized/animated.
 ///
-/// The market's measured width is stashed in `state.resource_market_width` so
-/// `buy_cart_panel` can anchor directly to its left. (The `bottom_info_panel`
-/// toggle lives under the top panel — see `ui::info_panel_toggle` — and no
-/// longer stacks against this overlay.)
+/// The market's measured size is stashed in `state.resource_market_width` /
+/// `state.resource_market_height` so `buy_cart_panel` can anchor directly above
+/// it, matching its width. (The `bottom_info_panel` toggle lives under the top
+/// panel — see `ui::info_panel_toggle` — and no longer stacks against this
+/// overlay.)
 pub(super) fn resource_market_overlay(
     ctx: &egui::Context,
     state: &mut AppState,
@@ -553,6 +554,7 @@ pub(super) fn resource_market_overlay(
                 )
             });
             state.resource_market_width = frame.response.rect.width();
+            state.resource_market_height = frame.response.rect.height();
             if let Some((resource, amount)) = frame.inner {
                 state.set_cart_amount(resource, amount);
             }

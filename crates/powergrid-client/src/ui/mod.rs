@@ -622,13 +622,14 @@ fn floating_action_panel(
 }
 
 // ---------------------------------------------------------------------------
-// Buy-resources cart (anchored directly left of the resource market overlay)
+// Buy-resources cart (anchored directly above the resource market overlay)
 // ---------------------------------------------------------------------------
 
-/// Cart UI for the Buy Resources phase — resource counts, TOTAL/BALANCE,
-/// 1 SET / 2 SETS shortcuts, CLEAR / DONE BUYING. Anchored to sit directly to
-/// the left of `top_panel::resource_market_overlay` (which you click to fill
-/// the cart), bottom-aligned with it via `state.resource_market_width`.
+/// Cart UI for the Buy Resources phase — TOTAL/BALANCE, 1 SET / 2 SETS
+/// shortcuts, CLEAR / DONE BUYING — collapsed to a single row. Anchored to sit
+/// directly above `top_panel::resource_market_overlay` (which you click to
+/// fill the cart), matching its width via `state.resource_market_width` /
+/// `state.resource_market_height`.
 fn buy_cart_panel(
     ctx: &egui::Context,
     state: &mut crate::state::AppState,
@@ -640,17 +641,19 @@ fn buy_cart_panel(
         return;
     }
 
-    let x_offset = -(CORNER_MARGIN + state.resource_market_width + STACK_GAP);
+    let y_offset = -(CORNER_MARGIN + state.resource_market_height + STACK_GAP);
 
     egui::Area::new(egui::Id::new("buy_cart_panel"))
         .anchor(
             egui::Align2::RIGHT_BOTTOM,
-            egui::vec2(x_offset, -CORNER_MARGIN),
+            egui::vec2(-CORNER_MARGIN, y_offset),
         )
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             theme::neon_frame().show(ui, |ui| {
-                ui.set_max_width(240.0);
+                let w = state.resource_market_width;
+                ui.set_min_width(w);
+                ui.set_max_width(w);
                 buy_resources_panel(ui, state, channels, gs, my_id);
             });
         });

@@ -64,15 +64,6 @@ pub(crate) fn is_active_player(gs: &GameStateView, pid: PlayerId) -> bool {
     }
 }
 
-pub(super) fn resource_name(r: Resource) -> &'static str {
-    match r {
-        Resource::Coal => "COAL",
-        Resource::Oil => "OIL",
-        Resource::Gas => "GAS",
-        Resource::Uranium => "URANIUM",
-    }
-}
-
 pub(super) fn color_label(c: PlayerColor) -> &'static str {
     match c {
         PlayerColor::Red => "RED",
