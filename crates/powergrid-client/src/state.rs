@@ -140,13 +140,11 @@ pub struct AppState {
 
     // ESC menu overlay
     pub menu_open: bool,
-    // Bottom-right info panel (Space toggles)
+    // Info panel — drops down from under the top panel (Space toggles)
     pub bottom_panel_open: bool,
     pub bottom_panel_tab: BottomTab,
-    // Size of the bottom-right resource market overlay, captured each frame —
-    // height lets the info panel stack directly above it, width lets the buy
-    // cart sit directly to its left.
-    pub resource_market_height: f32,
+    // Width of the bottom-right resource market overlay, captured each frame
+    // so the buy cart can sit directly to its left.
     pub resource_market_width: f32,
     // Bot valuation popup (local play only — "b" toggles)
     pub valuation_open: bool,
@@ -263,7 +261,6 @@ impl AppState {
             menu_open: false,
             bottom_panel_open: false,
             bottom_panel_tab: BottomTab::EventLog,
-            resource_market_height: 0.0,
             resource_market_width: 0.0,
             valuation_open: false,
             fullscreen,

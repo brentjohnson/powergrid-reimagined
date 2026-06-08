@@ -219,19 +219,43 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
     }
 
     // ── Resource market (fixed size, pinned bottom-right) ─────────────────────
-    // Renders before the info panel and cart below so `resource_market_height`
-    // / `resource_market_width` are fresh this frame — both anchor against the
-    // market's measured rect. The `[ ▲ INFO ]` toggle (when the panel is closed)
-    // is drawn at the top of this overlay, sitting directly on top of the market.
+    // Renders before the cart below so `resource_market_width` is fresh this
+    // frame — `buy_cart_panel` anchors against the market's measured rect.
     top_panel::resource_market_overlay(ctx, state, &gs, my_id);
 
     // ── Buy-resources cart (anchored directly left of the market) ─────────────
     buy_cart_panel(ctx, state, channels, &gs, my_id);
 
-    // ── Bottom-right info panel (Space or toggle button) ──────────────────────
+    // ── Info panel toggle + panel (Space or button, drops down from the
+    // ── top panel) ─────────────────────────────────────────────────────────
     if state.bottom_panel_open {
         bottom_info_panel(ctx, state, &gs);
+    } else {
+        info_panel_toggle(ctx, state);
     }
+}
+
+/// `[ ▼ INFO ]` toggle for `bottom_info_panel`, drawn directly under the top
+/// panel on the right (mirrors the placement math `floating_action_panel` uses
+/// for `state.top_panel_bottom`/`FLOAT_GAP`). Opens the panel, which then
+/// drops down from this same corner.
+fn info_panel_toggle(ctx: &egui::Context, state: &mut AppState) {
+    #[allow(deprecated)]
+    let x = ctx.screen_rect().right() - CORNER_MARGIN;
+    let y = state.top_panel_bottom + FLOAT_GAP;
+
+    egui::Area::new(egui::Id::new("info_panel_toggle"))
+        .fixed_pos(egui::pos2(x, y))
+        .pivot(egui::Align2::RIGHT_TOP)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            if ui
+                .add(helpers::neon_button("[ ▼ INFO ]", theme::NEON_CYAN))
+                .clicked()
+            {
+                state.bottom_panel_open = true;
+            }
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -633,12 +657,12 @@ fn buy_cart_panel(
 }
 
 // ---------------------------------------------------------------------------
-// Bottom-right tabbed info panel
+// Tabbed info panel — drops down from under the top panel (right side)
 // ---------------------------------------------------------------------------
 
 const PANEL_HEIGHT: f32 = 280.0;
 // Corner margin shared with the resource market overlay's anchor offset
-// (top_panel::resource_market_overlay), plus a small gap between the two.
+// (top_panel::resource_market_overlay) and the buy-cart panel below.
 const CORNER_MARGIN: f32 = 8.0;
 const STACK_GAP: f32 = 8.0;
 
@@ -650,15 +674,19 @@ fn bottom_info_panel(
     #[allow(deprecated)]
     let panel_w = (ctx.screen_rect().width() * 0.5).max(320.0);
 
-    // Stack directly above the resource market overlay rather than covering it.
-    let y_offset = -(CORNER_MARGIN + state.resource_market_height + STACK_GAP);
+    // Hangs directly under the top panel, right-aligned — the same corner the
+    // `[ ▼ INFO ]` toggle (`info_panel_toggle`) occupies when this is closed.
+    #[allow(deprecated)]
+    let x = ctx.screen_rect().right() - CORNER_MARGIN;
+    let y = state.top_panel_bottom + FLOAT_GAP;
 
     egui::Window::new("info_panel")
         .title_bar(false)
         .resizable(false)
         .movable(false)
         .collapsible(false)
-        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(0.0, y_offset))
+        .pivot(egui::Align2::RIGHT_TOP)
+        .fixed_pos(egui::pos2(x, y))
         .fixed_size(egui::vec2(panel_w, PANEL_HEIGHT))
         .frame(theme::panel_frame(4))
         .show(ctx, |ui| {
@@ -696,7 +724,7 @@ fn bottom_info_panel(
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add(helpers::neon_button("[ ▼ ]", theme::NEON_CYAN))
+                        .add(helpers::neon_button("[ ▲ ]", theme::NEON_CYAN))
                         .clicked()
                     {
                         state.bottom_panel_open = false;

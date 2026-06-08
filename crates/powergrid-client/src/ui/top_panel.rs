@@ -15,7 +15,7 @@ use crate::{
     ws::WsChannels,
 };
 
-use super::helpers::{dim_color, neon_button, resource_image, send};
+use super::helpers::{dim_color, resource_image, send};
 use super::player_summary::player_summary;
 
 pub(super) fn top_panel_contents(
@@ -499,10 +499,10 @@ const MARKET_SCALE: f32 = 1.15;
 /// screen. Always visible (every phase), matching the old always-on behavior —
 /// just relocated out of the top panel and no longer resized/animated.
 ///
-/// The `[ ▲ INFO ]` toggle for `bottom_info_panel` is drawn directly above the
-/// market (when the panel is closed), and the market's measured height is
-/// stashed in `state.resource_market_height` so the info panel can stack
-/// directly above the market when it is open instead of covering it.
+/// The market's measured width is stashed in `state.resource_market_width` so
+/// `buy_cart_panel` can anchor directly to its left. (The `bottom_info_panel`
+/// toggle lives under the top panel — see `ui::info_panel_toggle` — and no
+/// longer stacks against this overlay.)
 pub(super) fn resource_market_overlay(
     ctx: &egui::Context,
     state: &mut AppState,
@@ -541,35 +541,21 @@ pub(super) fn resource_market_overlay(
         .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -8.0))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            ui.vertical(|ui| {
-                if !state.bottom_panel_open {
-                    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                        if ui
-                            .add(neon_button("[ ▲ INFO ]", theme::NEON_CYAN))
-                            .clicked()
-                        {
-                            state.bottom_panel_open = true;
-                        }
-                    });
-                }
-
-                let frame = theme::neon_frame().show(ui, |ui| {
-                    resource_market_grid(
-                        ui,
-                        &gs.resources,
-                        &cart_snapshot,
-                        &peer_carts,
-                        my_buy_turn,
-                        replenish,
-                        MARKET_SCALE,
-                    )
-                });
-                state.resource_market_height = frame.response.rect.height();
-                state.resource_market_width = frame.response.rect.width();
-                if let Some((resource, amount)) = frame.inner {
-                    state.set_cart_amount(resource, amount);
-                }
+            let frame = theme::neon_frame().show(ui, |ui| {
+                resource_market_grid(
+                    ui,
+                    &gs.resources,
+                    &cart_snapshot,
+                    &peer_carts,
+                    my_buy_turn,
+                    replenish,
+                    MARKET_SCALE,
+                )
             });
+            state.resource_market_width = frame.response.rect.width();
+            if let Some((resource, amount)) = frame.inner {
+                state.set_cart_amount(resource, amount);
+            }
         });
 }
 
