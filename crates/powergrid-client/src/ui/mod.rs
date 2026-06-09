@@ -181,16 +181,39 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
         phases::game_over_overlay(ctx, &gs);
     }
 
-    // Left panel is added before CentralPanel so it extends the full remaining height.
-    state.left_panel_width = compute_left_panel_width(ctx, &gs);
-    egui::SidePanel::left("player_panel")
-        .resizable(false)
-        .exact_width(state.left_panel_width)
-        .frame(theme::panel_frame(0))
+    // Left panel: floating overlay sized to fit the player count, vertically centered.
+    let content_w = compute_left_panel_width(ctx, &gs);
+    let panel_natural_h = compute_left_panel_height(ctx, &gs);
+    #[allow(deprecated)]
+    let screen_h = ctx.screen_rect().height();
+    let needs_scroll = panel_natural_h > screen_h - 16.0;
+    let panel_outer_h = if needs_scroll {
+        screen_h - 16.0
+    } else {
+        panel_natural_h
+    };
+    let y_top = ((screen_h - panel_outer_h) / 2.0).max(8.0);
+
+    // right edge = area x (8) + frame inner margin left (8) + content + frame inner margin right (8)
+    state.left_panel_width = 8.0 + 16.0 + content_w;
+
+    egui::Area::new(egui::Id::new("player_panel"))
+        .fixed_pos(egui::pos2(8.0, y_top))
+        .order(egui::Order::Foreground)
         .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(6.0);
-                left_panel::left_panel_contents(ui, &gs, my_id);
+            theme::neon_frame().show(ui, |ui| {
+                ui.set_width(content_w);
+                if needs_scroll {
+                    egui::ScrollArea::vertical()
+                        .max_height(panel_outer_h - 16.0)
+                        .show(ui, |ui| {
+                            ui.add_space(6.0);
+                            left_panel::left_panel_contents(ui, &gs, my_id);
+                        });
+                } else {
+                    ui.add_space(6.0);
+                    left_panel::left_panel_contents(ui, &gs, my_id);
+                }
             });
         });
 
@@ -542,6 +565,27 @@ fn compute_left_panel_width(ctx: &egui::Context, gs: &powergrid_core::GameStateV
     }
 
     (max_content + OVERHEAD).clamp(MIN_W, MAX_W)
+}
+
+/// Estimated outer frame height for the player panel, reading cached card heights.
+/// On the first frame before any card has been measured, falls back to DEFAULT_H per card.
+/// The outer height includes the neon_frame inner margin (8px × 2) and the 6px top spacing.
+fn compute_left_panel_height(ctx: &egui::Context, gs: &powergrid_core::GameStateView) -> f32 {
+    let n = gs.player_order.len();
+    if n == 0 {
+        return left_panel::DEFAULT_H;
+    }
+    let total_card_h: f32 = gs
+        .player_order
+        .iter()
+        .map(|pid| {
+            ctx.data(|d| d.get_temp::<f32>(egui::Id::new(("pcard_h_nat", *pid))))
+                .unwrap_or(left_panel::DEFAULT_H)
+        })
+        .sum();
+    let gaps = (n - 1) as f32 * left_panel::CARD_GAP;
+    // 6.0 = top add_space; 16.0 = neon_frame inner_margin top + bottom (8 each)
+    total_card_h + gaps + 6.0 + 16.0
 }
 
 // ---------------------------------------------------------------------------

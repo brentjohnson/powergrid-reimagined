@@ -14,10 +14,10 @@ const ICON_GAP: f32 = 2.0;
 const MAX_PER_ROW: u8 = 3;
 
 // Animation constants
-const CARD_GAP: f32 = 4.0;
+pub(super) const CARD_GAP: f32 = 4.0;
 const SLIDE_DUR: f32 = 1.0; // reorder glide duration
 const HEIGHT_DUR: f32 = 0.35; // card grow/shrink duration
-const DEFAULT_H: f32 = 90.0; // first-frame height estimate before measurement
+pub(super) const DEFAULT_H: f32 = 90.0; // first-frame height estimate before measurement
 
 /// Width of the resource icon column for a player, based on the largest single-type count
 /// capped at MAX_PER_ROW. Returns 0 when the player owns no resources.
