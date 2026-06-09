@@ -39,74 +39,68 @@ pub(super) fn plant_market_overlay(
             ui.vertical(|ui| {
                 auction_col_header(ui, is_auction, gs);
                 theme::neon_frame().show(ui, |ui| {
-                    ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
                         let discount_token = gs.market.discount_token;
                         if gs.step >= 3 {
-                            let mid = gs.market.actual.len().div_ceil(2);
-                            let (left, right) = gs.market.actual.split_at(mid);
-                            ui.vertical(|ui| {
-                                plant_column(
-                                    ui,
-                                    left,
-                                    channels,
-                                    &gs.phase,
-                                    my_id,
-                                    &gs.player_order,
-                                    room,
-                                    discount_token,
-                                );
-                            });
-                            ui.add_space(8.0);
-                            ui.vertical(|ui| {
-                                plant_column(
-                                    ui,
-                                    right,
-                                    channels,
-                                    &gs.phase,
-                                    my_id,
-                                    &gs.player_order,
-                                    room,
-                                    discount_token,
-                                );
-                            });
+                            let (top, bottom) = gs
+                                .market
+                                .actual
+                                .split_at(gs.market.actual.len().div_ceil(2));
+                            plant_row(
+                                ui,
+                                top,
+                                channels,
+                                &gs.phase,
+                                my_id,
+                                &gs.player_order,
+                                room,
+                                discount_token,
+                            );
+                            ui.add_space(4.0);
+                            plant_row(
+                                ui,
+                                bottom,
+                                channels,
+                                &gs.phase,
+                                my_id,
+                                &gs.player_order,
+                                room,
+                                discount_token,
+                            );
                         } else {
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new("ACTUAL")
-                                        .color(theme::TEXT_DIM)
-                                        .small()
-                                        .monospace(),
-                                );
-                                plant_column(
-                                    ui,
-                                    &gs.market.actual,
-                                    channels,
-                                    &gs.phase,
-                                    my_id,
-                                    &gs.player_order,
-                                    room,
-                                    discount_token,
-                                );
-                            });
-                            ui.add_space(8.0);
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new("FUTURE")
-                                        .color(theme::TEXT_DIM)
-                                        .small()
-                                        .monospace(),
-                                );
-                                plant_column(
-                                    ui,
-                                    &gs.market.future,
-                                    channels,
-                                    &gs.phase,
-                                    my_id,
-                                    &gs.player_order,
-                                    room,
-                                    None, // future market never holds the discount token
-                                );
-                            });
+                            ui.label(
+                                RichText::new("ACTUAL")
+                                    .color(theme::TEXT_DIM)
+                                    .small()
+                                    .monospace(),
+                            );
+                            plant_row(
+                                ui,
+                                &gs.market.actual,
+                                channels,
+                                &gs.phase,
+                                my_id,
+                                &gs.player_order,
+                                room,
+                                discount_token,
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new("FUTURE")
+                                    .color(theme::TEXT_DIM)
+                                    .small()
+                                    .monospace(),
+                            );
+                            plant_row(
+                                ui,
+                                &gs.market.future,
+                                channels,
+                                &gs.phase,
+                                my_id,
+                                &gs.player_order,
+                                room,
+                                None, // future market never holds the discount token
+                            );
                         }
                     });
                 });
@@ -204,10 +198,10 @@ fn auction_turn_dots(ui: &mut Ui, gs: &GameStateView) {
     });
 }
 
-// ── Plant card columns ────────────────────────────────────────────────────────
+// ── Plant card rows ───────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
-fn plant_column(
+fn plant_row(
     ui: &mut Ui,
     plants: &[powergrid_core::types::PowerPlant],
     channels: Option<&WsChannels>,
@@ -230,8 +224,8 @@ fn plant_column(
         None
     };
 
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
         for plant in plants {
             let discounted = discount_token == Some(plant.number);
             let nominated = nominated_number == Some(plant.number);
