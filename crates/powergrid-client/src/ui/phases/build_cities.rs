@@ -27,36 +27,47 @@ pub(in crate::ui) fn build_cities_panel(
                 .monospace(),
         );
 
-        if !state.selected_build_cities.is_empty() {
+        {
             let bp = &state.build_preview;
-            let cost_color = if bp.total_cost > my_money {
+            let selected = state.selected_build_cities.len();
+            let cost_color = if selected > 0 && bp.total_cost > my_money {
                 theme::NEON_RED
             } else {
                 theme::NEON_GREEN
             };
             ui.label(
-                RichText::new(format!(
-                    "Selected: {}  Route: ${}  Slots: ${}  Total: ${}",
-                    state.selected_build_cities.len(),
-                    bp.total_route_cost,
-                    bp.total_slot_cost,
-                    bp.total_cost,
-                ))
-                .color(cost_color)
-                .monospace(),
+                RichText::new(format!("Selected: {}", selected))
+                    .color(cost_color)
+                    .monospace(),
             );
-
+            ui.label(
+                RichText::new(format!("Route:    ${}", bp.total_route_cost))
+                    .color(cost_color)
+                    .monospace(),
+            );
+            ui.label(
+                RichText::new(format!("Slots:    ${}", bp.total_slot_cost))
+                    .color(cost_color)
+                    .monospace(),
+            );
             let balance = my_money as i64 - bp.total_cost as i64;
             let balance_color = if balance < 0 {
                 theme::NEON_RED
             } else {
                 theme::NEON_GREEN
             };
-            ui.label(
-                RichText::new(format!("BALANCE: ${balance}"))
-                    .color(balance_color)
-                    .monospace(),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("Total:    ${}", bp.total_cost))
+                        .color(cost_color)
+                        .monospace(),
+                );
+                ui.label(
+                    RichText::new(format!("Balance: ${balance}"))
+                        .color(balance_color)
+                        .monospace(),
+                );
+            });
         }
 
         ui.horizontal(|ui| {
