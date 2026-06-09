@@ -31,20 +31,6 @@ pub(in crate::ui) fn buy_resources_panel(
         // resource market overlay already highlights cart contents (filled
         // squares in the resource color) and capacity (lit vs. dimmed squares).
         ui.horizontal(|ui| {
-            if let Some(cost) = state.resource_cart_cost {
-                let balance = my_money as i64 - cost as i64;
-                let balance_color = if balance < 0 {
-                    theme::NEON_RED
-                } else {
-                    theme::NEON_GREEN
-                };
-                ui.label(
-                    RichText::new(format!("TOTAL: ${cost}  BALANCE: ${balance}"))
-                        .color(balance_color)
-                        .monospace(),
-                );
-            }
-
             let has_fuel_plants =
                 player.is_some_and(|p| p.plants.iter().any(|pl| pl.kind.needs_resources()));
             if has_fuel_plants {
@@ -80,6 +66,19 @@ pub(in crate::ui) fn buy_resources_panel(
                     send(Action::BuyResourceBatch { purchases }, room, channels);
                 }
             }
+
+            let cost = state.resource_cart_cost.unwrap_or(0);
+            let balance = my_money as i64 - cost as i64;
+            let balance_color = if balance < 0 {
+                theme::NEON_RED
+            } else {
+                theme::NEON_GREEN
+            };
+            ui.label(
+                RichText::new(format!("TOTAL: ${cost}  BALANCE: ${balance}"))
+                    .color(balance_color)
+                    .monospace(),
+            );
         });
     } else {
         ui.label(
