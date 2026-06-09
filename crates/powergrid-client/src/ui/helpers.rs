@@ -7,7 +7,7 @@ use powergrid_core::{
 
 use crate::{theme, ws::WsChannels};
 
-pub(super) fn resource_image(resource: Resource) -> egui::ImageSource<'static> {
+pub(crate) fn resource_image(resource: Resource) -> egui::ImageSource<'static> {
     match resource {
         Resource::Coal => egui::include_image!("../../assets/coal-pile-svgrepo-com.svg"),
         Resource::Oil => egui::include_image!("../../assets/oil-barrel-svgrepo-com.svg"),
@@ -16,7 +16,7 @@ pub(super) fn resource_image(resource: Resource) -> egui::ImageSource<'static> {
     }
 }
 
-pub(super) fn resource_color(resource: Resource) -> Color32 {
+pub(crate) fn resource_color(resource: Resource) -> Color32 {
     match resource {
         Resource::Coal => theme::RES_COAL,
         Resource::Oil => theme::RES_OIL,

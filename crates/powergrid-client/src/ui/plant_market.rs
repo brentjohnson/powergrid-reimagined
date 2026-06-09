@@ -235,7 +235,7 @@ fn plant_column(
         for plant in plants {
             let discounted = discount_token == Some(plant.number);
             let nominated = nominated_number == Some(plant.number);
-            let resp = card_painter::draw_plant_card_ex(ui, plant, discounted, nominated);
+            let resp = card_painter::draw_plant_card_full(ui, plant, discounted, nominated);
             if is_my_auction_turn && resp.clicked() {
                 send(
                     Action::SelectPlant {

@@ -1,6 +1,6 @@
 mod determine_order;
 mod event_log;
-mod helpers;
+pub(crate) mod helpers;
 pub(crate) use helpers::is_active_player;
 mod left_panel;
 mod lobby;
