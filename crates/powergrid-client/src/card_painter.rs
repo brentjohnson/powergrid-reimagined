@@ -190,13 +190,13 @@ fn paint_card(
         },
     );
 
-    // Discount token — "$1" in white centered horizontally, raised to upper half
+    // Discount token — "$1" in white centered on the card
     if discounted {
         ui.painter().text(
-            egui::pos2(rect.center().x + 10.0, rect.min.y + CARD_H * 0.10),
+            rect.center(),
             egui::Align2::CENTER_CENTER,
             "$1",
-            FontId::new(15.0, FontFamily::Monospace),
+            FontId::new(45.0, FontFamily::Monospace),
             Color32::WHITE,
         );
     }
@@ -348,10 +348,10 @@ fn paint_full_card(
     // Discount badge
     if discounted {
         painter.text(
-            egui::pos2(rect.center().x + 10.0, rect.min.y + FULL_CARD_SIZE * 0.18),
+            rect.center(),
             egui::Align2::CENTER_CENTER,
             "$1",
-            FontId::new(12.0, FontFamily::Monospace),
+            FontId::new(36.0, FontFamily::Monospace),
             Color32::WHITE,
         );
     }
