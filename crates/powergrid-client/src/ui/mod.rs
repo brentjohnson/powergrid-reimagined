@@ -601,55 +601,26 @@ fn floating_action_panel(
     gs: &powergrid_core::GameStateView,
     my_id: PlayerId,
 ) {
-    let (col_idx, show): (usize, bool) = match &gs.phase {
-        Phase::Auction { .. } | Phase::DiscardPlant { .. } => (0, true),
-        // BuyResources is handled by `buy_cart_panel`, anchored to the
-        // bottom-right resource market overlay rather than this column.
-        Phase::DiscardResource { .. } => (1, true),
-        Phase::BuildCities { .. } => (2, true),
-        Phase::Bureaucracy { .. } | Phase::PowerCitiesFuel { .. } => (3, true),
-        _ => (0, false),
-    };
+    let show = matches!(
+        &gs.phase,
+        Phase::Auction { .. }
+            | Phase::DiscardPlant { .. }
+            | Phase::DiscardResource { .. }
+            | Phase::BuildCities { .. }
+            | Phase::Bureaucracy { .. }
+            | Phase::PowerCitiesFuel { .. }
+    );
 
     if !show {
         return;
     }
 
-    #[allow(deprecated)]
-    let screen_right = ctx.screen_rect().right() - 8.0;
-
-    let (x, max_width) = match state.phase_column_rects[col_idx] {
-        Some(col_rect) => {
-            // Clamp x so the floating panel always has at least 280px of room to the right.
-            let x = col_rect
-                .min
-                .x
-                .max(state.left_panel_width + FLOAT_GAP)
-                .min(screen_right - 280.0);
-            let max_width = (col_rect.width().max(280.0)).min(screen_right - x);
-            (x, max_width)
-        }
-        // Auction is the only phase whose column rect is still captured by the
-        // top panel (it's centered there); on the first frame it isn't known yet.
-        None if col_idx == 0 => return,
-        // Build / Bureaucracy / Discard-Resource no longer have a top-panel
-        // column to anchor under — pin the action panel left, just right of
-        // the player panel instead.
-        None => {
-            let x = state.left_panel_width + FLOAT_GAP;
-            let max_width = 280.0_f32.min(screen_right - x);
-            (x, max_width)
-        }
-    };
-    let y = state.plant_market_bottom + FLOAT_GAP;
-    let pos = egui::pos2(x, y);
-
     egui::Area::new(egui::Id::new("floating_action_panel"))
-        .fixed_pos(pos)
+        .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-CORNER_MARGIN, 0.0))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             theme::neon_frame().show(ui, |ui| {
-                ui.set_max_width(max_width);
+                ui.set_max_width(320.0);
                 match &gs.phase {
                     Phase::Auction { .. } => {
                         auction_panel(ui, state, channels, gs, my_id);
