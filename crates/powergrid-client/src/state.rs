@@ -150,10 +150,12 @@ pub struct AppState {
     // Bot valuation popup (local play only — "b" toggles)
     pub valuation_open: bool,
 
-    // Floating action panel positioning (captured from top-bar column rects each frame)
+    // Floating action panel positioning (captured from overlay rects each frame)
     // Indices: 0=Auction, 1=BuyResources, 2=BuildCities, 3=Bureaucracy
     pub phase_column_rects: [Option<egui::Rect>; 4],
-    pub top_panel_bottom: f32,
+    /// Bottom edge of the plant market overlay (top-right corner). Used as the
+    /// y anchor for the right-side info panel and floating action panels.
+    pub plant_market_bottom: f32,
     pub left_panel_width: f32,
 
     // Window mode (kept in sync with the actual viewport)
@@ -277,7 +279,7 @@ impl AppState {
             peer_hints: PeerHints::default(),
             hint_tracker: LocalHintTracker::new(),
             phase_column_rects: [None; 4],
-            top_panel_bottom: 0.0,
+            plant_market_bottom: 0.0,
             left_panel_width: 220.0,
             play_turn_sound: false,
         }

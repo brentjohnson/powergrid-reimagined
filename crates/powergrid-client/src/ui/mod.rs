@@ -1,3 +1,4 @@
+mod determine_order;
 mod event_log;
 mod helpers;
 pub(crate) use helpers::is_active_player;
@@ -6,11 +7,11 @@ mod lobby;
 mod local_setup;
 mod login;
 mod main_menu;
+mod overlays;
 mod phases;
-mod player_summary;
+mod plant_market;
 mod register;
 mod room_browser;
-mod top_panel;
 
 use egui::{Color32, RichText};
 use phases::{
@@ -180,14 +181,6 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
         phases::game_over_overlay(ctx, &gs);
     }
 
-    let top_resp = egui::TopBottomPanel::top("top_panel")
-        .min_height(180.0)
-        .frame(theme::panel_frame(6))
-        .show(ctx, |ui| {
-            top_panel::top_panel_contents(ui, gs.clone(), state, channels, my_id);
-        });
-    state.top_panel_bottom = top_resp.response.rect.bottom();
-
     // Left panel is added before CentralPanel so it extends the full remaining height.
     state.left_panel_width = compute_left_panel_width(ctx, &gs);
     egui::SidePanel::left("player_panel")
@@ -211,17 +204,22 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
             crate::map_panel::draw(ui, state, &gs, my_id);
         });
 
+    // ── Floating overlays (rendered over the map) ─────────────────────────────
+    // DETERMINE ORDER — top-left corner
+    determine_order::determine_order_overlay(ctx, &gs);
+    // Plant/auction market — top-right corner; captures its rect so the
+    // auction action panel and info panel can anchor below it.
+    plant_market::plant_market_overlay(ctx, state, channels, &gs, my_id);
+    // Resource market — bottom-right corner. Renders before the cart so
+    // `resource_market_width` is fresh this frame.
+    overlays::resource_market_overlay(ctx, state, &gs, my_id);
+
     floating_action_panel(ctx, state, channels, &gs, my_id);
 
     // ── Bot valuation popup ("b" toggles, local play only) ────────────────────
     if state.current_room.as_deref() == Some("local") {
         valuation_window(ctx, state, &gs, my_id);
     }
-
-    // ── Resource market (fixed size, pinned bottom-right) ─────────────────────
-    // Renders before the cart below so `resource_market_width` is fresh this
-    // frame — `buy_cart_panel` anchors against the market's measured rect.
-    top_panel::resource_market_overlay(ctx, state, &gs, my_id);
 
     // ── Buy-resources cart (anchored directly left of the market) ─────────────
     buy_cart_panel(ctx, state, channels, &gs, my_id);
@@ -235,14 +233,14 @@ fn game_screen(ctx: &egui::Context, state: &mut AppState, channels: Option<&WsCh
     }
 }
 
-/// `[ ▼ INFO ]` toggle for `bottom_info_panel`, drawn directly under the top
-/// panel on the right (mirrors the placement math `floating_action_panel` uses
-/// for `state.top_panel_bottom`/`FLOAT_GAP`). Opens the panel, which then
-/// drops down from this same corner.
+/// `[ ▼ INFO ]` toggle for `bottom_info_panel`, drawn directly under the
+/// plant market overlay on the right (mirrors `floating_action_panel`'s use of
+/// `state.plant_market_bottom`/`FLOAT_GAP`). Opens the panel, which then drops
+/// down from this same corner.
 fn info_panel_toggle(ctx: &egui::Context, state: &mut AppState) {
     #[allow(deprecated)]
     let x = ctx.screen_rect().right() - CORNER_MARGIN;
-    let y = state.top_panel_bottom + FLOAT_GAP;
+    let y = state.plant_market_bottom + FLOAT_GAP;
 
     egui::Area::new(egui::Id::new("info_panel_toggle"))
         .fixed_pos(egui::pos2(x, y))
@@ -573,22 +571,34 @@ fn floating_action_panel(
         return;
     }
 
-    let Some(col_rect) = state.phase_column_rects[col_idx] else {
-        return; // first frame — rects not captured yet
-    };
-
     #[allow(deprecated)]
     let screen_right = ctx.screen_rect().right() - 8.0;
-    // Clamp x so the floating panel always has at least 280px of room to the right.
-    let x = col_rect
-        .min
-        .x
-        .max(state.left_panel_width + FLOAT_GAP)
-        .min(screen_right - 280.0);
-    let y = state.top_panel_bottom + FLOAT_GAP;
-    let pos = egui::pos2(x, y);
 
-    let max_width = (col_rect.width().max(280.0)).min(screen_right - x);
+    let (x, max_width) = match state.phase_column_rects[col_idx] {
+        Some(col_rect) => {
+            // Clamp x so the floating panel always has at least 280px of room to the right.
+            let x = col_rect
+                .min
+                .x
+                .max(state.left_panel_width + FLOAT_GAP)
+                .min(screen_right - 280.0);
+            let max_width = (col_rect.width().max(280.0)).min(screen_right - x);
+            (x, max_width)
+        }
+        // Auction is the only phase whose column rect is still captured by the
+        // top panel (it's centered there); on the first frame it isn't known yet.
+        None if col_idx == 0 => return,
+        // Build / Bureaucracy / Discard-Resource no longer have a top-panel
+        // column to anchor under — pin the action panel left, just right of
+        // the player panel instead.
+        None => {
+            let x = state.left_panel_width + FLOAT_GAP;
+            let max_width = 280.0_f32.min(screen_right - x);
+            (x, max_width)
+        }
+    };
+    let y = state.plant_market_bottom + FLOAT_GAP;
+    let pos = egui::pos2(x, y);
 
     egui::Area::new(egui::Id::new("floating_action_panel"))
         .fixed_pos(pos)
@@ -627,7 +637,7 @@ fn floating_action_panel(
 
 /// Cart UI for the Buy Resources phase — TOTAL/BALANCE, 1 SET / 2 SETS
 /// shortcuts, CLEAR / DONE BUYING — collapsed to a single row. Anchored to sit
-/// directly above `top_panel::resource_market_overlay` (which you click to
+/// directly above `overlays::resource_market_overlay` (which you click to
 /// fill the cart), matching its width via `state.resource_market_width` /
 /// `state.resource_market_height`.
 fn buy_cart_panel(
@@ -665,7 +675,7 @@ fn buy_cart_panel(
 
 const PANEL_HEIGHT: f32 = 280.0;
 // Corner margin shared with the resource market overlay's anchor offset
-// (top_panel::resource_market_overlay) and the buy-cart panel below.
+// (overlays::resource_market_overlay) and the buy-cart panel below.
 const CORNER_MARGIN: f32 = 8.0;
 const STACK_GAP: f32 = 8.0;
 
@@ -677,11 +687,11 @@ fn bottom_info_panel(
     #[allow(deprecated)]
     let panel_w = (ctx.screen_rect().width() * 0.5).max(320.0);
 
-    // Hangs directly under the top panel, right-aligned — the same corner the
-    // `[ ▼ INFO ]` toggle (`info_panel_toggle`) occupies when this is closed.
+    // Hangs directly under the plant market overlay, right-aligned — the same
+    // corner the `[ ▼ INFO ]` toggle (`info_panel_toggle`) occupies when closed.
     #[allow(deprecated)]
     let x = ctx.screen_rect().right() - CORNER_MARGIN;
-    let y = state.top_panel_bottom + FLOAT_GAP;
+    let y = state.plant_market_bottom + FLOAT_GAP;
 
     egui::Window::new("info_panel")
         .title_bar(false)
@@ -751,7 +761,7 @@ fn bottom_info_panel(
                             let players_info: Vec<(PlayerId, PlayerColor)> =
                                 gs.players.iter().map(|p| (p.id, p.color)).collect();
                             theme::neon_frame().show(ui, |ui| {
-                                top_panel::city_history_graph(
+                                overlays::city_history_graph(
                                     ui,
                                     &state.city_history,
                                     &players_info,
@@ -771,12 +781,12 @@ fn bottom_info_panel(
                     }
                     BottomTab::Replenish => {
                         theme::neon_frame().show(ui, |ui| {
-                            top_panel::step_replenish_columns(ui, gs.step, gs.players.len());
+                            overlays::step_replenish_columns(ui, gs.step, gs.players.len());
                         });
                     }
                     BottomTab::Payout => {
                         theme::neon_frame().show(ui, |ui| {
-                            top_panel::city_payout_table(ui, gs);
+                            overlays::city_payout_table(ui, gs);
                         });
                     }
                 });

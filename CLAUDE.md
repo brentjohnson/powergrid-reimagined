@@ -156,9 +156,15 @@ egui GUI client. Supports two modes: **online** (connects to `powergrid-lobby`) 
   - `register.rs` — account registration form
   - `room_browser.rs` — room list + create/join controls
   - `lobby.rs` — in-room lobby (player list, add/remove bots, start)
-  - `top_panel.rs` — round/phase header + resource market
+  - `determine_order.rs` — DETERMINE ORDER floating overlay (top-left corner):
+    ROUND/STEP display
+  - `plant_market.rs` — AUCTION PLANTS floating overlay (top-right corner):
+    actual/future plant cards, turn-dots, click-to-nominate; captures its rect
+    for `state.phase_column_rects[0]` and `state.plant_market_bottom` so the
+    auction action panel and info panel anchor below it
+  - `overlays.rs` — remaining floating overlays: resource market (bottom-right),
+    plus replenish/city-graph/payout table helpers used by the info panel
   - `left_panel.rs` — player info cards
-  - `player_summary.rs` — end-of-round player summary widget
   - `event_log.rs` — scrollable game event log panel
   - `helpers.rs` — shared widgets (`section_header`, `neon_button`, `send`, etc.)
   - `phases/` — per-phase action UI, one file each: `auction`, `buy_resources`, `build_cities`, `bureaucracy`, `power_cities_fuel`, `discard_plant`, `discard_resource`, `game_over`
