@@ -50,6 +50,11 @@ PHASE_IDS = {
 
 RESOURCE_IDX = {"coal": 0, "oil": 1, "gas": 2, "uranium": 3}
 
+# Reward shaping: bonus per city powered, granted once per round when the
+# player's powering resolves (analogous to income). A ~12-round game powering
+# ~7 cities/round totals ≈ 0.8, below the ±1 terminal reward.
+POWER_SHAPING_COEF = 0.01
+
 # ---------------------------------------------------------------------------
 # Action space layout
 # ---------------------------------------------------------------------------

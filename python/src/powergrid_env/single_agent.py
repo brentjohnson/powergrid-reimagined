@@ -14,7 +14,7 @@ from gymnasium import spaces
 
 import powergrid_py  # type: ignore[import]
 
-from .constants import COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE
+from .constants import COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE, POWER_SHAPING_COEF
 
 
 class PowerGridSingleAgentEnv(gym.Env):
@@ -26,7 +26,11 @@ class PowerGridSingleAgentEnv(gym.Env):
 
     Observation: flat float32 vector of length OBS_SIZE.
     Action:      Discrete(N_ACTIONS) with action_mask in info dict.
-    Reward:      +1 on win, -1 on loss, 0 each step (plus optional shaping).
+    Reward:      +1 on win, -1 on loss, 0 each step. With `reward_shaping`,
+                 a per-round bonus of POWER_SHAPING_COEF × cities powered is
+                 added when the learner's powering resolves — analogous to
+                 income, so it values plants, resources, and cities in the
+                 ratio the game itself does.
     """
 
     metadata = {"render_modes": ["human", "ansi"]}
@@ -89,7 +93,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         assert self.game is not None and self._learner_id is not None
 
         try:
-            obs_arr, mask_arr, reward, terminal, cities = self.game.step_vs_bots(
+            obs_arr, mask_arr, reward, terminal, cities, powered_now = self.game.step_vs_bots(
                 self._learner_id, int(action), self.bot_difficulty
             )
         except ValueError:
@@ -107,7 +111,7 @@ class PowerGridSingleAgentEnv(gym.Env):
 
         reward = float(reward)
         if self.reward_shaping and not terminal:
-            reward += self.learner_cities * 0.001
+            reward += int(powered_now) * POWER_SHAPING_COEF
 
         return obs, reward, terminal, False, {"action_mask": mask}
 

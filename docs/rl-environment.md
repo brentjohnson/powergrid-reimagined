@@ -99,7 +99,7 @@ for agent in env.agent_iter():
 **Common parameters:**
 - `num_players` — 2–6 players (default 4)
 - `seed` — seeds a per-env generator that draws a *fresh game seed each episode*, so consecutive resets play different games while the overall sequence stays reproducible. `None` for nondeterministic.
-- `reward_shaping` — if `True`, adds a small per-step bonus proportional to cities owned
+- `reward_shaping` — if `True`, adds a per-round bonus proportional to **cities powered**, granted when the player's powering resolves (analogous to income; `POWER_SHAPING_COEF` per city in constants.py)
 - `render_mode` — `"ansi"` or `"human"` for text rendering
 
 **Spaces:**

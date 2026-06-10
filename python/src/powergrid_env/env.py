@@ -24,6 +24,8 @@ import powergrid_py  # type: ignore[import]  # built by maturin
 
 from .constants import (
     COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE,
+    POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
+    POWER_SHAPING_COEF,
 )
 from .encoding import encode_observation, id_to_action_json, mask_from_info
 
@@ -156,7 +158,7 @@ class PowerGridAECEnv(AECEnv):
                 self.rewards[a] = 1.0 if a == winner else -1.0
                 self.terminations[a] = True
         elif self.reward_shaping:
-            self._shape_rewards(agent)
+            self._shape_rewards(agent, uuid, int(action))
 
         self._accumulate_rewards()
         self.agent_selection = self._next_agent()
@@ -213,20 +215,29 @@ class PowerGridAECEnv(AECEnv):
         state = self._state_cache or {}
         return mask_from_info(move_info, state, uuid)
 
-    def _shape_rewards(self, agent: str) -> None:
-        """Optional per-step reward shaping (delta cities × small bonus)."""
+    def _shape_rewards(self, agent: str, uuid: str, action: int) -> None:
+        """Per-round bonus ∝ cities powered, granted when the acting agent's
+        powering resolves (analogous to income)."""
+        was_power_action = (
+            POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
+            or POWER_FUEL_BASE <= action < N_ACTIONS
+        )
+        if not was_power_action:
+            return
         state = self._state_cache
         if state is None:
             return
-        city_owners = state.get("city_owners", {})
-        cities_by_player: dict[str, int] = {}
-        for owners in city_owners.values():
-            for pid in owners:
-                cities_by_player[pid] = cities_by_player.get(pid, 0) + 1
+        # Powering is still pending if the action paused on an ambiguous
+        # hybrid fuel split for this same agent.
+        phase = state.get("phase")
+        if isinstance(phase, dict):
+            fuel = phase.get("power_cities_fuel")
+            if fuel and fuel.get("player") == uuid:
+                return
         for p in state.get("players", []):
-            a = p["id"]
-            if a in self.rewards:
-                self.rewards[a] += cities_by_player.get(a, 0) * 0.001
+            if p["id"] == uuid:
+                self.rewards[agent] += p.get("last_cities_powered", 0) * POWER_SHAPING_COEF
+                break
 
 
 def _render_ansi(state: dict) -> str:

@@ -60,7 +60,7 @@ Key arguments (defaults in parentheses):
 | `--bot-difficulty` (normal) | `easy` / `normal` / `hard` opponents |
 | `--num-envs` (8) | Parallel envs in a `DummyVecEnv`. 4–8 is the sweet spot; the Rust steps are too fast for subprocess vectorisation to pay off |
 | `--total-timesteps` (500 000) | Learner steps for this invocation |
-| `--reward-shaping` (on) | Small per-step bonus ∝ cities owned; disable with `--no-reward-shaping` for pure win/loss reward |
+| `--reward-shaping` (on) | Per-round bonus ∝ cities powered, granted when the learner's powering resolves — analogous to income, so it values plants, resources, and cities in the game's own balance. Disable with `--no-reward-shaping` for pure win/loss reward |
 | `--save-freq` (50 000) | Checkpoint every N steps *per env*; `0` disables |
 | `--eval-freq` (25 000) | Win-rate eval vs bots every N steps *per env*; `0` disables |
 | `--device` (auto) | `cpu` / `cuda`; `auto` picks the GPU if available. For this MLP-sized policy, CPU is often as fast |
@@ -156,7 +156,7 @@ Open http://localhost:6006. Curves worth watching:
 
 | Metric | Healthy signal |
 |---|---|
-| `rollout/ep_rew_mean` | Rising. With shaping on it can exceed +1; without shaping it approaches +1 as the win rate climbs |
+| `rollout/ep_rew_mean` | Rising. With shaping on it includes the powering bonuses (≈ +0.5–1 extra over a strong game); without shaping it approaches +1 as the win rate climbs |
 | `eval/mean_reward` | The real score: shaping-free reward vs bots in [−1, 1]. Win rate ≈ `(mean_reward + 1) / 2` |
 | `train/explained_variance` | Should climb toward ~0.5+; near 0 long-term means the value function is learning nothing |
 | `train/approx_kl`, `clip_fraction` | Spikes indicate too-aggressive updates |

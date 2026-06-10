@@ -1040,10 +1040,15 @@ impl Game {
 
     /// Fused vs-bots step: apply `action_id` for the learner, drive all bot
     /// seats until the learner acts again or the game ends, and return
-    /// `(obs, mask, reward, terminal, learner_cities)` in one PyO3 round-trip.
+    /// `(obs, mask, reward, terminal, learner_cities, powered_now)` in one
+    /// PyO3 round-trip.
     /// Reward is +1 if the learner won, -1 if anyone else did, 0 otherwise.
     /// `obs` and `mask` are zero arrays when `terminal` is True.
-    /// `learner_cities` is the learner's current city count (for reward shaping).
+    /// `learner_cities` is the learner's current city count.
+    /// `powered_now` is the number of cities the learner just got paid for, if
+    /// this action resolved their powering for the round (PowerCities, or the
+    /// PowerCitiesFuel split that completes it); 0 otherwise. Used for
+    /// income-analogous reward shaping.
     #[allow(clippy::type_complexity)]
     fn step_vs_bots<'py>(
         &mut self,
@@ -1057,13 +1062,33 @@ impl Game {
         f32,
         bool,
         u32,
+        u32,
     )> {
         let learner_id =
             Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
 
+        let aid = action_id as usize;
+        let was_power_action = (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&aid)
+            || (POWER_FUEL_BASE..N_ACTIONS).contains(&aid);
+
         let action = action_id_to_action(action_id, &self.state, learner_id);
         apply_action(&mut self.state, learner_id, action)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        // Powering resolves immediately unless the action paused on an
+        // ambiguous hybrid fuel split for the learner.
+        let power_pending = matches!(
+            &self.state.phase,
+            Phase::PowerCitiesFuel { player, .. } if *player == learner_id
+        );
+        let powered_now = if was_power_action && !power_pending {
+            self.state
+                .player(learner_id)
+                .map(|p| p.last_cities_powered as u32)
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         if !matches!(self.state.phase, Phase::GameOver { .. }) {
             drive_bots(&mut self.state, learner_id, parse_difficulty(difficulty))?;
@@ -1097,6 +1122,7 @@ impl Game {
             reward,
             terminal,
             learner_cities,
+            powered_now,
         ))
     }
 }
