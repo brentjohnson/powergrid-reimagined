@@ -1,11 +1,10 @@
 """Wraps the Rust strategy bot as a Python policy callable."""
 
-import json
 import numpy as np
 
 import powergrid_py  # type: ignore[import]
 
-from ..constants import N_ACTIONS, PASS_AUCTION
+from ..constants import PASS_AUCTION
 from ..encoding import action_json_to_id
 
 

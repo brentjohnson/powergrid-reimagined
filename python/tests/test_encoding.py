@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import powergrid_py  # type: ignore[import]
-from powergrid_env.constants import N_ACTIONS, OBS_SIZE, CITY_IDS
+from powergrid_env.constants import OBS_SIZE, CITY_IDS
 from powergrid_env.encoding import action_json_to_id, id_to_action_json, encode_observation
 
 

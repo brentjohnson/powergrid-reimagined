@@ -61,6 +61,10 @@ pub struct PlantMarketView {
     pub step3_triggered: bool,
     pub in_step3: bool,
     pub discount_token: Option<u8>,
+    /// Number of face-down cards left in the draw stack. The stack size is
+    /// public in the physical game; only the card faces are hidden.
+    #[serde(default)]
+    pub deck_remaining: usize,
 }
 
 /// A wire-safe projection of `GameState`. Strips hidden information:
@@ -282,6 +286,7 @@ impl GameState {
                 step3_triggered: self.market.step3_triggered,
                 in_step3: self.market.in_step3,
                 discount_token: self.market.discount_token,
+                deck_remaining: self.market.deck.len(),
             },
             resources: self.resources.clone(),
             city_owners: self

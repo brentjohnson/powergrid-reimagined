@@ -18,16 +18,34 @@ Performance notes:
 import argparse
 import os
 
+import gymnasium as gym
 from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from powergrid_env import PowerGridSelfPlayEnv
+from powergrid_env import PowerGridSelfPlayEnv, PowerGridSingleAgentEnv
 
 
 def make_env(num_players: int, seed: int):
     def _init():
         return PowerGridSelfPlayEnv(num_players=num_players, seed=seed)
+    return _init
+
+
+def make_eval_env(num_players: int, seed: int):
+    """Eval vs Rust bots — an external yardstick for self-play progress."""
+    def _init():
+        env = PowerGridSingleAgentEnv(
+            num_players=num_players,
+            bot_difficulty="normal",
+            seed=seed,
+            reward_shaping=False,
+        )
+        # A policy that always passes can stall a game forever; truncate
+        # such episodes instead of hanging the eval pass.
+        return Monitor(gym.wrappers.TimeLimit(env, max_episode_steps=2000))
     return _init
 
 
@@ -47,6 +65,10 @@ def main():
     parser.add_argument("--save-freq", type=int, default=50_000,
                         help="Save an intermediate checkpoint every N vec-env steps. "
                              "0 disables.")
+    parser.add_argument("--eval-freq", type=int, default=25_000,
+                        help="Evaluate vs normal Rust bots every N steps per env. 0 disables. "
+                             "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
+    parser.add_argument("--eval-episodes", type=int, default=20)
     args = parser.parse_args()
 
     os.makedirs(args.run_dir, exist_ok=True)
@@ -81,6 +103,17 @@ def main():
             save_freq=args.save_freq,
             save_path=args.run_dir,
             name_prefix="ckpt",
+        ))
+    if args.eval_freq > 0:
+        # eval/mean_reward in [-1, 1] maps directly to win rate vs bots:
+        # win_rate = (mean_reward + 1) / 2.
+        eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000)])
+        callbacks.append(MaskableEvalCallback(
+            eval_env,
+            eval_freq=args.eval_freq,
+            n_eval_episodes=args.eval_episodes,
+            best_model_save_path=args.run_dir,
+            deterministic=False,
         ))
 
     model.learn(

@@ -19,62 +19,78 @@ use uuid::Uuid;
 // Observation / action-space constants — must stay in sync with constants.py
 // ---------------------------------------------------------------------------
 
-const OBS_SIZE: usize = 404;
-const N_ACTIONS: usize = 136;
-
-const CITY_IDS: [&str; 42] = [
-    "aachen",
-    "augsburg",
-    "berlin",
-    "bremen",
-    "cuxhaven",
-    "dortmund",
-    "dresden",
-    "duesseldorf",
-    "duisburg",
-    "erfurt",
-    "essen",
-    "flensburg",
-    "frankfurt",
-    "frankfurt_oder",
-    "freiburg",
-    "fulda",
-    "halle",
-    "hamburg",
-    "hannover",
-    "kassel",
-    "kiel",
-    "koeln",
-    "konstanz",
-    "leipzig",
-    "luebeck",
-    "magdeburg",
-    "mannheim",
-    "muenchen",
-    "muenster",
-    "nuernberg",
-    "osnabrueck",
-    "passau",
-    "regensburg",
-    "rostock",
-    "saarbruecken",
-    "schwerin",
-    "stuttgart",
-    "torgelow",
-    "trier",
-    "wiesbaden",
-    "wilhelmshaven",
-    "wuerzburg",
+/// Sorted city ids of the default map (assets/maps/usa.toml).
+const CITY_IDS: [&str; 49] = [
+    "albuquerque",
+    "atlanta",
+    "boston",
+    "calgary",
+    "charlotte",
+    "chicago",
+    "chihuahua",
+    "columbus",
+    "dallas",
+    "denver",
+    "detroit",
+    "edmonton",
+    "guadalajara",
+    "houston",
+    "indianapolis",
+    "jacksonville",
+    "juarez",
+    "kansascity",
+    "lasvegas",
+    "losangeles",
+    "memphis",
+    "mexicocityn",
+    "mexicocitys",
+    "miami",
+    "milwaukee",
+    "minneapolis",
+    "monterrey",
+    "montreal",
+    "nashville",
+    "neworleans",
+    "newyorkn",
+    "newyorks",
+    "oklahomacity",
+    "ottawa",
+    "philadelphia",
+    "pittsburgh",
+    "portland",
+    "quebec",
+    "regina",
+    "saltlakecity",
+    "sanantonio",
+    "sandiego",
+    "sanfrancisco",
+    "seattle",
+    "stlouis",
+    "toronto",
+    "vancouver",
+    "washington",
+    "winnipeg",
 ];
 
-const REGION_NAMES: [&str; 6] = [
-    "northwest",
-    "northeast",
-    "west",
+const REGION_NAMES: [&str; 7] = [
+    "central",
     "east",
+    "northeast",
+    "northwest",
+    "south",
     "southwest",
-    "southeast",
+    "west",
 ];
+
+const N_CITIES: usize = CITY_IDS.len();
+const N_REGIONS: usize = REGION_NAMES.len();
+
+// Observation layout: money + resources + self plants + self cities +
+// opponent summary + opponent cities + city slot counts + active regions +
+// actual market + future market + market meta + resource market +
+// phase/step/round/end-game/turn-order scalars + phase scratch.
+const OBS_SIZE: usize =
+    1 + 4 + 15 + N_CITIES + 20 + 5 * N_CITIES + N_CITIES + N_REGIONS + 24 + 20 + 3 + 4 + 5 + 8;
 
 // Action base indices.
 const PASS_AUCTION_IDX: usize = 0;
@@ -84,10 +100,11 @@ const SELECT_PLANT_BASE: usize = 3;
 const PLACE_BID_BASE: usize = 11;
 const DISCARD_PLANT_BASE: usize = 61;
 const BUILD_CITY_BASE: usize = 64;
-const BUY_RESOURCE_BASE: usize = 106;
-const POWER_CITIES_BASE: usize = 110;
-const DISCARD_RESOURCE_BASE: usize = 118;
-const POWER_FUEL_BASE: usize = 127;
+const BUY_RESOURCE_BASE: usize = BUILD_CITY_BASE + N_CITIES;
+const POWER_CITIES_BASE: usize = BUY_RESOURCE_BASE + 4;
+const DISCARD_RESOURCE_BASE: usize = POWER_CITIES_BASE + 8;
+const POWER_FUEL_BASE: usize = DISCARD_RESOURCE_BASE + 9;
+const N_ACTIONS: usize = POWER_FUEL_BASE + 9;
 
 // ---------------------------------------------------------------------------
 // Legal-move info
@@ -387,9 +404,10 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     obs[idx] = me.money as f32 / 500.0;
     idx += 1;
 
-    // 2. Self resources (4): coal, oil, gas, uranium
-    obs[idx] = me.resources.coal as f32 / 24.0;
-    obs[idx + 1] = me.resources.oil as f32 / 24.0;
+    // 2. Self resources (4): coal, oil, gas, uranium.
+    // Denominators = market price-track capacities (coal 27, oil 20, gas 24, uranium 12).
+    obs[idx] = me.resources.coal as f32 / 27.0;
+    obs[idx + 1] = me.resources.oil as f32 / 20.0;
     obs[idx + 2] = me.resources.gas as f32 / 24.0;
     obs[idx + 3] = me.resources.uranium as f32 / 12.0;
     idx += 4;
@@ -410,13 +428,13 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     }
     idx += 15;
 
-    // 4. Self cities (42)
+    // 4. Self cities (N_CITIES)
     for city_id in state.player_cities(actor_id) {
         if let Some(ci) = city_index(&city_id) {
             obs[idx + ci] = 1.0;
         }
     }
-    idx += 42;
+    idx += N_CITIES;
 
     // 5. Opponents (5 × 4 = 20): plants, cities, cap, last_powered (money hidden)
     for (i, opp) in opponents.iter().take(5).enumerate() {
@@ -428,37 +446,37 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
             .map(|p| p.cost as f32 * 2.0)
             .sum();
         obs[base] = opp.plants.len() as f32 / 3.0;
-        obs[base + 1] = state.player_city_count(opp.id) as f32 / 42.0;
+        obs[base + 1] = state.player_city_count(opp.id) as f32 / N_CITIES as f32;
         obs[base + 2] = cap / 30.0;
         obs[base + 3] = opp.last_cities_powered as f32 / 21.0;
     }
     idx += 20;
 
-    // 6. Opponent cities (5 × 42 = 210)
+    // 6. Opponent cities (5 × N_CITIES)
     for (i, opp) in opponents.iter().take(5).enumerate() {
         for city_id in state.player_cities(opp.id) {
             if let Some(ci) = city_index(&city_id) {
-                obs[idx + i * 42 + ci] = 1.0;
+                obs[idx + i * N_CITIES + ci] = 1.0;
             }
         }
     }
-    idx += 210;
+    idx += 5 * N_CITIES;
 
-    // 7. City slot counts (42)
+    // 7. City slot counts (N_CITIES)
     for (ci, &city_id) in CITY_IDS.iter().enumerate() {
         if let Some(city) = state.map.cities.get(city_id) {
             obs[idx + ci] = city.owners.len() as f32 / 3.0;
         }
     }
-    idx += 42;
+    idx += N_CITIES;
 
-    // 8. Active regions (6)
+    // 8. Active regions (N_REGIONS)
     for (i, &region) in REGION_NAMES.iter().enumerate() {
         if state.active_regions.iter().any(|r| r == region) {
             obs[idx + i] = 1.0;
         }
     }
-    idx += 6;
+    idx += N_REGIONS;
 
     // 9. Plant market actual (4 × 6 = 24): number, kind, cost, cities, present, discount
     for (i, plant) in state.market.actual.iter().take(4).enumerate() {
@@ -497,9 +515,9 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     obs[idx + 2] = state.market.deck.len() as f32 / 50.0;
     idx += 3;
 
-    // 12. Resource market (4)
-    obs[idx] = state.resources.coal as f32 / 24.0;
-    obs[idx + 1] = state.resources.oil as f32 / 24.0;
+    // 12. Resource market (4) — denominators = price-track capacities.
+    obs[idx] = state.resources.coal as f32 / 27.0;
+    obs[idx + 1] = state.resources.oil as f32 / 20.0;
     obs[idx + 2] = state.resources.gas as f32 / 24.0;
     obs[idx + 3] = state.resources.uranium as f32 / 12.0;
     idx += 4;
@@ -568,6 +586,11 @@ fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     idx += 8;
 
     debug_assert_eq!(idx, OBS_SIZE, "observation size mismatch");
+    // Clamp into the Box bounds: a few features (e.g. player stockpiles, late
+    // rounds) can exceed their nominal denominator in extreme games.
+    for v in &mut obs {
+        *v = v.clamp(0.0, 1.0);
+    }
     obs
 }
 
@@ -837,9 +860,19 @@ impl Game {
         Ok(())
     }
 
-    /// Serialized `GameStateView` as a JSON string.
-    fn state_json(&self) -> String {
-        serde_json::to_string(&self.state.view()).expect("serialize GameStateView")
+    /// Serialized `GameStateView` as a JSON string. When `viewer` is given,
+    /// that player's own money is included (opponent money is always zeroed,
+    /// matching what a seated player may see).
+    #[pyo3(signature = (viewer=None))]
+    fn state_json(&self, viewer: Option<&str>) -> PyResult<String> {
+        let viewer_id = match viewer {
+            Some(v) => Some(Uuid::parse_str(v).map_err(|e| PyValueError::new_err(e.to_string()))?),
+            None => None,
+        };
+        Ok(
+            serde_json::to_string(&self.state.view_for(viewer_id))
+                .expect("serialize GameStateView"),
+        )
     }
 
     /// Player IDs in join order (same as `player_order` after `start()`).
@@ -887,11 +920,7 @@ impl Game {
             .iter()
             .find(|p| p.id == actor_id)
             .ok_or_else(|| PyValueError::new_err("actor not found in game"))?;
-        let diff = match difficulty {
-            "easy" => BotDifficulty::Easy,
-            "hard" => BotDifficulty::Hard,
-            _ => BotDifficulty::Normal,
-        };
+        let diff = parse_difficulty(difficulty);
         let registry = default_registry();
         let profile = registry.profile_for(diff).clone();
         let seed = actor_id.as_u128() as u64;
@@ -920,7 +949,7 @@ impl Game {
     // Fast native methods — no JSON, direct numpy output
     // -----------------------------------------------------------------------
 
-    /// Observation vector for `actor` as a float32 numpy array of length 405.
+    /// Observation vector for `actor` as a float32 numpy array of length OBS_SIZE.
     /// Bypasses JSON serialisation; ~10× faster than state_json() + encode_observation().
     fn observation<'py>(
         &self,
@@ -931,14 +960,14 @@ impl Game {
         Ok(build_observation(&self.state, actor_id).into_pyarray(py))
     }
 
-    /// Action mask for `actor` as a uint8 numpy array of length 136.
+    /// Action mask for `actor` as a uint8 numpy array of length N_ACTIONS.
     /// Bypasses JSON serialisation; ~10× faster than legal_move_info() + mask_from_info().
     fn action_mask<'py>(&self, py: Python<'py>, actor: &str) -> PyResult<Bound<'py, PyArray1<u8>>> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(build_action_mask(&self.state, actor_id).into_pyarray(py))
     }
 
-    /// Apply action by integer id (0..136). Bypasses JSON encoding.
+    /// Apply action by integer id (0..N_ACTIONS). Bypasses JSON encoding.
     fn apply_action_id(&mut self, actor: &str, action_id: u16) -> PyResult<()> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let action = action_id_to_action(action_id, &self.state, actor_id);
@@ -999,6 +1028,119 @@ impl Game {
             terminal,
         ))
     }
+
+    /// Advance all non-learner seats with the strategy bot until it's the
+    /// learner's turn or the game is terminal. Returns True if terminal.
+    fn advance_bots(&mut self, learner: &str, difficulty: &str) -> PyResult<bool> {
+        let learner_id =
+            Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        drive_bots(&mut self.state, learner_id, parse_difficulty(difficulty))?;
+        Ok(matches!(self.state.phase, Phase::GameOver { .. }))
+    }
+
+    /// Fused vs-bots step: apply `action_id` for the learner, drive all bot
+    /// seats until the learner acts again or the game ends, and return
+    /// `(obs, mask, reward, terminal, learner_cities)` in one PyO3 round-trip.
+    /// Reward is +1 if the learner won, -1 if anyone else did, 0 otherwise.
+    /// `obs` and `mask` are zero arrays when `terminal` is True.
+    /// `learner_cities` is the learner's current city count (for reward shaping).
+    #[allow(clippy::type_complexity)]
+    fn step_vs_bots<'py>(
+        &mut self,
+        py: Python<'py>,
+        learner: &str,
+        action_id: u16,
+        difficulty: &str,
+    ) -> PyResult<(
+        Bound<'py, PyArray1<f32>>,
+        Bound<'py, PyArray1<u8>>,
+        f32,
+        bool,
+        u32,
+    )> {
+        let learner_id =
+            Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let action = action_id_to_action(action_id, &self.state, learner_id);
+        apply_action(&mut self.state, learner_id, action)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        if !matches!(self.state.phase, Phase::GameOver { .. }) {
+            drive_bots(&mut self.state, learner_id, parse_difficulty(difficulty))?;
+        }
+
+        let (reward, terminal) = match &self.state.phase {
+            Phase::GameOver { winner } => {
+                let r = if *winner == learner_id {
+                    1.0_f32
+                } else {
+                    -1.0_f32
+                };
+                (r, true)
+            }
+            _ => (0.0_f32, false),
+        };
+
+        let (obs, mask) = if terminal {
+            (vec![0.0f32; OBS_SIZE], vec![0u8; N_ACTIONS])
+        } else {
+            (
+                build_observation(&self.state, learner_id),
+                build_action_mask(&self.state, learner_id),
+            )
+        };
+        let learner_cities = self.state.player_cities(learner_id).len() as u32;
+
+        Ok((
+            obs.into_pyarray(py),
+            mask.into_pyarray(py),
+            reward,
+            terminal,
+            learner_cities,
+        ))
+    }
+}
+
+fn parse_difficulty(s: &str) -> BotDifficulty {
+    match s {
+        "easy" => BotDifficulty::Easy,
+        "hard" => BotDifficulty::Hard,
+        _ => BotDifficulty::Normal,
+    }
+}
+
+/// Drive every non-learner seat with the strategy bot until the learner is the
+/// current actor, the game ends, or there is no single actor.
+fn drive_bots(state: &mut GameState, learner: Uuid, diff: BotDifficulty) -> PyResult<()> {
+    let registry = default_registry();
+    for _ in 0..500 {
+        if matches!(state.phase, Phase::GameOver { .. }) {
+            return Ok(());
+        }
+        let Some(actor_id) = current_actor_id(state) else {
+            return Ok(());
+        };
+        if actor_id == learner {
+            return Ok(());
+        }
+        let (name, color) = {
+            let player = state
+                .players
+                .iter()
+                .find(|p| p.id == actor_id)
+                .ok_or_else(|| PyValueError::new_err("bot actor not found in game"))?;
+            (player.name.clone(), player.color)
+        };
+        let profile = registry.profile_for(diff).clone();
+        let seed = actor_id.as_u128() as u64;
+        let mut bot = Bot::new(actor_id, name, color, profile, seed);
+        let Some(action) = bot.decide(state) else {
+            return Err(PyValueError::new_err("bot has no move on its own turn"));
+        };
+        apply_action(state, actor_id, action)
+            .map_err(|e| PyValueError::new_err(format!("bot move rejected: {}", e)))?;
+    }
+    Err(PyValueError::new_err("bot loop exceeded 500 iterations"))
 }
 
 // ---------------------------------------------------------------------------

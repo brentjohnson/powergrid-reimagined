@@ -1,25 +1,27 @@
 """
 Action and observation encoding/decoding for the PettingZoo env.
 
-Action space layout (N_ACTIONS = 136):
+Action space layout (N_ACTIONS = 143, USA map with 49 cities):
   0          PassAuction
   1          DoneBuying
   2          DoneBuilding
   3..10      SelectPlant  slot 0..7   (actual[0..5]; only actual plants are selectable)
   11..60     PlaceBid     offset 0..49  amount = active_bid.amount+1 + offset
   61..63     DiscardPlant slot 0..2   (index into player.plants sorted by number)
-  64..105    BuildCity    city index 0..41 in CITY_IDS order
-  106..109   BuyResources resource index 0..3 (coal/oil/gas/uranium), 1 unit
-  110..117   PowerCities  bitmask 0..7 over first 3 plants (sorted by number)
-  118..126   DiscardResource  coal_drop 0..8  (oil = drop_total - coal)
-  127..135   PowerCitiesFuel  coal 0..8       (oil = hybrid_cost - coal)
+  64..112    BuildCity    city index 0..48 in CITY_IDS order
+  113..116   BuyResources resource index 0..3 (coal/oil/gas/uranium), 1 unit
+  117..124   PowerCities  bitmask 0..7 over first 3 plants (sorted by number)
+  125..133   DiscardResource  gas_drop 0..8  (oil = drop_total - gas)
+  134..142   PowerCitiesFuel  gas 0..8       (oil = hybrid_cost - gas)
+
+Base indices are derived in constants.py; this table is illustrative.
 """
 
 import json
 import numpy as np
 from .constants import (
     N_ACTIONS, OBS_SIZE, CITY_IDS, CITY_INDEX, REGION_NAMES,
-    KIND_IDS, PHASE_IDS, RESOURCE_IDX, MAX_PLAYERS,
+    KIND_IDS, PHASE_IDS, RESOURCE_IDX, MAX_CITIES,
     PASS_AUCTION, DONE_BUYING, DONE_BUILDING,
     SELECT_PLANT_BASE, PLACE_BID_BASE, DISCARD_PLANT_BASE,
     BUILD_CITY_BASE, BUY_RESOURCE_BASE, POWER_CITIES_BASE,
@@ -70,13 +72,13 @@ def mask_from_info(move_info: dict, state: dict, actor_id: str) -> np.ndarray:
         if 0 <= bm < 8:
             mask[POWER_CITIES_BASE + bm] = 1
 
-    for coal in move_info.get("discard_resource_coal", []):
-        if 0 <= coal < 9:
-            mask[DISCARD_RESOURCE_BASE + coal] = 1
+    for gas in move_info.get("discard_resource_gas", []):
+        if 0 <= gas < 9:
+            mask[DISCARD_RESOURCE_BASE + gas] = 1
 
-    for coal in move_info.get("fuel_coal", []):
-        if 0 <= coal < 9:
-            mask[POWER_FUEL_BASE + coal] = 1
+    for gas in move_info.get("fuel_gas", []):
+        if 0 <= gas < 9:
+            mask[POWER_FUEL_BASE + gas] = 1
 
     return mask
 
@@ -239,10 +241,10 @@ def action_json_to_id(action_json: str, state: dict, actor_id: str) -> int:
         return POWER_CITIES_BASE + bitmask
 
     if t == "discard_resource":
-        return DISCARD_RESOURCE_BASE + min(action.get("coal", 0), 8)
+        return DISCARD_RESOURCE_BASE + min(action.get("gas", 0), 8)
 
     if t == "power_cities_fuel":
-        return POWER_FUEL_BASE + min(action.get("coal", 0), 8)
+        return POWER_FUEL_BASE + min(action.get("gas", 0), 8)
 
     return PASS_AUCTION
 
@@ -278,7 +280,8 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
 
     # 2. Self resources (4): coal, oil, gas, uranium
     r = me["resources"]
-    obs[idx:idx+4] = [r["coal"] / 24, r["oil"] / 24, r["gas"] / 24, r["uranium"] / 12]
+    # Denominators = market price-track capacities (coal 27, oil 20, gas 24, uranium 12).
+    obs[idx:idx+4] = [r["coal"] / 27, r["oil"] / 20, r["gas"] / 24, r["uranium"] / 12]
     idx += 4
 
     # 3. Self plants (3 × 5 = 15): padded to 3 slots
@@ -292,42 +295,42 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
         obs[base+4] = cap / 10                   # max cap = 6 (cost 3 × 2)
     idx += 15
 
-    # 4. Self cities (42)
+    # 4. Self cities (MAX_CITIES)
     for city_id in cities_by_player.get(actor_id, []):
         ci = CITY_INDEX.get(city_id)
         if ci is not None:
             obs[idx + ci] = 1.0
-    idx += 42
+    idx += MAX_CITIES
 
     # 5. Opponents (5 × 4 = 20): plants, cities, cap, last_powered (money hidden)
     for i, opp in enumerate(opponents[:5]):
         base = idx + i * 4
         obs[base]   = len(opp.get("plants", [])) / 3
-        obs[base+1] = len(cities_by_player.get(opp["id"], [])) / 42
+        obs[base+1] = len(cities_by_player.get(opp["id"], [])) / MAX_CITIES
         cap = sum(p["cost"] * 2 for p in opp.get("plants", []) if p["kind"] not in ("wind",))
         obs[base+2] = cap / 30
         obs[base+3] = opp.get("last_cities_powered", 0) / 21
     idx += 20
 
-    # 6. Opponent cities (5 × 42 = 210)
+    # 6. Opponent cities (5 × MAX_CITIES)
     for i, opp in enumerate(opponents[:5]):
         for city_id in cities_by_player.get(opp["id"], []):
             ci = CITY_INDEX.get(city_id)
             if ci is not None:
-                obs[idx + i * 42 + ci] = 1.0
-    idx += 210
+                obs[idx + i * MAX_CITIES + ci] = 1.0
+    idx += 5 * MAX_CITIES
 
-    # 7. City slot count (42)
+    # 7. City slot count (MAX_CITIES)
     city_owners = state.get("city_owners", {})
     for city_id, ci in CITY_INDEX.items():
         obs[idx + ci] = len(city_owners.get(city_id, [])) / 3
-    idx += 42
+    idx += MAX_CITIES
 
-    # 8. Active regions (6)
+    # 8. Active regions (N_REGIONS)
     for i, region in enumerate(REGION_NAMES):
         if region in state.get("active_regions", []):
             obs[idx + i] = 1.0
-    idx += 6
+    idx += len(REGION_NAMES)
 
     # 9. Plant market actual (4 × 6 = 24): number, kind, cost, cities, present, discount
     mkt = state["market"]
@@ -359,9 +362,9 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
     obs[idx+2] = mkt.get("deck_remaining", 0) / 50
     idx += 3
 
-    # 12. Resource market (4)
+    # 12. Resource market (4) — denominators = price-track capacities.
     rm = state["resources"]
-    obs[idx:idx+4] = [rm["coal"]/24, rm["oil"]/24, rm["gas"]/24, rm["uranium"]/12]
+    obs[idx:idx+4] = [rm["coal"]/27, rm["oil"]/20, rm["gas"]/24, rm["uranium"]/12]
     idx += 4
 
     # 13. Phase id (1)
@@ -421,6 +424,9 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
     idx += 8
 
     assert idx == OBS_SIZE, f"Observation size mismatch: expected {OBS_SIZE}, got {idx}"
+    # Clamp into the Box bounds: a few features (e.g. player stockpiles, late
+    # rounds) can exceed their nominal denominator in extreme games.
+    np.clip(obs, 0.0, 1.0, out=obs)
     return obs
 
 

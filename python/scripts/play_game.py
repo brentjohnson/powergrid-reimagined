@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--all-bots", action="store_true", help="All seats use Rust bot")
     parser.add_argument("--bot-difficulty", default="normal", choices=["easy", "normal", "hard"])
+    parser.add_argument("--max-steps", type=int, default=5000,
+                        help="Stop after this many steps; some games can stall indefinitely.")
     args = parser.parse_args()
 
     env = PowerGridAECEnv(
@@ -69,13 +71,19 @@ def main():
             print(f"  → agent={agent} action={action}")
             print()
 
+        if step_count >= args.max_steps:
+            print(f"\nStopping after {step_count} steps (--max-steps); game has stalled.")
+            break
+
     state = json.loads(env.game.state_json()) if env.game else {}
     print("\n=== Game Over ===")
     winner = env.game.winner() if env.game else None
     if winner:
+        city_owners = state.get("city_owners", {})
         for p in state.get("players", []):
             if p["id"] == winner:
-                print(f"Winner: {p['name']} (${p['money']}, {len(p.get('cities', []))} cities)")
+                n_cities = sum(1 for owners in city_owners.values() if p["id"] in owners)
+                print(f"Winner: {p['name']} (${p['money']}, {n_cities} cities)")
                 break
     print(f"Total steps: {step_count}")
     print("\nEvent log:")

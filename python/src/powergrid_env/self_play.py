@@ -30,7 +30,10 @@ class PowerGridSelfPlayEnv(gym.Env):
         if not (2 <= num_players <= MAX_PLAYERS):
             raise ValueError(f"num_players must be 2–{MAX_PLAYERS}")
         self.num_players = num_players
-        self._seed = seed
+        # Seed stream: one generator seeded once, drawing a fresh game seed per
+        # episode. Same constructor seed → same reproducible *sequence* of games;
+        # reusing one fixed seed every reset would replay the identical game.
+        self._seed_rng = np.random.default_rng(seed)
 
         self.observation_space = spaces.Box(0.0, 1.0, (OBS_SIZE,), dtype=np.float32)
         self.action_space = spaces.Discrete(N_ACTIONS)
@@ -39,8 +42,10 @@ class PowerGridSelfPlayEnv(gym.Env):
         self._current_mask: np.ndarray = np.zeros(N_ACTIONS, dtype=np.uint8)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        effective_seed = seed if seed is not None else self._seed
-        self.game = powergrid_py.Game(self.num_players, effective_seed)
+        if seed is not None:
+            self._seed_rng = np.random.default_rng(seed)
+        game_seed = int(self._seed_rng.integers(1, 2**63))
+        self.game = powergrid_py.Game(self.num_players, game_seed)
         names = [f"agent_{i}" for i in range(self.num_players)]
         colors = COLORS[:self.num_players]
         self.game.start(names, colors)

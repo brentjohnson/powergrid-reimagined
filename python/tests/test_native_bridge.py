@@ -10,7 +10,7 @@ import pytest
 
 import powergrid_py
 from powergrid_env.encoding import encode_observation, mask_from_info, id_to_action_json
-from powergrid_env.constants import COLORS
+from powergrid_env.constants import COLORS, OBS_SIZE
 
 
 def make_game(num_players: int = 4, seed: int = 42) -> tuple:
@@ -37,7 +37,7 @@ def test_observation_matches_python(num_players: int, seat: int):
     actor = player_ids[seat]
 
     rust_obs = np.asarray(game.observation(actor), dtype=np.float32)
-    py_obs = encode_observation(state, actor)
+    py_obs = encode_observation(json.loads(game.state_json(actor)), actor)
 
     np.testing.assert_array_almost_equal(
         rust_obs, py_obs, decimal=5,
@@ -124,7 +124,7 @@ def test_step_self_play_runs_full_game():
 
     assert terminal, f"game did not finish within {steps} steps"
     assert total_reward in (1.0, -1.0), f"unexpected final reward {total_reward}"
-    assert obs.shape == (405,)
+    assert obs.shape == (OBS_SIZE,)
 
 
 def test_step_self_play_obs_matches_observation():
@@ -139,9 +139,65 @@ def test_step_self_play_obs_matches_observation():
 
     if not terminal:
         next_actor = game.current_actor()
-        state = json.loads(game.state_json())
+        state = json.loads(game.state_json(next_actor))
         obs_ref = encode_observation(state, next_actor)
         np.testing.assert_array_almost_equal(
             np.asarray(obs_from_step), obs_ref, decimal=5,
             err_msg="obs from step_self_play doesn't match game.observation(next_actor)",
+        )
+
+
+# ---------------------------------------------------------------------------
+# step_vs_bots integration
+# ---------------------------------------------------------------------------
+
+def test_step_vs_bots_runs_full_game():
+    rng = np.random.default_rng(seed=11)
+    game = powergrid_py.Game(4, 11)
+    game.start([f"agent_{i}" for i in range(4)], COLORS[:4])
+    learner = game.player_ids()[0]
+
+    terminal = game.advance_bots(learner, "normal")
+    assert not terminal
+    current_mask = np.asarray(game.action_mask(learner), dtype=np.uint8)
+
+    steps = 0
+    reward = 0.0
+    while not terminal and steps < 10_000:
+        legal = np.where(current_mask)[0]
+        assert len(legal) > 0, "empty mask at non-terminal step"
+        action = int(rng.choice(legal))
+        obs, mask, reward, terminal, cities = game.step_vs_bots(learner, action, "normal")
+        obs = np.asarray(obs)
+        current_mask = np.asarray(mask, dtype=np.uint8)
+        steps += 1
+
+    assert terminal, f"game did not finish within {steps} steps"
+    assert reward in (1.0, -1.0), f"unexpected final reward {reward}"
+    assert obs.shape == (OBS_SIZE,)
+
+
+def test_step_vs_bots_obs_matches_observation():
+    """Obs/mask returned by step_vs_bots must match observation/action_mask(learner)."""
+    game = powergrid_py.Game(4, 23)
+    game.start([f"agent_{i}" for i in range(4)], COLORS[:4])
+    learner = game.player_ids()[0]
+    game.advance_bots(learner, "normal")
+
+    mask = np.asarray(game.action_mask(learner), dtype=np.uint8)
+    action = int(np.where(mask)[0][0])
+    obs_from_step, mask_from_step, reward, terminal, cities = game.step_vs_bots(
+        learner, action, "normal"
+    )
+
+    if not terminal:
+        obs_ref = np.asarray(game.observation(learner), dtype=np.float32)
+        mask_ref = np.asarray(game.action_mask(learner), dtype=np.uint8)
+        np.testing.assert_array_almost_equal(
+            np.asarray(obs_from_step), obs_ref, decimal=5,
+            err_msg="obs from step_vs_bots doesn't match game.observation(learner)",
+        )
+        np.testing.assert_array_equal(
+            np.asarray(mask_from_step), mask_ref,
+            err_msg="mask from step_vs_bots doesn't match game.action_mask(learner)",
         )

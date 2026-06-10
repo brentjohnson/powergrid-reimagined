@@ -1,5 +1,4 @@
 """PettingZoo API conformance tests."""
-import pytest
 from pettingzoo.test import api_test
 
 from powergrid_env import PowerGridAECEnv
@@ -31,7 +30,6 @@ def test_seed_determinism():
 
 
 def test_different_seeds_differ():
-    import numpy as np
     env1 = PowerGridAECEnv(num_players=3, seed=1)
     env2 = PowerGridAECEnv(num_players=3, seed=2)
     env1.reset()

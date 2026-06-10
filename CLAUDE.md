@@ -38,6 +38,7 @@ make develop                                     # build PyO3 crate + install Py
 pytest tests/                                    # run Python tests
 python scripts/train_vs_bots.py                  # MaskablePPO vs Rust bots
 python scripts/train_selfplay.py                 # self-play
+python scripts/evaluate.py --model runs/vs_bots/best_model  # win-rate vs bots
 python scripts/play_game.py --all-bots --render  # watch a rollout
 ```
 
@@ -64,12 +65,14 @@ crates/
   powergrid-py/            # PyO3 extension module for the Python RL environment
   powergrid-maptool/       # egui desktop tool for creating/editing map TOML files
 assets/
-  maps/germany.toml        # canonical map asset, embedded at compile time via powergrid-core
+  maps/usa.toml            # default map asset (49 cities), embedded at compile time via powergrid-core
+  maps/germany.toml        # alternate map (42 cities), usable via MAP_FILE
   bots/default.toml        # default bot profiles (BotProfile weights), embedded at compile time
 python/                    # PettingZoo RL environment (see docs/rl-environment.md)
   src/powergrid_env/       # Python package: AECEnv, encoding, policies
   scripts/                 # training and rollout scripts
-  tests/                   # 21 Python tests
+  tests/                   # Python tests (encoding, parity, reseeding, random play)
+  TRAINING.md              # step-by-step training runbook (start/resume/monitor)
   pyproject.toml           # hatchling build; maturin builds the Rust extension separately
   Makefile                 # make develop = build Rust + install Python
 ```
@@ -184,8 +187,10 @@ egui desktop tool for creating and editing map TOML files. Point it at a backgro
 
 PyO3 extension module (Python 3.14, pyo3 0.28). Exposes the game engine to the Python RL environment without any network layer.
 
-- `src/lib.rs` — `Game` pyclass with methods: `start(names, colors)`, `apply(actor, action_json)`, `state_json()`, `current_actor()`, `legal_move_info(actor)`, `bot_decide(actor, difficulty)`, `city_ids()`, `is_terminal()`, `winner()`.
+- `src/lib.rs` — `Game` pyclass with methods: `start(names, colors)`, `apply(actor, action_json)`, `state_json(viewer=None)` (viewer's own money included when given), `current_actor()`, `legal_move_info(actor)`, `bot_decide(actor, difficulty)`, `city_ids()`, `is_terminal()`, `winner()`.
+- Fast native methods (no JSON, numpy in/out): `observation(actor)`, `action_mask(actor)`, `apply_action_id(actor, id)`, `step_self_play(id)` (fused self-play step), `step_vs_bots(learner, id, difficulty)` + `advance_bots(learner, difficulty)` (fused vs-bots step, bots driven inside Rust).
 - `legal_move_info` returns a JSON blob encoding every legal move for the given actor — used by the Python env to build `info["action_mask"]` without re-implementing game rules.
+- `CITY_IDS`/`REGION_NAMES`/`OBS_SIZE`/`N_ACTIONS` in `lib.rs` mirror `python/src/powergrid_env/constants.py` and encode the **default (USA) map**; parity tests in `python/tests/test_native_bridge.py` catch drift. Changing the default map invalidates trained checkpoints.
 - Built with `maturin develop --release` from the `python/` directory (see `python/Makefile`).
 - crate-type = `["cdylib"]` — produces a `.so` wheel, not a binary.
 
@@ -213,4 +218,4 @@ Single protocol. Version negotiation is enforced at the handshake: the client mu
 
 ### Map format
 
-`assets/maps/*.toml` — list of `[[cities]]` (id, name, region) and `[[connections]]` (from, to, cost). The germany map is embedded at compile time via `powergrid_core::default_map()`, which all crates call. To use a custom map, set `MAP_FILE=/path/to/map.toml` at runtime.
+`assets/maps/*.toml` — list of `[[cities]]` (id, name, region) and `[[connections]]` (from, to, cost). The usa map is embedded at compile time via `powergrid_core::default_map()`, which all crates call. To use a custom map, set `MAP_FILE=/path/to/map.toml` at runtime (note: the RL env's encoding is compiled against the default map and does not follow `MAP_FILE`).
