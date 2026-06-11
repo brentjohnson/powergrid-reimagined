@@ -1069,15 +1069,15 @@ mod tests {
     #[test]
     fn hybrid_plant_picks_cheaper_resource() {
         // No dedicated gas/oil plants; one GasOrOil hybrid.
-        // Initial market: gas=6 (cheapest slot price ~$7), oil=18 (cheapest slot price $3/unit).
-        // Oil is cheaper, so both units should come from oil.
+        // Initial market: gas=18 ($3/unit), oil=14 ($4/unit).
+        // Gas is cheaper, so both units should come from gas.
         let player = make_player(
             vec![make_plant(PlantKind::GasOrOil, 2)],
             PlayerResources::default(),
         );
         let market = ResourceMarket::initial();
         let result = compute_set_cart(&player, &market, 1);
-        assert_eq!(result, vec![(Resource::Oil, 2)]);
+        assert_eq!(result, vec![(Resource::Gas, 2)]);
     }
 
     #[test]
@@ -1114,10 +1114,11 @@ mod tests {
     }
 
     #[test]
-    fn dedicated_plants_satisfied_first_then_hybrid_buys_oil() {
+    fn dedicated_plants_satisfied_first_then_hybrid_buys_cheapest() {
         // Coal plant (cost 2) + GasOrOil hybrid (cost 1). Player has 3 coal.
         // Coal-only need = 2, covered by stock. Hybrid needs 1 gas-or-oil;
-        // with initial market oil is cheaper, so we buy 1 oil.
+        // with the initial market gas ($3/unit at gas=18) undercuts oil
+        // ($4/unit at oil=14), so we buy 1 gas.
         let resources = PlayerResources {
             coal: 3,
             ..Default::default()
@@ -1131,6 +1132,6 @@ mod tests {
         );
         let market = ResourceMarket::initial();
         let result = compute_set_cart(&player, &market, 1);
-        assert_eq!(result, vec![(Resource::Oil, 1)]);
+        assert_eq!(result, vec![(Resource::Gas, 1)]);
     }
 }

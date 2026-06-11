@@ -13,8 +13,8 @@ use crate::{
     bot::Bot,
     encoding,
     features::{
-        auction_reserve, capacity_bump, city_contest_bonus, evaluate_plant, plant_score,
-        should_skip_auction,
+        auction_reserve, capacity_bump, city_contest_bonus, evaluate_plant, fuel_reserve,
+        late_game_urgency, plant_score, should_skip_auction,
     },
     policy,
     profile::default_registry,
@@ -259,8 +259,13 @@ fn decide_auction(
 
     // PassAuction as a scored baseline (not available in round 1): plants must
     // be worth at least `min_open_score` Elektro to be preferred over passing.
+    // The baseline decays with `late_game_urgency` — hoarded cash is worth less
+    // and less as the game closes, so passing gets harder to justify.
     if !is_round_one {
-        candidates.push((AuctionCandidate::Pass, w.min_open_score));
+        candidates.push((
+            AuctionCandidate::Pass,
+            w.min_open_score * late_game_urgency(state),
+        ));
     }
 
     if candidates.is_empty() {
@@ -581,17 +586,26 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Only buy up to capacity headroom: cities we can actually power.
-    // Buying more than that never increases income and wastes the city-build budget.
+    // Spend freely up to capacity headroom: cities we can actually power.
+    // Beyond that, cities earn no income — but they still count toward the
+    // `end_game_cities` trigger, so keep building with *surplus* cash only
+    // (everything above the fuel + city reserves). Without this, a bot whose
+    // rack capacity equals its city count stops building forever and the game
+    // can reach a no-progress fixed point that never ends.
     let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
     let owned = owned_cities.len() as u8;
     let headroom = powerable.saturating_sub(owned) as usize;
+    let overbuild_reserve = fuel_reserve(player, &bot.profile.buy, Some(&state.resources))
+        + bot.profile.auction.city_reserve as u32
+        + bot.profile.auction.safety_buffer as u32;
+    // Never build past the game-end trigger — those cities are pure waste.
+    let build_cap = (state.end_game_cities as usize).saturating_sub(owned_cities.len());
 
     let mut city_ids: Vec<String> = Vec::new();
     let mut simulated_cities: Vec<String> = owned_cities.clone();
 
     for (city_id, _, _) in &candidates {
-        if city_ids.len() >= headroom {
+        if city_ids.len() >= build_cap {
             break;
         }
 
@@ -604,10 +618,20 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
             connection_cost(city.owners.len() + city_ids.iter().filter(|c| *c == city_id).count());
         let total = route_cost + slot_cost;
 
-        if total <= budget {
+        let affordable = total <= budget;
+        let overbuild_ok = affordable && budget - total >= overbuild_reserve;
+        if affordable && (city_ids.len() < headroom || overbuild_ok) {
             info!(
-                "Building in {} (route={}, slot={}, total={})",
-                city_id, route_cost, slot_cost, total
+                "Building in {} (route={}, slot={}, total={}{})",
+                city_id,
+                route_cost,
+                slot_cost,
+                total,
+                if city_ids.len() < headroom {
+                    ""
+                } else {
+                    ", overbuild"
+                }
             );
             budget -= total;
             city_ids.push(city_id.clone());
@@ -1890,6 +1914,94 @@ mod tests {
         assert_eq!(
             cost_actual, 6,
             "hybrid should price the more available (gas) resource: got {cost_actual}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Build-cities: endgame overbuild
+    // -----------------------------------------------------------------------
+
+    fn wind_plant(number: u8, cities: u8) -> PowerPlant {
+        PowerPlant {
+            number,
+            kind: PlantKind::Wind,
+            cost: 0,
+            cities,
+        }
+    }
+
+    /// `state_with_player` plus a real buildable board: every map region active
+    /// and the first `owned` cities (sorted id order) marked as owned by `player`.
+    fn build_state(player: &Player, owned: usize) -> GameState {
+        let mut state = state_with_player(player);
+        state.active_regions = state.map.regions.clone();
+        let mut ids: Vec<String> = state.map.cities.keys().cloned().collect();
+        ids.sort();
+        for id in ids.into_iter().take(owned) {
+            state
+                .map
+                .cities
+                .get_mut(&id)
+                .unwrap()
+                .owners
+                .push(player.id);
+        }
+        state
+    }
+
+    #[test]
+    fn overbuilds_with_surplus_cash_at_full_capacity() {
+        // owned == powerable: headroom is 0, but with plenty of money above the
+        // overbuild reserve the bot must keep building toward end_game_cities
+        // instead of stalling on DoneBuilding forever.
+        let mut player = bot_with_money(500);
+        player.plants.push(wind_plant(44, 2));
+        let state = build_state(&player, 2);
+        let mut bot = bot_for(&player);
+
+        let action = decide_build_cities(&state, &mut bot).expect("bot should act");
+        let Action::BuildCities { city_ids } = action else {
+            panic!("expected overbuild despite zero headroom, got {action:?}");
+        };
+        assert!(!city_ids.is_empty());
+    }
+
+    #[test]
+    fn does_not_overbuild_below_reserve() {
+        // Same zero-headroom position, but the money on hand barely covers the
+        // overbuild reserve (city_reserve 30 + safety_buffer 5 for a fuel-free
+        // wind rack) — unpowerable cities must not eat into it.
+        let mut player = bot_with_money(40);
+        player.plants.push(wind_plant(44, 2));
+        let state = build_state(&player, 2);
+        let mut bot = bot_for(&player);
+
+        let action = decide_build_cities(&state, &mut bot).expect("bot should act");
+        assert!(
+            matches!(action, Action::DoneBuilding),
+            "must not overbuild into the reserve, got {action:?}"
+        );
+    }
+
+    #[test]
+    fn never_builds_past_end_game_trigger() {
+        // 16 of 17 end-game cities owned, huge capacity headroom and budget:
+        // exactly one more city is useful — it triggers game end; any further
+        // build is pure waste.
+        let mut player = bot_with_money(1000);
+        player.plants.push(wind_plant(44, 30));
+        let state = build_state(&player, 16);
+        assert_eq!(state.end_game_cities, 17);
+        let mut bot = bot_for(&player);
+
+        let action = decide_build_cities(&state, &mut bot).expect("bot should act");
+        let Action::BuildCities { city_ids } = action else {
+            panic!("expected a build, got {action:?}");
+        };
+        assert_eq!(
+            city_ids.len(),
+            1,
+            "must stop at end_game_cities, got {city_ids:?}"
         );
     }
 }

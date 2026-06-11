@@ -261,7 +261,9 @@ pub fn useful_city_target(player: &Player, state: &GameState, w: &AuctionWeights
 
 /// True when acquiring `candidate` would give little or no benefit: the rack is
 /// full and the plant's total Elektro value — which already nets out the forced
-/// discard via `capacity_bump` — doesn't clear the upgrade margin.
+/// discard via `capacity_bump` — doesn't clear the upgrade margin. The margin
+/// is scaled by `late_game_urgency`: hoarded cash loses value as the game nears
+/// its end, so the bar to upgrade drops with it.
 pub fn should_skip_auction(
     player: &Player,
     candidate: &PowerPlant,
@@ -269,9 +271,19 @@ pub fn should_skip_auction(
     w: &AuctionWeights,
 ) -> bool {
     if player.plants.len() >= 3 {
-        return evaluate_plant(candidate, player, state, w).total < w.upgrade_margin;
+        let margin = w.upgrade_margin * late_game_urgency(state);
+        return evaluate_plant(candidate, player, state, w).total < margin;
     }
     false
+}
+
+/// How much future value holding cash still has, in `(0, 1]`: 1.0 with the full
+/// `remaining_rounds` horizon ahead, falling toward 1/8 as the game closes out.
+/// Scales the auction buy thresholds (`min_open_score`, `upgrade_margin`) so
+/// bots that would otherwise sit on a growing pile of Elektro keep buying
+/// plants late game instead of passing every auction until the step cap.
+pub fn late_game_urgency(state: &GameState) -> f32 {
+    remaining_rounds(state) / 8.0
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +508,11 @@ pub fn evaluate_plant(
         0.0
     };
 
+    // Note: `capacity_bump` already nets the forced discard out of
+    // `incremental_income` (bump = new − worst), so charging the worst plant's
+    // marginal income here again partially double-counts the loss. The term is
+    // kept as a deliberate conservatism knob, with small default weights — see
+    // the comments in assets/bots/default.toml.
     let replacement_waste = worst_owned
         .map(|worst| {
             let target = useful_city_target(player, state, w);
@@ -543,6 +560,24 @@ pub fn auction_reserve(
     buy: &BuyWeights,
     market: Option<&ResourceMarket>,
 ) -> u32 {
+    let mut reserve = fuel_reserve(player, buy, market);
+    if plant.kind.needs_resources() {
+        let fuel_cost = match market {
+            Some(m) => estimate_firing_cost(plant, m) as f32,
+            None => plant.cost as f32,
+        };
+        reserve += (fuel_cost * buy.fuel_reserve_multiplier) as u32;
+    }
+    reserve += w.city_reserve as u32;
+    reserve += w.safety_buffer as u32;
+    reserve
+}
+
+/// Elektro to keep in hand for one firing of every resource-consuming plant the
+/// player already owns. With a live `market`, each firing is priced via
+/// `estimate_firing_cost` (scarce fuels inflate the reserve); without one, the
+/// static `plant.cost` estimate is used (isolated unit tests).
+pub fn fuel_reserve(player: &Player, buy: &BuyWeights, market: Option<&ResourceMarket>) -> u32 {
     let mut reserve = 0u32;
     for p in &player.plants {
         if p.kind.needs_resources() {
@@ -553,15 +588,6 @@ pub fn auction_reserve(
             reserve += (fuel_cost * buy.fuel_reserve_multiplier) as u32;
         }
     }
-    if plant.kind.needs_resources() {
-        let fuel_cost = match market {
-            Some(m) => estimate_firing_cost(plant, m) as f32,
-            None => plant.cost as f32,
-        };
-        reserve += (fuel_cost * buy.fuel_reserve_multiplier) as u32;
-    }
-    reserve += w.city_reserve as u32;
-    reserve += w.safety_buffer as u32;
     reserve
 }
 

@@ -626,6 +626,13 @@ Produces 8 net value/round.
 ReplacementWaste = 24
 ```
 
+**Implementation note:** in the engine, `capacity_bump` is already net of the
+forced discard (new − worst), so the discarded plant's lost income is baked
+into Incremental Income before this term is applied. Charging it again here is
+a partial double-count, which is why the default `replacement_waste_weight`
+values are kept small (0.25–0.75) — the term survives only as a conservatism
+knob against churny full-rack swaps, not as a full second charge.
+
 ---
 
 # Practical Version

@@ -24,7 +24,10 @@ endgame_weight            = 5.0    # mild reward for capacity that closes the ga
 denial_weight             = 0.0    # opponent-blind — no denial bidding
 operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
 fuel_risk_weight          = 1.0    # mild Elektro penalty for thirsty plants on scarce fuel
-replacement_waste_weight  = 0.5    # mild penalty for discarding a plant that still earns
+# replacement_waste partially double-counts the forced discard (capacity_bump
+# already nets it out of incremental_income), so it's kept small across all
+# tiers — a conservatism knob, not a full second charge.
+replacement_waste_weight  = 0.25   # mild penalty for discarding a plant that still earns
 
 [easy.buy]
 fuel_reserve_multiplier = 4.0
@@ -55,7 +58,7 @@ endgame_weight            = 10.0   # reward for capacity that closes the gap to 
 denial_weight             = 0.0    # opponent-blind — no denial bidding
 operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
 fuel_risk_weight          = 2.0    # Elektro penalty for thirsty plants on scarce/contested fuel
-replacement_waste_weight  = 1.0    # penalty for discarding a plant that still has income to earn
+replacement_waste_weight  = 0.5    # penalty for discarding a plant that still has income to earn (kept small — see [easy.auction])
 
 [normal.buy]
 fuel_reserve_multiplier = 4.0   # spend 4× plant cost on fuel reserves
@@ -87,7 +90,7 @@ endgame_weight            = 20.0   # strongly rewards capacity that closes the g
 denial_weight             = 0.35   # bids up plants that would meaningfully help the strongest opponent
 operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
 fuel_risk_weight          = 3.0    # strong Elektro penalty for thirsty plants on scarce/contested fuel
-replacement_waste_weight  = 1.5    # strong penalty for discarding a plant that still has income to earn
+replacement_waste_weight  = 0.75   # strongest discard penalty of the tiers (kept small — see [easy.auction])
 
 [hard.buy]
 fuel_reserve_multiplier = 4.0
@@ -118,7 +121,7 @@ endgame_weight            = 20.0
 denial_weight             = 0.35
 operating_cost_weight     = 1.0
 fuel_risk_weight          = 3.0
-replacement_waste_weight  = 1.5
+replacement_waste_weight  = 0.75
 
 [expert.buy]
 fuel_reserve_multiplier = 4.0
