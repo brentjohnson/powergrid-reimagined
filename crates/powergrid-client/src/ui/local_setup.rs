@@ -117,6 +117,11 @@ pub(super) fn local_setup_screen(ctx: &egui::Context, state: &mut AppState, acti
                                         "Normal",
                                     );
                                     ui.selectable_value(difficulty, BotDifficulty::Hard, "Hard");
+                                    ui.selectable_value(
+                                        difficulty,
+                                        BotDifficulty::Expert,
+                                        "Expert",
+                                    );
                                 });
                             if ui.add(neon_button("[×]", theme::NEON_AMBER)).clicked() {
                                 remove_idx = Some(i);
@@ -203,5 +208,6 @@ fn difficulty_label(d: BotDifficulty) -> &'static str {
         BotDifficulty::Easy => "Easy",
         BotDifficulty::Normal => "Normal",
         BotDifficulty::Hard => "Hard",
+        BotDifficulty::Expert => "Expert",
     }
 }

@@ -33,6 +33,9 @@ pub enum BotDifficulty {
     #[default]
     Normal,
     Hard,
+    /// RL-trained policy (falls back to the hard heuristic on non-default maps
+    /// or when the policy weights are unavailable).
+    Expert,
 }
 
 /// A power plant card.

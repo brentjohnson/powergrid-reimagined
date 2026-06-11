@@ -9,3 +9,6 @@ serde = { workspace = true }
 tracing = { workspace = true }
 rand = { version = "0.8", features = ["small_rng"] }
 toml = "0.8"
+
+[dev-dependencies]
+serde_json = { workspace = true }

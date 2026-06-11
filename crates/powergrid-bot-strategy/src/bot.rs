@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use powergrid_core::{
     actions::Action,
     state::GameState,
@@ -6,7 +8,9 @@ use powergrid_core::{
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use crate::policy::MlpPolicy;
 use crate::profile::BotProfile;
+use crate::strategy::RlDecision;
 
 /// A stateful bot: holds its identity, decision profile, and a seeded RNG.
 /// The RNG must persist across `decide` calls so sampling is stable within a game.
@@ -16,6 +20,9 @@ pub struct Bot {
     pub color: PlayerColor,
     pub profile: BotProfile,
     pub(crate) rng: SmallRng,
+    /// RL policy (Expert difficulty). When set, `decide` plays the policy and
+    /// only falls back to the heuristic if the policy is unusable (non-default map).
+    pub(crate) policy: Option<Arc<MlpPolicy>>,
 }
 
 impl Bot {
@@ -32,10 +39,23 @@ impl Bot {
             color,
             profile,
             rng: SmallRng::seed_from_u64(seed),
+            policy: None,
         }
     }
 
+    pub fn with_policy(mut self, policy: Arc<MlpPolicy>) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
     pub fn decide(&mut self, state: &GameState) -> Option<Action> {
+        if self.policy.is_some() {
+            match crate::strategy::decide_rl(state, self) {
+                RlDecision::Action(action) => return Some(action),
+                RlDecision::NotMyTurn => return None,
+                RlDecision::Unavailable => {} // fall back to the heuristic
+            }
+        }
         crate::strategy::decide_with_bot(state, self)
     }
 

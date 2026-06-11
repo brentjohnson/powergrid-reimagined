@@ -40,6 +40,7 @@ python scripts/train_vs_bots.py                  # MaskablePPO vs Rust bots
 python scripts/train_selfplay.py                 # self-play
 python scripts/evaluate.py --model runs/vs_bots/best_model  # win-rate vs bots
 python scripts/play_game.py --all-bots --render  # watch a rollout
+python scripts/export_policy.py --model runs/vs_bots/best_model  # export weights for the Rust Expert bot
 ```
 
 ## Workflow
@@ -68,6 +69,8 @@ assets/
   maps/usa.toml            # default map asset (49 cities), embedded at compile time via powergrid-core
   maps/germany.toml        # alternate map (42 cities), usable via MAP_FILE
   bots/default.toml        # default bot profiles (BotProfile weights), embedded at compile time
+  policies/expert.bin      # RL policy weights for the Expert bot, embedded at compile time
+  policies/expert.golden.json  # torch reference logits for the Rust↔torch parity test
 python/                    # PettingZoo RL environment (see docs/rl-environment.md)
   src/powergrid_env/       # Python package: AECEnv, encoding, policies
   scripts/                 # training and rollout scripts
@@ -113,10 +116,12 @@ Shared game session abstraction used by both lobby and client.
 
 Pure strategy + AI lib. No I/O, no tokio. Depended on by session, lobby, and client.
 
-- `bot.rs` — `Bot { id, name, color, profile, rng }`: stateful bot with a seeded `SmallRng`. `decide(&mut self, state) -> Option<Action>` is the primary call site. Holds the RNG across calls so sampling is stable within a game.
-- `profile.rs` — `BotProfile` (per-difficulty weight struct), `ProfileRegistry` (named profile map), `default_registry()`. Profiles are embedded from `assets/bots/default.toml` at compile time; a runtime override path is reserved via `BOT_PROFILES_FILE`.
+- `bot.rs` — `Bot { id, name, color, profile, rng, policy }`: stateful bot with a seeded `SmallRng`. `decide(&mut self, state) -> Option<Action>` is the primary call site. Holds the RNG across calls so sampling is stable within a game. When `policy` is set (Expert difficulty, via `with_policy`), `decide` plays the RL policy and only falls back to the heuristic if it's unusable.
+- `profile.rs` — `BotProfile` (per-difficulty weight struct), `ProfileRegistry` (named profile map: easy/normal/hard/expert), `default_registry()`. Profiles are embedded from `assets/bots/default.toml` at compile time; a runtime override path is reserved via `BOT_PROFILES_FILE`. The `expert` profile (a hard clone) is only the fallback/valuation profile — Expert play is driven by the RL policy.
 - `features.rs` — feature extraction helpers (plant value scoring, resource cost estimation) shared by the auction and buy-resources decision functions.
-- `strategy.rs` — `decide(state, me) -> Option<Action>` (stateless, used by the Python bridge) and `decide_with_bot(state, bot) -> Option<Action>` (profile-weighted + softmax sampling). One `decide_`* helper per phase.
+- `strategy.rs` — `decide(state, me) -> Option<Action>` (stateless, used by the Python bridge) and `decide_with_bot(state, bot) -> Option<Action>` (profile-weighted + softmax sampling). One `decide_`* helper per phase. Also `decide_rl(state, bot) -> RlDecision`: the Expert path — strict `current_actor_id` turn gate, obs/mask encoding, MLP forward, stochastic masked-softmax sampling (never argmax: greedy play can stall).
+- `encoding.rs` — the RL observation/action encoding (moved here from powergrid-py so the Expert bot can use it): `CITY_IDS`/`REGION_NAMES`/`OBS_SIZE` (454)/`N_ACTIONS` (143) constants, `build_observation`, `build_action_mask`, `action_id_to_action`, `compute_legal_move_info`, `current_actor_id`, `map_matches_default`. Compiled against the **default (USA) map**; mirrors `python/src/powergrid_env/constants.py` (parity tests in `python/tests/test_native_bridge.py` catch drift).
+- `policy.rs` — native inference for the Expert policy: `MlpPolicy` (454 → 64 → tanh → 64 → tanh → 143 logits, plain-loop forward pass, no ML deps), `sample_masked`, `default_policy()` (parses `assets/policies/expert.bin`, embedded at compile time, once via `OnceLock`; `RL_POLICY_FILE` env var overrides). Weights are produced by `python/scripts/export_policy.py` from an sb3 MaskablePPO checkpoint; a golden-logits test pins Rust output to torch. On a non-default map or missing/corrupt weights, Expert bots degrade to the hard-style heuristic (warn log, game still starts).
 
 ### powergrid-lobby
 
@@ -190,7 +195,8 @@ PyO3 extension module (Python 3.14, pyo3 0.28). Exposes the game engine to the P
 - `src/lib.rs` — `Game` pyclass with methods: `start(names, colors)`, `apply(actor, action_json)`, `state_json(viewer=None)` (viewer's own money included when given), `current_actor()`, `legal_move_info(actor)`, `bot_decide(actor, difficulty)`, `city_ids()`, `is_terminal()`, `winner()`.
 - Fast native methods (no JSON, numpy in/out): `observation(actor)`, `action_mask(actor)`, `apply_action_id(actor, id)`, `step_self_play(id)` (fused self-play step), `step_vs_bots(learner, id, difficulty)` + `advance_bots(learner, difficulty)` (fused vs-bots step, bots driven inside Rust).
 - `legal_move_info` returns a JSON blob encoding every legal move for the given actor — used by the Python env to build `info["action_mask"]` without re-implementing game rules.
-- `CITY_IDS`/`REGION_NAMES`/`OBS_SIZE`/`N_ACTIONS` in `lib.rs` mirror `python/src/powergrid_env/constants.py` and encode the **default (USA) map**; parity tests in `python/tests/test_native_bridge.py` catch drift. Changing the default map invalidates trained checkpoints.
+- The obs/mask/action-id encoding lives in `powergrid_bot_strategy::encoding` (shared with the Expert bot); this crate only adds the PyO3/numpy wrappers. The encoding targets the **default (USA) map**; changing the default map invalidates trained checkpoints.
+- `bot_decide`/`advance_bots` accept `"easy" | "normal" | "hard" | "expert"`, but Python-driven bots are rebuilt per decision and never get the RL policy attached — `"expert"` plays as the hard-style heuristic here. Native Expert play exists only via `Session::add_bot` (client/lobby).
 - Built with `maturin develop --release` from the `python/` directory (see `python/Makefile`).
 - crate-type = `["cdylib"]` — produces a `.so` wheel, not a binary.
 

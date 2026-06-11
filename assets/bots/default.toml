@@ -97,3 +97,34 @@ block_weight = 2.0   # bonus for cities that opponents are already building in
 
 [hard.bureaucracy]
 oil_preference = 1.0
+
+# Expert is driven by the RL policy (assets/policies/expert.bin), not these
+# weights. This profile is the fallback used when the policy is unavailable
+# (non-default map, missing/corrupt weights) and for the client's bot
+# valuation popup. Weights are a copy of [hard].
+[expert]
+display_name = "Expert"
+temperature  = 0.0
+jitter       = 0.15
+max_jitter   = 2
+
+[expert.auction]
+city_reserve        = 30.0
+safety_buffer       = 5.0
+upgrade_margin      = 25.0
+min_open_score      = 25.0
+buildable_lookahead = 1
+endgame_weight            = 20.0
+denial_weight             = 0.35
+operating_cost_weight     = 1.0
+fuel_risk_weight          = 3.0
+replacement_waste_weight  = 1.5
+
+[expert.buy]
+fuel_reserve_multiplier = 4.0
+
+[expert.build]
+block_weight = 2.0
+
+[expert.bureaucracy]
+oil_preference = 1.0

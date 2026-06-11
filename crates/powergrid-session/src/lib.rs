@@ -149,8 +149,14 @@ impl Session {
         let registry = default_registry();
         let profile = registry.profile_for(difficulty).clone();
         let seed = bot_id.as_u128() as u64;
-        self.bots
-            .push(Bot::new(bot_id, bot_name, color, profile, seed));
+        let mut bot = Bot::new(bot_id, bot_name, color, profile, seed);
+        if difficulty == BotDifficulty::Expert {
+            match powergrid_bot_strategy::policy::default_policy() {
+                Some(policy) => bot = bot.with_policy(policy),
+                None => warn!("expert RL policy unavailable; bot will use the hard heuristic"),
+            }
+        }
+        self.bots.push(bot);
         Ok(bot_id)
     }
 

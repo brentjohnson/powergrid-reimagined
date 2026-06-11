@@ -7,14 +7,16 @@ use powergrid_core::{
         ResourceMarket,
     },
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     bot::Bot,
+    encoding,
     features::{
         auction_reserve, capacity_bump, city_contest_bonus, evaluate_plant, plant_score,
         should_skip_auction,
     },
+    policy,
     profile::default_registry,
 };
 
@@ -36,6 +38,54 @@ pub fn decide(state: &GameState, me: PlayerId) -> Option<Action> {
         seed,
     );
     decide_with_bot(state, &mut bot)
+}
+
+/// Outcome of asking the RL policy for a move.
+pub(crate) enum RlDecision {
+    Action(Action),
+    /// Someone else acts right now — wait (the heuristic must not answer either,
+    /// or the bot would mix training-time turn semantics with heuristic ones).
+    NotMyTurn,
+    /// The policy can't be used in this game (non-default map); use the heuristic.
+    Unavailable,
+}
+
+/// Decide with the RL policy: encode the state, run the MLP, and sample from
+/// the masked softmax with the bot's persistent RNG (stochastic by design —
+/// the policy was trained and evaluated that way; greedy play can stall).
+pub(crate) fn decide_rl(state: &GameState, bot: &mut Bot) -> RlDecision {
+    // The encoding is compiled against the default USA map.
+    if !encoding::map_matches_default(&state.map) {
+        warn!(
+            "bot '{}': RL policy unavailable on non-default map; using heuristic",
+            bot.name
+        );
+        return RlDecision::Unavailable;
+    }
+
+    // Strict turn gate, matching the training-time actor semantics (in
+    // Bureaucracy: first of `remaining`, not merely a member of it).
+    if encoding::current_actor_id(state) != Some(bot.id) {
+        return RlDecision::NotMyTurn;
+    }
+
+    let mask = encoding::build_action_mask(state, bot.id);
+    if mask.iter().all(|&m| m == 0) {
+        warn!("bot '{}': empty action mask on own turn", bot.name);
+        return RlDecision::Unavailable;
+    }
+
+    let obs = encoding::build_observation(state, bot.id);
+    let policy = bot.policy.clone().expect("decide_rl requires a policy");
+    let logits = policy.logits(&obs);
+    match policy::sample_masked(&logits, &mask, &mut bot.rng) {
+        Some(action_id) => RlDecision::Action(encoding::action_id_to_action(
+            action_id as u16,
+            state,
+            bot.id,
+        )),
+        None => RlDecision::Unavailable,
+    }
 }
 
 /// Full implementation: dispatch to phase-specific handlers.

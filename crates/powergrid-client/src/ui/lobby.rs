@@ -237,6 +237,7 @@ pub(super) fn lobby_screen(
                                     powergrid_core::types::BotDifficulty::Easy => "Easy",
                                     powergrid_core::types::BotDifficulty::Normal => "Normal",
                                     powergrid_core::types::BotDifficulty::Hard => "Hard",
+                                    powergrid_core::types::BotDifficulty::Expert => "Expert",
                                 })
                                 .show_ui(ui, |ui| {
                                     ui.selectable_value(
@@ -253,6 +254,11 @@ pub(super) fn lobby_screen(
                                         &mut state.bot_difficulty_input,
                                         powergrid_core::types::BotDifficulty::Hard,
                                         "Hard",
+                                    );
+                                    ui.selectable_value(
+                                        &mut state.bot_difficulty_input,
+                                        powergrid_core::types::BotDifficulty::Expert,
+                                        "Expert",
                                     );
                                 });
                         });

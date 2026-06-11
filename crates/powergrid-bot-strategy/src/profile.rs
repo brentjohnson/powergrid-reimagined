@@ -99,6 +99,9 @@ pub struct ProfileRegistry {
     pub easy: BotProfile,
     pub normal: BotProfile,
     pub hard: BotProfile,
+    /// Fallback/valuation profile for the RL-driven Expert difficulty — the
+    /// policy itself lives in `crate::policy`, not here.
+    pub expert: BotProfile,
 }
 
 impl ProfileRegistry {
@@ -107,6 +110,7 @@ impl ProfileRegistry {
             BotDifficulty::Easy => &self.easy,
             BotDifficulty::Normal => &self.normal,
             BotDifficulty::Hard => &self.hard,
+            BotDifficulty::Expert => &self.expert,
         }
     }
 }
@@ -129,6 +133,7 @@ mod tests {
         assert_eq!(registry.easy.display_name, "Easy");
         assert_eq!(registry.normal.display_name, "Normal");
         assert_eq!(registry.hard.display_name, "Hard");
+        assert_eq!(registry.expert.display_name, "Expert");
     }
 
     #[test]
