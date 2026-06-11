@@ -20,17 +20,19 @@ import os
 
 import gymnasium as gym
 from sb3_contrib import MaskablePPO
-from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from powergrid_env import PowerGridSelfPlayEnv, PowerGridSingleAgentEnv
+from powergrid_env.callbacks import PersistentBestEvalCallback
 
 
-def make_env(num_players: int, seed: int):
+def make_env(num_players: int, seed: int, reward_shaping: bool):
     def _init():
-        return PowerGridSelfPlayEnv(num_players=num_players, seed=seed)
+        return PowerGridSelfPlayEnv(
+            num_players=num_players, seed=seed, reward_shaping=reward_shaping
+        )
     return _init
 
 
@@ -69,17 +71,28 @@ def main():
                         help="Evaluate vs normal Rust bots every N steps per env. 0 disables. "
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
     parser.add_argument("--eval-episodes", type=int, default=20)
+    parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
+                        help="Add a per-round bonus proportional to cities powered to the "
+                             "acting seat's step. Eval is always unshaped.")
+    parser.add_argument("--ent-coef", type=float, default=0.01,
+                        help="PPO entropy bonus coefficient. SB3's default is 0.0, which let "
+                             "long runs collapse to a near-deterministic policy. Unlike other "
+                             "hyperparameters, this is applied on --resume-from too "
+                             "(overrides the checkpoint's value).")
     args = parser.parse_args()
 
     os.makedirs(args.run_dir, exist_ok=True)
 
-    env_fns = [make_env(args.num_players, args.seed + i) for i in range(args.num_envs)]
+    env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping)
+               for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
     if args.resume_from:
         model = MaskablePPO.load(args.resume_from, env=vec_env, device=args.device)
         model.tensorboard_log = os.path.join(args.run_dir, "tb")
-        print(f"Resumed from {args.resume_from} at {model.num_timesteps} timesteps")
+        model.ent_coef = args.ent_coef
+        print(f"Resumed from {args.resume_from} at {model.num_timesteps} timesteps "
+              f"(ent_coef={args.ent_coef})")
     else:
         # n_epochs/batch_size are the dominant cost on CPU.
         # Default PPO (n_epochs=10, batch=64) does 1280 mini-batch updates per
@@ -94,6 +107,7 @@ def main():
             n_steps=512,
             batch_size=512,
             n_epochs=4,
+            ent_coef=args.ent_coef,
             tensorboard_log=os.path.join(args.run_dir, "tb"),
         )
 
@@ -108,7 +122,7 @@ def main():
         # eval/mean_reward in [-1, 1] maps directly to win rate vs bots:
         # win_rate = (mean_reward + 1) / 2.
         eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000)])
-        callbacks.append(MaskableEvalCallback(
+        callbacks.append(PersistentBestEvalCallback(
             eval_env,
             eval_freq=args.eval_freq,
             n_eval_episodes=args.eval_episodes,

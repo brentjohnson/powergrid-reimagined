@@ -76,7 +76,8 @@ While running, SB3 prints a table every iteration. The numbers that matter:
 runs/vs_bots/
 ├── ckpt_50000_steps.zip     periodic checkpoints (CheckpointCallback)
 ├── ckpt_100000_steps.zip
-├── best_model.zip           best eval mean reward so far (MaskableEvalCallback)
+├── best_model.zip           best eval mean reward so far (PersistentBestEvalCallback)
+├── best_mean_reward.json    the eval score best_model.zip achieved
 ├── final_model.zip          written when the run completes normally
 └── tb/                      TensorBoard event files
 ```
@@ -100,10 +101,13 @@ train without bot bias.
     --run-dir runs/selfplay
 ```
 
-Self-play rewards are sparse (+1/−1 only on the final move of a game), so it
-needs more timesteps than vs-bots training. Progress is measured externally:
-the eval callback plays the policy *against normal bots* every `--eval-freq`
-steps, so `eval/mean_reward` is comparable between the two scripts.
+The terminal reward is sparse (+1/−1 only on the final move of a game), so
+self-play needs more timesteps than vs-bots training. The same per-round
+"cities powered" shaping bonus as vs-bots is on by default
+(`--reward-shaping` / `--no-reward-shaping`); every seat earns it on the step
+that resolves its powering. Progress is measured externally: the eval
+callback plays the policy *against normal bots* every `--eval-freq` steps,
+always unshaped, so `eval/mean_reward` is comparable between the two scripts.
 
 PPO hyperparameters are CPU-tuned in both scripts (`n_steps=512`,
 `batch_size=512`, `n_epochs=4`) — fewer, larger mini-batch updates per rollout
@@ -137,10 +141,18 @@ Notes:
   counter.
 - Model hyperparameters (network size, n_steps, batch size) are restored from
   the checkpoint; command-line hyperparameter flags only affect *fresh* runs.
+  Exception: `--ent-coef` (default 0.01) is re-applied on every resume — an
+  entropy bonus of 0 let long runs collapse to a near-deterministic policy,
+  so the flag always wins over the checkpoint's stored value.
 - Keep the same `--run-dir` so checkpoints and TensorBoard logs accumulate in
   one place. Keep the same `--num-envs`; PPO buffers are sized per env.
 - You can resume from `best_model`, `final_model`, or any `ckpt_*` file — they
   are all complete `MaskablePPO` saves.
+- The best-eval bar persists across resumes: the eval callback reads
+  `best_mean_reward.json` from `--run-dir` on startup, so `best_model.zip` is
+  only overwritten when an eval beats the all-time best for that run dir.
+  Delete the json to reset the bar — do this whenever old scores stop being
+  comparable (changed reward shaping, eval opponents, or `--eval-episodes`).
 
 ---
 

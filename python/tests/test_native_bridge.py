@@ -116,7 +116,7 @@ def test_step_self_play_runs_full_game():
         legal = np.where(current_mask)[0]
         assert len(legal) > 0, "empty mask at non-terminal step"
         action = int(rng.choice(legal))
-        obs, mask, reward, terminal = game.step_self_play(action)
+        obs, mask, reward, terminal, powered = game.step_self_play(action)
         obs = np.asarray(obs)
         current_mask = np.asarray(mask, dtype=np.uint8)
         total_reward += reward
@@ -135,7 +135,7 @@ def test_step_self_play_obs_matches_observation():
     mask = np.asarray(game.action_mask(actor), dtype=np.uint8)
     action = int(np.where(mask)[0][0])
 
-    obs_from_step, mask_from_step, reward, terminal = game.step_self_play(action)
+    obs_from_step, mask_from_step, reward, terminal, powered = game.step_self_play(action)
 
     if not terminal:
         next_actor = game.current_actor()
@@ -216,6 +216,43 @@ def test_reward_shaping_only_on_powering():
 
     env = PowerGridSingleAgentEnv(num_players=4, seed=3, reward_shaping=True)
     rng = np.random.default_rng(3)
+    shaped_steps = 0
+    for _ in range(3):
+        obs, info = env.reset()
+        terminated = False
+        steps = 0
+        while not terminated and steps < 20_000:
+            mask = env.action_masks()
+            action = int(rng.choice(np.where(mask)[0]))
+            obs, reward, terminated, truncated, info = env.step(action)
+            steps += 1
+            if terminated or reward == 0.0:
+                continue
+            shaped_steps += 1
+            is_power_action = (
+                POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
+                or POWER_FUEL_BASE <= action < N_ACTIONS
+            )
+            assert is_power_action, (
+                f"nonzero non-terminal reward {reward} on non-power action {action}"
+            )
+            k = reward / POWER_SHAPING_COEF
+            assert abs(k - round(k)) < 1e-6 and k >= 0, (
+                f"shaped reward {reward} is not a whole multiple of POWER_SHAPING_COEF"
+            )
+    assert shaped_steps > 0, "no shaped rewards observed in 3 games"
+    env.close()
+
+
+def test_reward_shaping_self_play_only_on_powering():
+    from powergrid_env import PowerGridSelfPlayEnv
+    from powergrid_env.constants import (
+        POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
+        N_ACTIONS, POWER_SHAPING_COEF,
+    )
+
+    env = PowerGridSelfPlayEnv(num_players=4, seed=5, reward_shaping=True)
+    rng = np.random.default_rng(5)
     shaped_steps = 0
     for _ in range(3):
         obs, info = env.reset()

@@ -6,7 +6,10 @@ current actor and returns the *next* actor's obs + mask in one Rust call — no 
 round-trips, no per-agent padding waste from the turn_based wrapper chain.
 
 Reward: +1 to the player who made the final move and won, -1 if they lost, 0 otherwise.
-The value function learns to credit earlier moves via GAE.
+The value function learns to credit earlier moves via GAE. With `reward_shaping`,
+a per-round bonus of POWER_SHAPING_COEF × cities powered is added to the acting
+seat's step when its powering resolves — the same income-analogous signal
+PowerGridSingleAgentEnv uses.
 """
 
 import numpy as np
@@ -15,7 +18,7 @@ from gymnasium import spaces
 
 import powergrid_py  # type: ignore[import]
 
-from .constants import COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE
+from .constants import COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE, POWER_SHAPING_COEF
 
 
 class PowerGridSelfPlayEnv(gym.Env):
@@ -25,11 +28,13 @@ class PowerGridSelfPlayEnv(gym.Env):
         self,
         num_players: int = 4,
         seed: int | None = None,
+        reward_shaping: bool = False,
     ):
         super().__init__()
         if not (2 <= num_players <= MAX_PLAYERS):
             raise ValueError(f"num_players must be 2–{MAX_PLAYERS}")
         self.num_players = num_players
+        self.reward_shaping = reward_shaping
         # Seed stream: one generator seeded once, drawing a fresh game seed per
         # episode. Same constructor seed → same reproducible *sequence* of games;
         # reusing one fixed seed every reset would replay the identical game.
@@ -59,7 +64,7 @@ class PowerGridSelfPlayEnv(gym.Env):
     def step(self, action: int):
         assert self.game is not None
         try:
-            obs_arr, mask_arr, reward, terminal = self.game.step_self_play(int(action))
+            obs_arr, mask_arr, reward, terminal, powered_now = self.game.step_self_play(int(action))
         except ValueError:
             # Invalid action (out-of-mask move by the policy). End the episode
             # with a penalty so training can continue.
@@ -70,7 +75,12 @@ class PowerGridSelfPlayEnv(gym.Env):
         obs = np.asarray(obs_arr, dtype=np.float32)
         mask = np.asarray(mask_arr, dtype=np.uint8)
         self._current_mask = mask
-        return obs, float(reward), terminal, False, {"action_mask": mask}
+
+        reward = float(reward)
+        if self.reward_shaping and not terminal:
+            reward += int(powered_now) * POWER_SHAPING_COEF
+
+        return obs, reward, terminal, False, {"action_mask": mask}
 
     def action_masks(self) -> np.ndarray:
         """Called by MaskablePPO via env_method('action_masks')."""

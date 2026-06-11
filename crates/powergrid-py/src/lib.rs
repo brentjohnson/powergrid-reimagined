@@ -204,9 +204,14 @@ impl Game {
     }
 
     /// Fused self-play step: apply `action_id` for the current actor and return
-    /// `(obs, mask, reward, terminal)` for the **next** actor in a single PyO3
-    /// round-trip.  Both `obs` and `mask` are zero arrays when `terminal` is True.
+    /// `(obs, mask, reward, terminal, powered_now)` for the **next** actor in a
+    /// single PyO3 round-trip.  Both `obs` and `mask` are zero arrays when
+    /// `terminal` is True.
     /// Reward is +1 if the acting player won, -1 if they lost, 0 otherwise.
+    /// `powered_now` is the number of cities the *acting* seat just got paid
+    /// for, if this action resolved its powering for the round (PowerCities,
+    /// or the PowerCitiesFuel split that completes it); 0 otherwise. Used for
+    /// income-analogous reward shaping, same as in `step_vs_bots`.
     #[allow(clippy::type_complexity)]
     fn step_self_play<'py>(
         &mut self,
@@ -217,14 +222,34 @@ impl Game {
         Bound<'py, PyArray1<u8>>,
         f32,
         bool,
+        u32,
     )> {
         let actor_id = current_actor_id(&self.state).ok_or_else(|| {
             PyValueError::new_err("no current actor (game may be terminal or in lobby)")
         })?;
 
+        let aid = action_id as usize;
+        let was_power_action = (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&aid)
+            || (POWER_FUEL_BASE..N_ACTIONS).contains(&aid);
+
         let action = action_id_to_action(action_id, &self.state, actor_id);
         apply_action(&mut self.state, actor_id, action)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        // Powering resolves immediately unless the action paused on an
+        // ambiguous hybrid fuel split for the acting seat.
+        let power_pending = matches!(
+            &self.state.phase,
+            Phase::PowerCitiesFuel { player, .. } if *player == actor_id
+        );
+        let powered_now = if was_power_action && !power_pending {
+            self.state
+                .player(actor_id)
+                .map(|p| p.last_cities_powered as u32)
+                .unwrap_or(0)
+        } else {
+            0
+        };
 
         let (reward, terminal) = match &self.state.phase {
             Phase::GameOver { winner } => {
@@ -254,6 +279,7 @@ impl Game {
             mask.into_pyarray(py),
             reward,
             terminal,
+            powered_now,
         ))
     }
 
