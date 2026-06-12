@@ -88,6 +88,26 @@ impl Game {
         Ok(())
     }
 
+    /// Override the end-game city trigger (curriculum learning). Must be
+    /// called after `start()`, which sets the rulebook default from player
+    /// count; this replaces it for the rest of the game. The trigger is part
+    /// of the observation, so a policy can condition on the current value.
+    fn set_end_game_cities(&mut self, n: u8) -> PyResult<()> {
+        if matches!(self.state.phase, Phase::Lobby) {
+            return Err(PyValueError::new_err(
+                "set_end_game_cities must be called after start()",
+            ));
+        }
+        let max = self.state.map.cities.len();
+        if n == 0 || n as usize > max {
+            return Err(PyValueError::new_err(format!(
+                "end_game_cities must be in 1..={max}"
+            )));
+        }
+        self.state.end_game_cities = n;
+        Ok(())
+    }
+
     /// Serialized `GameStateView` as a JSON string. When `viewer` is given,
     /// that player's own money is included (opponent money is always zeroed,
     /// matching what a seated player may see).

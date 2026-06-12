@@ -25,7 +25,11 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from powergrid_env import PowerGridSelfPlayEnv, PowerGridSingleAgentEnv
-from powergrid_env.callbacks import PersistentBestEvalCallback
+from powergrid_env.callbacks import (
+    RULEBOOK_END_GAME_CITIES,
+    EndGameCurriculumCallback,
+    PersistentBestEvalCallback,
+)
 
 
 def make_env(num_players: int, seed: int, reward_shaping: bool):
@@ -74,6 +78,17 @@ def main():
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round bonus proportional to cities powered to the "
                              "acting seat's step. Eval is always unshaped.")
+    parser.add_argument("--curriculum-start", type=int, default=None,
+                        help="Enable an end-game-cities curriculum starting at this trigger "
+                             "(e.g. 3). Games end when a player builds this many cities, so "
+                             "wins are frequent and the terminal signal is dense. Unset = "
+                             "always play to the rulebook trigger.")
+    parser.add_argument("--curriculum-step", type=int, default=2,
+                        help="How much to raise the trigger at each curriculum bump.")
+    parser.add_argument("--curriculum-every", type=int, default=5_000_000,
+                        help="Raise the trigger every N total timesteps until it reaches "
+                             "the rulebook value. The stage is derived from num_timesteps, "
+                             "so --resume-from lands on the right stage.")
     parser.add_argument("--ent-coef", type=float, default=0.01,
                         help="PPO entropy bonus coefficient. SB3's default is 0.0, which let "
                              "long runs collapse to a near-deterministic policy. Unlike other "
@@ -118,17 +133,33 @@ def main():
             save_path=args.run_dir,
             name_prefix="ckpt",
         ))
+    eval_env = None
+    eval_callback = None
     if args.eval_freq > 0:
         # eval/mean_reward in [-1, 1] maps directly to win rate vs bots:
         # win_rate = (mean_reward + 1) / 2.
         eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000)])
-        callbacks.append(PersistentBestEvalCallback(
+        eval_callback = PersistentBestEvalCallback(
             eval_env,
             eval_freq=args.eval_freq,
             n_eval_episodes=args.eval_episodes,
             best_model_save_path=args.run_dir,
             deterministic=False,
+        )
+    if args.curriculum_start is not None:
+        # Placed before the eval callback so a stage bump retargets the eval
+        # env (and resets the best bar) before any eval at the same step.
+        callbacks.append(EndGameCurriculumCallback(
+            vec_env,
+            eval_env,
+            eval_callback,
+            start=args.curriculum_start,
+            step=args.curriculum_step,
+            bump_every=args.curriculum_every,
+            target=RULEBOOK_END_GAME_CITIES[args.num_players],
         ))
+    if eval_callback is not None:
+        callbacks.append(eval_callback)
 
     model.learn(
         total_timesteps=args.total_timesteps,

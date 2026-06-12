@@ -114,6 +114,39 @@ PPO hyperparameters are CPU-tuned in both scripts (`n_steps=512`,
 than SB3 defaults, which is ~6× faster per iteration at no practical quality
 loss for this task.
 
+### End-game-cities curriculum
+
+If the policy never wins (eval reward pinned at −1.0), the win signal is too
+sparse to bootstrap from. The curriculum shortens games by lowering the
+end-game city trigger, then ratchets it back up:
+
+```bash
+.venv/bin/python scripts/train_selfplay.py \
+    --num-players 4 \
+    --total-timesteps 50_000_000 \
+    --curriculum-start 3 \
+    --curriculum-step 2 \
+    --curriculum-every 5_000_000 \
+    --run-dir runs/selfplay_curriculum
+```
+
+Games start ending when someone builds 3 cities (wins every few dozen moves),
+and the trigger rises by `--curriculum-step` every `--curriculum-every` total
+timesteps until it reaches the rulebook value (17 for 4 players). The trigger
+is part of the observation, so the policy conditions on it rather than being
+surprised by the moving goalpost. The stage is derived from `num_timesteps`,
+so `--resume-from` lands on the right stage automatically; the current value
+is logged to TensorBoard as `curriculum/end_game_cities`.
+
+Caveats:
+
+- Eval games use the *current* trigger, so `eval/mean_reward` is only
+  comparable within a stage. Each bump resets the persistent best bar
+  (`best_mean_reward.json`), and `best_model.zip` means "best at the current
+  stage" — only final-stage bests reflect the real game.
+- If a bump craters performance, resume from the last checkpoint with a
+  larger `--curriculum-every` (or smaller `--curriculum-step`).
+
 ---
 
 ## 4. Resuming an interrupted run

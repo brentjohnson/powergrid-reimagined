@@ -29,12 +29,17 @@ class PowerGridSelfPlayEnv(gym.Env):
         num_players: int = 4,
         seed: int | None = None,
         reward_shaping: bool = False,
+        end_game_cities: int | None = None,
     ):
         super().__init__()
         if not (2 <= num_players <= MAX_PLAYERS):
             raise ValueError(f"num_players must be 2–{MAX_PLAYERS}")
         self.num_players = num_players
         self.reward_shaping = reward_shaping
+        # Curriculum override of the end-game city trigger. None = rulebook
+        # default. Applied at reset, so a mid-episode change (via
+        # set_end_game_cities) takes effect from the next episode.
+        self.end_game_cities = end_game_cities
         # Seed stream: one generator seeded once, drawing a fresh game seed per
         # episode. Same constructor seed → same reproducible *sequence* of games;
         # reusing one fixed seed every reset would replay the identical game.
@@ -54,6 +59,8 @@ class PowerGridSelfPlayEnv(gym.Env):
         names = [f"agent_{i}" for i in range(self.num_players)]
         colors = COLORS[:self.num_players]
         self.game.start(names, colors)
+        if self.end_game_cities is not None:
+            self.game.set_end_game_cities(self.end_game_cities)
 
         actor = self.game.current_actor()
         obs = np.asarray(self.game.observation(actor), dtype=np.float32)
@@ -85,6 +92,11 @@ class PowerGridSelfPlayEnv(gym.Env):
     def action_masks(self) -> np.ndarray:
         """Called by MaskablePPO via env_method('action_masks')."""
         return self._current_mask
+
+    def set_end_game_cities(self, n: int | None) -> None:
+        """Curriculum hook (called via VecEnv.env_method). Applies from the
+        next reset; the episode in progress keeps its current trigger."""
+        self.end_game_cities = n
 
     def close(self) -> None:
         self.game = None

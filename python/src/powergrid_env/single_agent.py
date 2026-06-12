@@ -43,6 +43,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         seed: int | None = None,
         reward_shaping: bool = False,
         render_mode: str | None = None,
+        end_game_cities: int | None = None,
     ):
         super().__init__()
         if not (2 <= num_players <= MAX_PLAYERS):
@@ -50,6 +51,9 @@ class PowerGridSingleAgentEnv(gym.Env):
         if not (0 <= learner_seat < num_players):
             raise ValueError("learner_seat must be in range [0, num_players)")
 
+        # Curriculum override of the end-game city trigger. None = rulebook
+        # default. Applied at reset.
+        self.end_game_cities = end_game_cities
         self.num_players = num_players
         self.learner_seat = learner_seat
         self.bot_difficulty = bot_difficulty
@@ -76,6 +80,8 @@ class PowerGridSingleAgentEnv(gym.Env):
         names = [f"agent_{i}" for i in range(self.num_players)]
         colors = COLORS[:self.num_players]
         self.game.start(names, colors)
+        if self.end_game_cities is not None:
+            self.game.set_end_game_cities(self.end_game_cities)
 
         player_ids = self.game.player_ids()
         self._learner_id = player_ids[self.learner_seat]
@@ -130,3 +136,8 @@ class PowerGridSingleAgentEnv(gym.Env):
     def action_masks(self) -> np.ndarray:
         """Called by MaskablePPO via env_method('action_masks')."""
         return self._current_mask
+
+    def set_end_game_cities(self, n: int | None) -> None:
+        """Curriculum hook (called via VecEnv.env_method). Applies from the
+        next reset; the episode in progress keeps its current trigger."""
+        self.end_game_cities = n
