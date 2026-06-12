@@ -59,6 +59,9 @@ def main():
                              "deterministic pass-everything policy can stall a game forever.")
     parser.add_argument("--max-steps", type=int, default=2000,
                         help="Per-game step cap; a game hitting it counts as a loss.")
+    parser.add_argument("--end-game-cities", type=int, default=None,
+                        help="Play to this fixed end-game city trigger instead of the "
+                             "rulebook number. Use the value the model was trained at.")
     args = parser.parse_args()
 
     env = PowerGridSingleAgentEnv(
@@ -67,6 +70,7 @@ def main():
         bot_difficulty=args.bot_difficulty,
         seed=args.seed,
         reward_shaping=False,
+        end_game_cities=args.end_game_cities,
     )
     model = MaskablePPO.load(args.model, device=args.device)
 
@@ -120,6 +124,8 @@ def main():
     print()
     print(f"model:           {args.model}")
     print(f"opponents:       {args.num_players - 1} × {args.bot_difficulty} bot")
+    if args.end_game_cities is not None:
+        print(f"end-game cities: {args.end_game_cities} (rulebook override)")
     print(f"win rate:        {wins}/{n} = {wins / n:.1%}")
     print("placements:      " + "  ".join(
         f"{ordinal[i]}={placements[i]}" for i in range(args.num_players)))

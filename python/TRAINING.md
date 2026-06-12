@@ -147,6 +147,14 @@ Caveats:
 - If a bump craters performance, resume from the last checkpoint with a
   larger `--curriculum-every` (or smaller `--curriculum-step`).
 
+To train and evaluate at **one fixed trigger** instead of ramping, use
+`--end-game-cities X` (mutually exclusive with `--curriculum-start`). Both
+training scripts accept it, and it applies to training *and* eval games
+alike; `evaluate.py` accepts it too, so offline win-rate measurement can
+match the trained condition. As with the curriculum, eval scores at
+different triggers aren't comparable — delete `best_mean_reward.json` when
+changing the trigger between runs in the same `--run-dir`.
+
 ---
 
 ## 4. Resuming an interrupted run

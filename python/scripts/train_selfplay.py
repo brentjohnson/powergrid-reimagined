@@ -32,15 +32,17 @@ from powergrid_env.callbacks import (
 )
 
 
-def make_env(num_players: int, seed: int, reward_shaping: bool):
+def make_env(num_players: int, seed: int, reward_shaping: bool,
+             end_game_cities: int | None = None):
     def _init():
         return PowerGridSelfPlayEnv(
-            num_players=num_players, seed=seed, reward_shaping=reward_shaping
+            num_players=num_players, seed=seed, reward_shaping=reward_shaping,
+            end_game_cities=end_game_cities,
         )
     return _init
 
 
-def make_eval_env(num_players: int, seed: int):
+def make_eval_env(num_players: int, seed: int, end_game_cities: int | None = None):
     """Eval vs Rust bots — an external yardstick for self-play progress."""
     def _init():
         env = PowerGridSingleAgentEnv(
@@ -48,6 +50,7 @@ def make_eval_env(num_players: int, seed: int):
             bot_difficulty="normal",
             seed=seed,
             reward_shaping=False,
+            end_game_cities=end_game_cities,
         )
         # A policy that always passes can stall a game forever; truncate
         # such episodes instead of hanging the eval pass.
@@ -78,6 +81,12 @@ def main():
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round bonus proportional to cities powered to the "
                              "acting seat's step. Eval is always unshaped.")
+    parser.add_argument("--end-game-cities", type=int, default=None,
+                        help="Play every game (training AND eval) to this fixed end-game "
+                             "city trigger instead of the rulebook number. Mutually "
+                             "exclusive with --curriculum-start. Eval scores at different "
+                             "triggers aren't comparable: delete best_mean_reward.json in "
+                             "the run dir when changing this between runs.")
     parser.add_argument("--curriculum-start", type=int, default=None,
                         help="Enable an end-game-cities curriculum starting at this trigger "
                              "(e.g. 3). Games end when a player builds this many cities, so "
@@ -96,9 +105,14 @@ def main():
                              "(overrides the checkpoint's value).")
     args = parser.parse_args()
 
+    if args.end_game_cities is not None and args.curriculum_start is not None:
+        parser.error("--end-game-cities and --curriculum-start are mutually exclusive: "
+                     "the curriculum would overwrite the fixed trigger at training start.")
+
     os.makedirs(args.run_dir, exist_ok=True)
 
-    env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping)
+    env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping,
+                        args.end_game_cities)
                for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
@@ -138,7 +152,8 @@ def main():
     if args.eval_freq > 0:
         # eval/mean_reward in [-1, 1] maps directly to win rate vs bots:
         # win_rate = (mean_reward + 1) / 2.
-        eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000)])
+        eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000,
+                                              args.end_game_cities)])
         eval_callback = PersistentBestEvalCallback(
             eval_env,
             eval_freq=args.eval_freq,

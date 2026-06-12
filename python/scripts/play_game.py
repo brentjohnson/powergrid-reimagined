@@ -30,12 +30,16 @@ def main():
     parser.add_argument("--bot-difficulty", default="normal", choices=["easy", "normal", "hard"])
     parser.add_argument("--max-steps", type=int, default=5000,
                         help="Stop after this many steps; some games can stall indefinitely.")
+    parser.add_argument("--end-game-cities", type=int, default=None,
+                        help="Play to this fixed end-game city trigger instead of the "
+                             "rulebook number. Use the value the model was trained at.")
     args = parser.parse_args()
 
     env = PowerGridAECEnv(
         num_players=args.num_players,
         seed=args.seed,
         render_mode="ansi" if args.render else None,
+        end_game_cities=args.end_game_cities,
     )
     env.reset(seed=args.seed)
 

@@ -51,10 +51,14 @@ class PowerGridAECEnv(AECEnv):
         seed: int | None = None,
         reward_shaping: bool = False,
         render_mode: str | None = None,
+        end_game_cities: int | None = None,
     ):
         super().__init__()
         if not (2 <= num_players <= MAX_PLAYERS):
             raise ValueError(f"num_players must be 2–{MAX_PLAYERS}")
+        # Curriculum override of the end-game city trigger. None = rulebook
+        # default. Applied at reset.
+        self.end_game_cities = end_game_cities
         self.num_players = num_players
         # Seed stream: one generator seeded once, drawing a fresh game seed per
         # episode. Same constructor seed → same reproducible *sequence* of games;
@@ -102,6 +106,8 @@ class PowerGridAECEnv(AECEnv):
         names = [f"agent_{i}" for i in range(self.num_players)]
         colors = COLORS[:self.num_players]
         self.game.start(names, colors)
+        if self.end_game_cities is not None:
+            self.game.set_end_game_cities(self.end_game_cities)
 
         # Build stable-ID ↔ UUID mappings. possible_agents stays as the
         # fixed placeholder list set in __init__ so wrappers that capture

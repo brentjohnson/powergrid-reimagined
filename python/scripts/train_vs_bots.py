@@ -33,6 +33,7 @@ def make_env(args, seed: int, reward_shaping: bool, max_episode_steps: int | Non
             bot_difficulty=args.bot_difficulty,
             seed=seed,
             reward_shaping=reward_shaping,
+            end_game_cities=args.end_game_cities,
         )
         if max_episode_steps:
             # A policy that always passes can stall a game forever; truncate
@@ -65,6 +66,12 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a small per-step bonus proportional to cities owned.")
+    parser.add_argument("--end-game-cities", type=int, default=None,
+                        help="Play every game (training AND eval) to this fixed end-game "
+                             "city trigger instead of the rulebook number. Eval scores at "
+                             "different triggers aren't comparable: delete "
+                             "best_mean_reward.json in the run dir when changing this "
+                             "between runs.")
     parser.add_argument("--ent-coef", type=float, default=0.01,
                         help="PPO entropy bonus coefficient. SB3's default is 0.0, which let "
                              "long runs collapse to a near-deterministic policy. Unlike other "
