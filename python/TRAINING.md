@@ -89,25 +89,31 @@ last state, which may be worse than the best intermediate policy.
 
 ## 3. Self-play training
 
-All seats share one policy; the env returns each successive actor's observation
-in a single fast Rust call. Use this after a vs-bots policy plateaus, or to
-train without bot bias.
+Frozen-opponent self-play: the learner plays one seat; the other seats are
+driven by a frozen snapshot of its own policy, run natively in Rust. Every
+`--snapshot-every` timesteps the current weights are frozen and handed to the
+envs (taking effect at each env's next reset), so the opposition improves
+with the learner. Use this after a vs-bots policy plateaus, or to train
+without bot bias.
 
 ```bash
 .venv/bin/python scripts/train_selfplay.py \
     --num-players 4 \
     --num-envs 8 \
     --total-timesteps 5_000_000 \
+    --snapshot-every 100_000 \
     --run-dir runs/selfplay
 ```
 
-The terminal reward is sparse (+1/−1 only on the final move of a game), so
-self-play needs more timesteps than vs-bots training. The same per-round
-"cities powered" shaping bonus as vs-bots is on by default
-(`--reward-shaping` / `--no-reward-shaping`); every seat earns it on the step
-that resolves its powering. Progress is measured externally: the eval
-callback plays the policy *against normal bots* every `--eval-freq` steps,
-always unshaped, so `eval/mean_reward` is comparable between the two scripts.
+The terminal reward is sparse (+1 win / −1 loss on the learner's final
+transition), so self-play needs more timesteps than vs-bots training. The
+same per-round "cities powered" shaping bonus as vs-bots is on by default
+(`--reward-shaping` / `--no-reward-shaping`). `--bot-mix 0.2` makes ~20% of
+episodes face normal heuristic bots instead of the snapshot — useful
+grounding against self-play degeneracies. Progress is measured externally:
+the eval callback plays the policy *against normal bots* every `--eval-freq`
+steps, always unshaped, so `eval/mean_reward` is comparable between the two
+scripts.
 
 PPO hyperparameters are CPU-tuned in both scripts (`n_steps=512`,
 `batch_size=512`, `n_epochs=4`) — fewer, larger mini-batch updates per rollout

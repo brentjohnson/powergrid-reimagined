@@ -21,7 +21,7 @@ make test
 # Train a single-agent PPO policy vs Normal bots (CPU-friendly).
 .venv/bin/python scripts/train_vs_bots.py --total-timesteps 500_000
 
-# Train self-play (all seats share one policy).
+# Train self-play (opponents = frozen snapshots of the learner's policy).
 .venv/bin/python scripts/train_selfplay.py --num-players 4 --total-timesteps 1_000_000
 
 # Measure a checkpoint's win rate vs the bots.
@@ -39,9 +39,9 @@ Training checkpoints are written to `python/runs/`.
 ```
 Python (powergrid_env)            Rust (powergrid-py PyO3 crate)
 ──────────────────────            ──────────────────────────────
-SelfPlayEnv.step()         ──►   Game.step_self_play(action_id)        (no JSON)
 SingleAgentEnv.step()      ──►   Game.step_vs_bots(learner, id, diff)  (no JSON)
 SingleAgentEnv.reset()     ──►   Game.advance_bots(learner, diff)      (no JSON)
+                                 Game.load_opponent_policy(bytes)      ("policy" mode)
 AECEnv.step()              ──►   Game.apply(actor, action_json)
 AECEnv.observe()           ──►   Game.state_json(viewer) → GameStateView JSON
 AECEnv._mask()             ──►   Game.legal_move_info(actor) → JSON
@@ -50,19 +50,15 @@ RustBotPolicy.act()        ──►   Game.bot_decide(actor, difficulty)
 
 The PyO3 crate (`crates/powergrid-py`) depends only on `powergrid-core` and `powergrid-bot-strategy`. There is no network, lobby, or server involved — every game step is a direct Rust function call.
 
-The two training envs (`PowerGridSelfPlayEnv`, `PowerGridSingleAgentEnv`) use fused native methods that apply the action and return the next observation, mask, and reward in a single PyO3 round-trip — roughly an order of magnitude faster than the JSON path. The PettingZoo `PowerGridAECEnv` keeps the JSON path for API conformance and debugging.
+The training env (`PowerGridSingleAgentEnv`) uses fused native methods that apply the action, drive all opponent seats, and return the next observation, mask, and reward in a single PyO3 round-trip — roughly an order of magnitude faster than the JSON path. The PettingZoo `PowerGridAECEnv` keeps the JSON path for API conformance and debugging.
 
 ---
 
 ## Environments
 
-### `PowerGridSelfPlayEnv` (training, fastest)
+### `PowerGridSingleAgentEnv` (training)
 
-Single `gymnasium.Env` in which every seat is played by the same policy; `step()` applies the current actor's action and returns the *next* actor's observation and mask. Reward is +1/−1 to the player who made the final move; the value function learns credit assignment via GAE.
-
-### `PowerGridSingleAgentEnv` (training vs bots)
-
-A `gymnasium.Env` exposing one learner seat; all other seats are driven inside Rust by the strategy bot via `step_vs_bots`.
+A `gymnasium.Env` exposing one learner seat; all other seats are driven inside Rust via `step_vs_bots`, either by the heuristic strategy bot or — with `bot_difficulty="policy"` — by a frozen snapshot of the learner's own network (frozen-opponent self-play; see below). Reward is learner-centric: +1/−1 on the learner's final transition.
 
 ```python
 from powergrid_env import PowerGridSingleAgentEnv
@@ -70,13 +66,17 @@ from powergrid_env import PowerGridSingleAgentEnv
 env = PowerGridSingleAgentEnv(
     num_players=4,
     learner_seat=0,
-    bot_difficulty="normal",   # "easy" | "normal" | "hard"
+    bot_difficulty="normal",   # "easy" | "normal" | "hard" | "expert" | "policy"
     seed=0,
     reward_shaping=True,
 )
 obs, info = env.reset()
 obs, reward, terminated, truncated, info = env.step(action)
 ```
+
+**Frozen-opponent self-play** (`scripts/train_selfplay.py`): the env is created with `bot_difficulty="policy"`; `OpponentSnapshotCallback` periodically serializes the current policy network (`powergrid_env.export.policy_state_dict_to_bytes`, the same `PGRLPOL1` format the Rust Expert bot consumes) and pushes it to the envs via `set_opponent_policy(bytes)`. Each env loads the snapshot into Rust at its next reset, so opponents improve alongside the learner while rewards stay correctly attributed to the learner's own moves. Until the first snapshot arrives (and, with `bot_mix=p`, for a random share of episodes) the env falls back to `"normal"` heuristic bots.
+
+> Historical note: an earlier `PowerGridSelfPlayEnv` had all seats share one policy in a single transition stream. Its terminal reward went to whichever seat happened to make the round's last bureaucracy move (almost always the trailing player, since `GameOver` is only set at end-of-round), so the winner essentially never saw +1 — it was removed in favour of the frozen-opponent design.
 
 ### `PowerGridAECEnv` (PettingZoo)
 
@@ -216,10 +216,10 @@ make test
 | `python/src/powergrid_env/constants.py` | Action layout constants, CITY_IDS, normalisation denominators |
 | `python/src/powergrid_env/encoding.py` | `mask_from_info`, `id_to_action_json`, `action_json_to_id`, `encode_observation` |
 | `python/src/powergrid_env/env.py` | `PowerGridAECEnv` (PettingZoo AEC) |
-| `python/src/powergrid_env/single_agent.py` | `PowerGridSingleAgentEnv` (Gymnasium, vs Rust bots, native fast path) |
-| `python/src/powergrid_env/self_play.py` | `PowerGridSelfPlayEnv` (Gymnasium, shared-policy self-play, native fast path) |
+| `python/src/powergrid_env/single_agent.py` | `PowerGridSingleAgentEnv` (Gymnasium, vs Rust bots or frozen policy snapshots, native fast path) |
+| `python/src/powergrid_env/export.py` | `policy_state_dict_to_bytes` — PGRLPOL1 policy serialization (export script + self-play snapshots) |
 | `python/src/powergrid_env/policies/` | `RandomPolicy`, `RustBotPolicy` |
-| `python/scripts/train_selfplay.py` | Self-play MaskablePPO training |
+| `python/scripts/train_selfplay.py` | Frozen-opponent self-play MaskablePPO training |
 | `python/scripts/train_vs_bots.py` | Single-agent MaskablePPO vs Rust bots |
 | `python/scripts/evaluate.py` | Win-rate evaluation of a checkpoint vs bots |
 | `python/scripts/play_game.py` | Rollout viewer |

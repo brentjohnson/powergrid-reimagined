@@ -37,7 +37,7 @@ docker compose up --build
 make develop                                     # build PyO3 crate + install Python package
 pytest tests/                                    # run Python tests
 python scripts/train_vs_bots.py                  # MaskablePPO vs Rust bots
-python scripts/train_selfplay.py                 # self-play
+python scripts/train_selfplay.py                 # self-play (vs frozen snapshots of own policy)
 python scripts/train_selfplay.py --curriculum-start 3   # end-game-cities curriculum (trigger 3 → rulebook, +2 per --curriculum-every steps)
 python scripts/evaluate.py --model runs/vs_bots/best_model  # win-rate vs bots
 python scripts/play_game.py --all-bots --render  # watch a rollout
@@ -194,10 +194,10 @@ egui desktop tool for creating and editing map TOML files. Point it at a backgro
 PyO3 extension module (Python 3.14, pyo3 0.28). Exposes the game engine to the Python RL environment without any network layer.
 
 - `src/lib.rs` — `Game` pyclass with methods: `start(names, colors)`, `apply(actor, action_json)`, `state_json(viewer=None)` (viewer's own money included when given), `current_actor()`, `legal_move_info(actor)`, `bot_decide(actor, difficulty)`, `city_ids()`, `is_terminal()`, `winner()`, `set_end_game_cities(n)` (post-`start()` override of the end-game city trigger; the trigger is part of the observation, so policies can condition on it — used by the training curriculum).
-- Fast native methods (no JSON, numpy in/out): `observation(actor)`, `action_mask(actor)`, `apply_action_id(actor, id)`, `step_self_play(id)` (fused self-play step; also returns the acting seat's powered-cities count for reward shaping), `step_vs_bots(learner, id, difficulty)` + `advance_bots(learner, difficulty)` (fused vs-bots step, bots driven inside Rust).
+- Fast native methods (no JSON, numpy in/out): `observation(actor)`, `action_mask(actor)`, `apply_action_id(actor, id)`, `step_vs_bots(learner, id, difficulty)` + `advance_bots(learner, difficulty)` (fused step: opponents driven inside Rust; also returns the learner's powered-cities count for reward shaping), `load_opponent_policy(bytes)` (loads a frozen PGRLPOL1 policy snapshot; difficulty `"policy"` then drives opponents with it via persistent per-seat bots — frozen-opponent self-play, used by `train_selfplay.py`).
 - `legal_move_info` returns a JSON blob encoding every legal move for the given actor — used by the Python env to build `info["action_mask"]` without re-implementing game rules.
 - The obs/mask/action-id encoding lives in `powergrid_bot_strategy::encoding` (shared with the Expert bot); this crate only adds the PyO3/numpy wrappers. The encoding targets the **default (USA) map**; changing the default map invalidates trained checkpoints.
-- `bot_decide`/`advance_bots` accept `"easy" | "normal" | "hard" | "expert"`, but Python-driven bots are rebuilt per decision and never get the RL policy attached — `"expert"` plays as the hard-style heuristic here. Native Expert play exists only via `Session::add_bot` (client/lobby).
+- `bot_decide`/`advance_bots`/`step_vs_bots` accept `"easy" | "normal" | "hard" | "expert"` (heuristic; `"expert"` plays as the hard-style heuristic here — the embedded Expert RL policy is never attached) or `"policy"` (the snapshot loaded via `load_opponent_policy`; errors if none loaded). Native Expert play exists only via `Session::add_bot` (client/lobby).
 - Built with `maturin develop --release` from the `python/` directory (see `python/Makefile`).
 - crate-type = `["cdylib"]` — produces a `.so` wheel, not a binary.
 

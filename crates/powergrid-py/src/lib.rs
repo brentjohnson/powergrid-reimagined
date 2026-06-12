@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use numpy::{IntoPyArray, PyArray1};
 use powergrid_bot_strategy::encoding::{
     action_id_to_action, build_action_mask, build_observation, compute_legal_move_info,
     current_actor_id, DISCARD_RESOURCE_BASE, N_ACTIONS, OBS_SIZE, POWER_CITIES_BASE,
     POWER_FUEL_BASE,
 };
+use powergrid_bot_strategy::policy::MlpPolicy;
 use powergrid_bot_strategy::{default_registry, Bot};
 use powergrid_core::{
     actions::Action,
@@ -16,6 +20,13 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use uuid::Uuid;
 
+/// How non-learner seats are driven by `step_vs_bots` / `advance_bots`.
+enum OpponentMode {
+    Heuristic(BotDifficulty),
+    /// Frozen policy snapshot loaded via `load_opponent_policy` (self-play).
+    Policy,
+}
+
 // ---------------------------------------------------------------------------
 // Game Python class
 // ---------------------------------------------------------------------------
@@ -23,6 +34,11 @@ use uuid::Uuid;
 #[pyclass]
 struct Game {
     state: GameState,
+    /// Frozen policy snapshot driving opponent seats in `"policy"` mode.
+    opponent_policy: Option<Arc<MlpPolicy>>,
+    /// Persistent per-seat policy bots, so each bot's sampling RNG keeps its
+    /// state across decisions within a game (mirrors `Session`-held bots).
+    opponent_bots: HashMap<Uuid, Bot>,
 }
 
 #[pymethods]
@@ -37,7 +53,23 @@ impl Game {
             Some(s) => GameState::new_with_seed(map, num_players, s),
             None => GameState::new(map, num_players),
         };
-        Ok(Game { state })
+        Ok(Game {
+            state,
+            opponent_policy: None,
+            opponent_bots: HashMap::new(),
+        })
+    }
+
+    /// Load a frozen policy snapshot (PGRLPOL1 bytes, as written by
+    /// `export_policy.py` / `policy_state_dict_to_bytes`) to drive opponent
+    /// seats when `step_vs_bots`/`advance_bots` are called with
+    /// difficulty `"policy"`.
+    fn load_opponent_policy(&mut self, bytes: Vec<u8>) -> PyResult<()> {
+        let policy = MlpPolicy::from_bytes(&bytes)
+            .map_err(|e| PyValueError::new_err(format!("invalid policy weights: {:?}", e)))?;
+        self.opponent_policy = Some(Arc::new(policy));
+        self.opponent_bots.clear();
+        Ok(())
     }
 
     /// Join all players and start the game.
@@ -223,92 +255,15 @@ impl Game {
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
-    /// Fused self-play step: apply `action_id` for the current actor and return
-    /// `(obs, mask, reward, terminal, powered_now)` for the **next** actor in a
-    /// single PyO3 round-trip.  Both `obs` and `mask` are zero arrays when
-    /// `terminal` is True.
-    /// Reward is +1 if the acting player won, -1 if they lost, 0 otherwise.
-    /// `powered_now` is the number of cities the *acting* seat just got paid
-    /// for, if this action resolved its powering for the round (PowerCities,
-    /// or the PowerCitiesFuel split that completes it); 0 otherwise. Used for
-    /// income-analogous reward shaping, same as in `step_vs_bots`.
-    #[allow(clippy::type_complexity)]
-    fn step_self_play<'py>(
-        &mut self,
-        py: Python<'py>,
-        action_id: u16,
-    ) -> PyResult<(
-        Bound<'py, PyArray1<f32>>,
-        Bound<'py, PyArray1<u8>>,
-        f32,
-        bool,
-        u32,
-    )> {
-        let actor_id = current_actor_id(&self.state).ok_or_else(|| {
-            PyValueError::new_err("no current actor (game may be terminal or in lobby)")
-        })?;
-
-        let aid = action_id as usize;
-        let was_power_action = (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&aid)
-            || (POWER_FUEL_BASE..N_ACTIONS).contains(&aid);
-
-        let action = action_id_to_action(action_id, &self.state, actor_id);
-        apply_action(&mut self.state, actor_id, action)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-        // Powering resolves immediately unless the action paused on an
-        // ambiguous hybrid fuel split for the acting seat.
-        let power_pending = matches!(
-            &self.state.phase,
-            Phase::PowerCitiesFuel { player, .. } if *player == actor_id
-        );
-        let powered_now = if was_power_action && !power_pending {
-            self.state
-                .player(actor_id)
-                .map(|p| p.last_cities_powered as u32)
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
-        let (reward, terminal) = match &self.state.phase {
-            Phase::GameOver { winner } => {
-                let r = if *winner == actor_id {
-                    1.0_f32
-                } else {
-                    -1.0_f32
-                };
-                (r, true)
-            }
-            _ => (0.0_f32, false),
-        };
-
-        let (obs, mask) = if terminal {
-            (vec![0.0f32; OBS_SIZE], vec![0u8; N_ACTIONS])
-        } else {
-            let next_actor = current_actor_id(&self.state)
-                .ok_or_else(|| PyValueError::new_err("no actor after non-terminal step"))?;
-            (
-                build_observation(&self.state, next_actor),
-                build_action_mask(&self.state, next_actor),
-            )
-        };
-
-        Ok((
-            obs.into_pyarray(py),
-            mask.into_pyarray(py),
-            reward,
-            terminal,
-            powered_now,
-        ))
-    }
-
-    /// Advance all non-learner seats with the strategy bot until it's the
-    /// learner's turn or the game is terminal. Returns True if terminal.
+    /// Advance all non-learner seats until it's the learner's turn or the game
+    /// is terminal. Returns True if terminal. `difficulty` is
+    /// `"easy" | "normal" | "hard" | "expert"` (heuristic bots) or `"policy"`
+    /// (the snapshot loaded via `load_opponent_policy`).
     fn advance_bots(&mut self, learner: &str, difficulty: &str) -> PyResult<bool> {
         let learner_id =
             Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        drive_bots(&mut self.state, learner_id, parse_difficulty(difficulty))?;
+        let mode = self.opponent_mode(difficulty)?;
+        self.drive_bots(learner_id, &mode)?;
         Ok(matches!(self.state.phase, Phase::GameOver { .. }))
     }
 
@@ -340,6 +295,7 @@ impl Game {
     )> {
         let learner_id =
             Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let mode = self.opponent_mode(difficulty)?;
 
         let aid = action_id as usize;
         let was_power_action = (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&aid)
@@ -365,7 +321,7 @@ impl Game {
         };
 
         if !matches!(self.state.phase, Phase::GameOver { .. }) {
-            drive_bots(&mut self.state, learner_id, parse_difficulty(difficulty))?;
+            self.drive_bots(learner_id, &mode)?;
         }
 
         let (reward, terminal) = match &self.state.phase {
@@ -412,38 +368,74 @@ fn parse_difficulty(s: &str) -> BotDifficulty {
     }
 }
 
-/// Drive every non-learner seat with the strategy bot until the learner is the
-/// current actor, the game ends, or there is no single actor.
-fn drive_bots(state: &mut GameState, learner: Uuid, diff: BotDifficulty) -> PyResult<()> {
-    let registry = default_registry();
-    for _ in 0..500 {
-        if matches!(state.phase, Phase::GameOver { .. }) {
-            return Ok(());
+impl Game {
+    /// Resolve a difficulty string into an opponent-driving mode.
+    fn opponent_mode(&self, difficulty: &str) -> PyResult<OpponentMode> {
+        if difficulty == "policy" {
+            if self.opponent_policy.is_none() {
+                return Err(PyValueError::new_err(
+                    "difficulty \"policy\" requires load_opponent_policy() first",
+                ));
+            }
+            Ok(OpponentMode::Policy)
+        } else {
+            Ok(OpponentMode::Heuristic(parse_difficulty(difficulty)))
         }
-        let Some(actor_id) = current_actor_id(state) else {
-            return Ok(());
-        };
-        if actor_id == learner {
-            return Ok(());
-        }
-        let (name, color) = {
-            let player = state
-                .players
-                .iter()
-                .find(|p| p.id == actor_id)
-                .ok_or_else(|| PyValueError::new_err("bot actor not found in game"))?;
-            (player.name.clone(), player.color)
-        };
-        let profile = registry.profile_for(diff).clone();
-        let seed = actor_id.as_u128() as u64;
-        let mut bot = Bot::new(actor_id, name, color, profile, seed);
-        let Some(action) = bot.decide(state) else {
-            return Err(PyValueError::new_err("bot has no move on its own turn"));
-        };
-        apply_action(state, actor_id, action)
-            .map_err(|e| PyValueError::new_err(format!("bot move rejected: {}", e)))?;
     }
-    Err(PyValueError::new_err("bot loop exceeded 500 iterations"))
+
+    /// Drive every non-learner seat until the learner is the current actor,
+    /// the game ends, or there is no single actor.
+    fn drive_bots(&mut self, learner: Uuid, mode: &OpponentMode) -> PyResult<()> {
+        let registry = default_registry();
+        for _ in 0..500 {
+            if matches!(self.state.phase, Phase::GameOver { .. }) {
+                return Ok(());
+            }
+            let Some(actor_id) = current_actor_id(&self.state) else {
+                return Ok(());
+            };
+            if actor_id == learner {
+                return Ok(());
+            }
+            let (name, color) = {
+                let player = self
+                    .state
+                    .players
+                    .iter()
+                    .find(|p| p.id == actor_id)
+                    .ok_or_else(|| PyValueError::new_err("bot actor not found in game"))?;
+                (player.name.clone(), player.color)
+            };
+            let seed = actor_id.as_u128() as u64;
+            let action = match mode {
+                OpponentMode::Heuristic(diff) => {
+                    let profile = registry.profile_for(*diff).clone();
+                    let mut bot = Bot::new(actor_id, name, color, profile, seed);
+                    bot.decide(&self.state)
+                }
+                OpponentMode::Policy => {
+                    let policy = self
+                        .opponent_policy
+                        .clone()
+                        .expect("opponent_mode verified the policy is loaded");
+                    let state = &self.state;
+                    let bot = self.opponent_bots.entry(actor_id).or_insert_with(|| {
+                        // Expert profile = the heuristic fallback used if the
+                        // snapshot is unusable (non-default map).
+                        let profile = registry.profile_for(BotDifficulty::Expert).clone();
+                        Bot::new(actor_id, name, color, profile, seed).with_policy(policy)
+                    });
+                    bot.decide(state)
+                }
+            };
+            let Some(action) = action else {
+                return Err(PyValueError::new_err("bot has no move on its own turn"));
+            };
+            apply_action(&mut self.state, actor_id, action)
+                .map_err(|e| PyValueError::new_err(format!("bot move rejected: {}", e)))?;
+        }
+        Err(PyValueError::new_err("bot loop exceeded 500 iterations"))
+    }
 }
 
 // ---------------------------------------------------------------------------

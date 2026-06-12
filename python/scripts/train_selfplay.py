@@ -1,18 +1,26 @@
 """
-Self-play training: shared-policy MaskablePPO across all seats.
+Frozen-opponent self-play: MaskablePPO vs periodic snapshots of itself.
+
+The learner occupies one seat of a PowerGridSingleAgentEnv; the other seats
+are driven by a frozen copy of its own policy network, running natively in
+Rust (bot_difficulty="policy"). Every --snapshot-every timesteps the current
+weights are frozen and pushed to the envs, so the opposition improves with
+the learner. Rewards are learner-centric (+1 win / -1 loss on the learner's
+final transition), which keeps credit assignment correct — unlike the old
+single-stream shared-policy env, whose terminal reward went to whichever
+seat happened to finish the round's bookkeeping.
 
 Usage:
     python scripts/train_selfplay.py --num-players 4 --total-timesteps 1_000_000
     python scripts/train_selfplay.py --num-envs 8 --total-timesteps 5_000_000
 
 Performance notes:
-  - Each env step now calls Rust directly (no JSON serialisation) — ~14× faster
-    raw env throughput vs the old JSON-bridge + PettingZoo wrapper chain.
-  - All rollout transitions are real game steps (no black_death padding waste).
-  - SubprocVecEnv is not used: each Rust step is so fast (~200 µs) that IPC
-    overhead dominates. DummyVecEnv (sequential, in-process) is faster for this
-    workload. A few envs (4–8) gives the best balance between env throughput and
-    policy-forward amortisation.
+  - Each env step calls Rust directly; opponent moves (including snapshot
+    inference) run inside Rust, so there is no per-move Python overhead.
+  - SubprocVecEnv is not used: each Rust step is so fast that IPC overhead
+    dominates. DummyVecEnv (sequential, in-process) is faster for this
+    workload. A few envs (4–8) gives the best balance between env throughput
+    and policy-forward amortisation.
 """
 
 import argparse
@@ -24,20 +32,23 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-from powergrid_env import PowerGridSelfPlayEnv, PowerGridSingleAgentEnv
+from powergrid_env import PowerGridSingleAgentEnv
 from powergrid_env.callbacks import (
     RULEBOOK_END_GAME_CITIES,
     EndGameCurriculumCallback,
+    OpponentSnapshotCallback,
     PersistentBestEvalCallback,
 )
+from powergrid_env.export import policy_state_dict_to_bytes
 
 
 def make_env(num_players: int, seed: int, reward_shaping: bool,
-             end_game_cities: int | None = None):
+             end_game_cities: int | None = None, bot_mix: float = 0.0):
     def _init():
-        return PowerGridSelfPlayEnv(
-            num_players=num_players, seed=seed, reward_shaping=reward_shaping,
-            end_game_cities=end_game_cities,
+        return PowerGridSingleAgentEnv(
+            num_players=num_players, bot_difficulty="policy", seed=seed,
+            reward_shaping=reward_shaping, end_game_cities=end_game_cities,
+            bot_mix=bot_mix,
         )
     return _init
 
@@ -71,6 +82,12 @@ def main():
     parser.add_argument("--resume-from", default=None,
                         help="Path to a saved MaskablePPO .zip (without .zip suffix) "
                              "to continue training from. If unset, training starts fresh.")
+    parser.add_argument("--snapshot-every", type=int, default=100_000,
+                        help="Freeze the current policy and hand it to the training envs "
+                             "as the opponent every N total timesteps.")
+    parser.add_argument("--bot-mix", type=float, default=0.0,
+                        help="Per-episode probability of facing 'normal' heuristic bots "
+                             "instead of the policy snapshot (grounding/diversity knob).")
     parser.add_argument("--save-freq", type=int, default=50_000,
                         help="Save an intermediate checkpoint every N vec-env steps. "
                              "0 disables.")
@@ -80,7 +97,7 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round bonus proportional to cities powered to the "
-                             "acting seat's step. Eval is always unshaped.")
+                             "learner's step. Eval is always unshaped.")
     parser.add_argument("--end-game-cities", type=int, default=None,
                         help="Play every game (training AND eval) to this fixed end-game "
                              "city trigger instead of the rulebook number. Mutually "
@@ -112,7 +129,7 @@ def main():
     os.makedirs(args.run_dir, exist_ok=True)
 
     env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping,
-                        args.end_game_cities)
+                        args.end_game_cities, args.bot_mix)
                for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
@@ -140,7 +157,15 @@ def main():
             tensorboard_log=os.path.join(args.run_dir, "tb"),
         )
 
-    callbacks = []
+    # Seed the envs with an initial opponent snapshot before learn() resets
+    # them (SB3 resets envs before any callback fires); the callback keeps
+    # refreshing it from there.
+    vec_env.env_method(
+        "set_opponent_policy", policy_state_dict_to_bytes(model.policy.state_dict())
+    )
+
+    callbacks = [OpponentSnapshotCallback(vec_env, snapshot_every=args.snapshot_every,
+                                          verbose=1)]
     if args.save_freq > 0:
         callbacks.append(CheckpointCallback(
             save_freq=args.save_freq,
@@ -178,7 +203,7 @@ def main():
 
     model.learn(
         total_timesteps=args.total_timesteps,
-        callback=callbacks or None,
+        callback=callbacks,
         reset_num_timesteps=not bool(args.resume_from),
     )
     model.save(os.path.join(args.run_dir, "final_model"))

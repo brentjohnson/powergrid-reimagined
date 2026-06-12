@@ -98,53 +98,91 @@ def test_apply_action_id_select_plant():
 
 
 # ---------------------------------------------------------------------------
-# step_self_play integration
+# Frozen-opponent ("policy" difficulty) integration
 # ---------------------------------------------------------------------------
 
-def test_step_self_play_runs_full_game():
-    rng = np.random.default_rng(seed=7)
-    game = powergrid_py.Game(2, 7)
+def test_load_opponent_policy_rejects_garbage(random_policy_bytes):
+    game, player_ids, state = make_game(2)
+    with pytest.raises(ValueError):
+        game.load_opponent_policy(b"not a policy")
+    with pytest.raises(ValueError):  # valid header, truncated payload
+        game.load_opponent_policy(random_policy_bytes[:64])
+
+
+def test_policy_difficulty_requires_loaded_policy():
+    game, player_ids, state = make_game(2)
+    with pytest.raises(ValueError, match="load_opponent_policy"):
+        game.advance_bots(player_ids[0], "policy")
+
+
+def test_step_vs_policy_runs_full_game(random_policy_bytes):
+    """A full game against frozen-policy opponents terminates with reward ±1."""
+    rng = np.random.default_rng(seed=17)
+    game = powergrid_py.Game(2, 17)
     game.start(["a", "b"], COLORS[:2])
-    actor = game.current_actor()
-    mask0 = np.asarray(game.action_mask(actor), dtype=np.uint8)
+    game.load_opponent_policy(random_policy_bytes)
+    learner = game.player_ids()[0]
+
+    terminal = game.advance_bots(learner, "policy")
+    assert not terminal
+    current_mask = np.asarray(game.action_mask(learner), dtype=np.uint8)
 
     steps = 0
-    terminal = False
-    total_reward = 0.0
-    current_mask = mask0
+    reward = 0.0
     while not terminal and steps < 10_000:
         legal = np.where(current_mask)[0]
         assert len(legal) > 0, "empty mask at non-terminal step"
         action = int(rng.choice(legal))
-        obs, mask, reward, terminal, powered = game.step_self_play(action)
+        obs, mask, reward, terminal, cities, powered = game.step_vs_bots(
+            learner, action, "policy"
+        )
         obs = np.asarray(obs)
         current_mask = np.asarray(mask, dtype=np.uint8)
-        total_reward += reward
         steps += 1
 
     assert terminal, f"game did not finish within {steps} steps"
-    assert total_reward in (1.0, -1.0), f"unexpected final reward {total_reward}"
+    assert reward in (1.0, -1.0), f"unexpected final reward {reward}"
     assert obs.shape == (OBS_SIZE,)
 
 
-def test_step_self_play_obs_matches_observation():
-    """Obs returned by step_self_play must match game.observation(next_actor)."""
-    game = powergrid_py.Game(2, 13)
-    game.start(["a", "b"], COLORS[:2])
-    actor = game.current_actor()
-    mask = np.asarray(game.action_mask(actor), dtype=np.uint8)
-    action = int(np.where(mask)[0][0])
+def test_exported_state_dict_round_trips_into_game():
+    """Bytes from a fresh MaskablePPO state_dict load into the Rust engine."""
+    from sb3_contrib import MaskablePPO
 
-    obs_from_step, mask_from_step, reward, terminal, powered = game.step_self_play(action)
+    from powergrid_env import PowerGridSingleAgentEnv
+    from powergrid_env.export import policy_state_dict_to_bytes
 
-    if not terminal:
-        next_actor = game.current_actor()
-        state = json.loads(game.state_json(next_actor))
-        obs_ref = encode_observation(state, next_actor)
-        np.testing.assert_array_almost_equal(
-            np.asarray(obs_from_step), obs_ref, decimal=5,
-            err_msg="obs from step_self_play doesn't match game.observation(next_actor)",
-        )
+    env = PowerGridSingleAgentEnv(num_players=2, seed=1)
+    model = MaskablePPO("MlpPolicy", env, device="cpu", n_steps=8, batch_size=8)
+    data = policy_state_dict_to_bytes(model.policy.state_dict())
+    env.close()
+
+    game, player_ids, state = make_game(2)
+    game.load_opponent_policy(data)
+    game.advance_bots(player_ids[0], "policy")  # must not raise
+
+
+def test_env_policy_mode_falls_back_without_snapshot(random_policy_bytes):
+    """bot_difficulty="policy" uses heuristic bots until a snapshot is set."""
+    from powergrid_env import PowerGridSingleAgentEnv
+
+    env = PowerGridSingleAgentEnv(num_players=2, bot_difficulty="policy", seed=2)
+    env.reset()
+    assert env._episode_difficulty == "normal"
+
+    env.set_opponent_policy(random_policy_bytes)
+    env.reset()
+    assert env._episode_difficulty == "policy"
+
+    rng = np.random.default_rng(2)
+    terminated = False
+    steps = 0
+    while not terminated and steps < 10_000:
+        action = int(rng.choice(np.where(env.action_masks())[0]))
+        obs, reward, terminated, truncated, info = env.step(action)
+        steps += 1
+    assert terminated and reward in (1.0, -1.0)
+    env.close()
 
 
 # ---------------------------------------------------------------------------
@@ -244,38 +282,3 @@ def test_reward_shaping_only_on_powering():
     env.close()
 
 
-def test_reward_shaping_self_play_only_on_powering():
-    from powergrid_env import PowerGridSelfPlayEnv
-    from powergrid_env.constants import (
-        POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
-        N_ACTIONS, POWER_SHAPING_COEF,
-    )
-
-    env = PowerGridSelfPlayEnv(num_players=4, seed=5, reward_shaping=True)
-    rng = np.random.default_rng(5)
-    shaped_steps = 0
-    for _ in range(3):
-        obs, info = env.reset()
-        terminated = False
-        steps = 0
-        while not terminated and steps < 20_000:
-            mask = env.action_masks()
-            action = int(rng.choice(np.where(mask)[0]))
-            obs, reward, terminated, truncated, info = env.step(action)
-            steps += 1
-            if terminated or reward == 0.0:
-                continue
-            shaped_steps += 1
-            is_power_action = (
-                POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
-                or POWER_FUEL_BASE <= action < N_ACTIONS
-            )
-            assert is_power_action, (
-                f"nonzero non-terminal reward {reward} on non-power action {action}"
-            )
-            k = reward / POWER_SHAPING_COEF
-            assert abs(k - round(k)) < 1e-6 and k >= 0, (
-                f"shaped reward {reward} is not a whole multiple of POWER_SHAPING_COEF"
-            )
-    assert shaped_steps > 0, "no shaped rewards observed in 3 games"
-    env.close()

@@ -63,6 +63,45 @@ class PersistentBestEvalCallback(MaskableEvalCallback):
                 pass
 
 
+class OpponentSnapshotCallback(BaseCallback):
+    """Frozen-opponent self-play: periodically freeze the current policy and
+    hand it to the training envs as their opponent.
+
+    Every ``snapshot_every`` timesteps (and at training start) the policy-path
+    weights are serialized via ``powergrid_env.export.policy_state_dict_to_bytes``
+    and broadcast with ``env_method("set_opponent_policy", ...)``; each env
+    picks the new snapshot up at its next reset.
+    """
+
+    def __init__(self, train_env, *, snapshot_every: int, verbose: int = 0):
+        super().__init__(verbose)
+        if snapshot_every < 1:
+            raise ValueError("snapshot_every must be >= 1")
+        self.train_env = train_env
+        self.snapshot_every = snapshot_every
+        self._last_snapshot_at = 0
+
+    def _push(self) -> None:
+        from .export import policy_state_dict_to_bytes
+
+        data = policy_state_dict_to_bytes(self.model.policy.state_dict())
+        self.train_env.env_method("set_opponent_policy", data)
+        self._last_snapshot_at = self.model.num_timesteps
+        if self.verbose:
+            print(f"Self-play: opponent snapshot at {self._last_snapshot_at:,} timesteps")
+
+    def _on_training_start(self) -> None:
+        self._push()
+
+    def _on_step(self) -> bool:
+        if self.model.num_timesteps - self._last_snapshot_at >= self.snapshot_every:
+            self._push()
+        return True
+
+    def _on_rollout_end(self) -> None:
+        self.logger.record("selfplay/snapshot_timesteps", self._last_snapshot_at)
+
+
 class EndGameCurriculumCallback(BaseCallback):
     """Fixed-schedule curriculum on the end-game city trigger.
 

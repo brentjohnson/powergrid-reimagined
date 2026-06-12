@@ -22,7 +22,10 @@ class PowerGridSingleAgentEnv(gym.Env):
     Single-agent Gymnasium env.
 
     The learner occupies seat `learner_seat` (0-based). All other seats are
-    controlled by the Rust strategy bot at `bot_difficulty`.
+    controlled by the Rust strategy bot at `bot_difficulty` — either a
+    heuristic tier ("easy"/"normal"/"hard"/"expert") or "policy": a frozen
+    snapshot of the learner's own network, set via `set_opponent_policy`
+    (frozen-opponent self-play) and run natively in Rust.
 
     Observation: flat float32 vector of length OBS_SIZE.
     Action:      Discrete(N_ACTIONS) with action_mask in info dict.
@@ -44,12 +47,15 @@ class PowerGridSingleAgentEnv(gym.Env):
         reward_shaping: bool = False,
         render_mode: str | None = None,
         end_game_cities: int | None = None,
+        bot_mix: float = 0.0,
     ):
         super().__init__()
         if not (2 <= num_players <= MAX_PLAYERS):
             raise ValueError(f"num_players must be 2–{MAX_PLAYERS}")
         if not (0 <= learner_seat < num_players):
             raise ValueError("learner_seat must be in range [0, num_players)")
+        if not (0.0 <= bot_mix <= 1.0):
+            raise ValueError("bot_mix must be in [0, 1]")
 
         # Curriculum override of the end-game city trigger. None = rulebook
         # default. Applied at reset.
@@ -66,6 +72,14 @@ class PowerGridSingleAgentEnv(gym.Env):
 
         self.observation_space = spaces.Box(0.0, 1.0, (OBS_SIZE,), dtype=np.float32)
         self.action_space = spaces.Discrete(N_ACTIONS)
+
+        # Frozen-opponent self-play: probability that an episode uses "normal"
+        # heuristic bots instead of the policy snapshot (grounding/diversity).
+        self.bot_mix = bot_mix
+        # Snapshot bytes (PGRLPOL1) for "policy" opponents; applied at reset.
+        self._opponent_policy_bytes: bytes | None = None
+        # Difficulty actually driving the current episode's opponents.
+        self._episode_difficulty: str = bot_difficulty
 
         self.game: powergrid_py.Game | None = None
         self._learner_id: str | None = None
@@ -87,8 +101,20 @@ class PowerGridSingleAgentEnv(gym.Env):
         self._learner_id = player_ids[self.learner_seat]
         self.learner_cities = 0
 
+        self._episode_difficulty = self.bot_difficulty
+        if self.bot_difficulty == "policy":
+            # Fall back to heuristic bots before the first snapshot arrives
+            # (SB3 resets envs before any callback runs) and, with bot_mix,
+            # for a random share of episodes.
+            if self._opponent_policy_bytes is None or (
+                self.bot_mix > 0.0 and self._seed_rng.random() < self.bot_mix
+            ):
+                self._episode_difficulty = "normal"
+            else:
+                self.game.load_opponent_policy(self._opponent_policy_bytes)
+
         # Advance bots until it's the learner's turn (or game over).
-        self.game.advance_bots(self._learner_id, self.bot_difficulty)
+        self.game.advance_bots(self._learner_id, self._episode_difficulty)
 
         obs = np.asarray(self.game.observation(self._learner_id), dtype=np.float32)
         mask = np.asarray(self.game.action_mask(self._learner_id), dtype=np.uint8)
@@ -100,7 +126,7 @@ class PowerGridSingleAgentEnv(gym.Env):
 
         try:
             obs_arr, mask_arr, reward, terminal, cities, powered_now = self.game.step_vs_bots(
-                self._learner_id, int(action), self.bot_difficulty
+                self._learner_id, int(action), self._episode_difficulty
             )
         except ValueError:
             # Invalid action (out-of-mask move by the policy). End the episode
@@ -141,3 +167,9 @@ class PowerGridSingleAgentEnv(gym.Env):
         """Curriculum hook (called via VecEnv.env_method). Applies from the
         next reset; the episode in progress keeps its current trigger."""
         self.end_game_cities = n
+
+    def set_opponent_policy(self, data: bytes) -> None:
+        """Frozen self-play hook (called via VecEnv.env_method): snapshot of
+        the learner's policy in PGRLPOL1 bytes (powergrid_env.export). Applies
+        from the next reset; the episode in progress keeps its opponents."""
+        self._opponent_policy_bytes = data
