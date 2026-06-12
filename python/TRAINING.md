@@ -102,12 +102,18 @@ train without bot bias.
 ```
 
 The terminal reward is sparse (+1/−1 only on the final move of a game), so
-self-play needs more timesteps than vs-bots training. The same per-round
-"cities powered" shaping bonus as vs-bots is on by default
-(`--reward-shaping` / `--no-reward-shaping`); every seat earns it on the step
-that resolves its powering. Progress is measured externally: the eval
-callback plays the policy *against normal bots* every `--eval-freq` steps,
-always unshaped, so `eval/mean_reward` is comparable between the two scripts.
+self-play needs more timesteps than vs-bots training. A per-round shaping
+bonus is on by default (`--reward-shaping` / `--no-reward-shaping`), but
+unlike vs-bots it is **zero-sum**: each seat earns
+`POWER_SHAPING_COEF × (own cities powered − mean of the other seats' counts)`
+on the step that resolves its powering. The vs-bots raw-count bonus must not
+be used here — without bots forcing the endgame, a shared policy learns to
+stall games forever and farm the bonus (a 10M-step run found exactly that
+exploit). As a second guard, training games are truncated after
+`--max-episode-steps` (default 2000; random play finishes in ~500).
+Progress is measured externally: the eval callback plays the policy
+*against normal bots* every `--eval-freq` steps, always unshaped, so
+`eval/mean_reward` is comparable between the two scripts.
 
 PPO hyperparameters are CPU-tuned in both scripts (`n_steps=512`,
 `batch_size=512`, `n_epochs=4`) — fewer, larger mini-batch updates per rollout

@@ -7,9 +7,11 @@ round-trips, no per-agent padding waste from the turn_based wrapper chain.
 
 Reward: +1 to the player who made the final move and won, -1 if they lost, 0 otherwise.
 The value function learns to credit earlier moves via GAE. With `reward_shaping`,
-a per-round bonus of POWER_SHAPING_COEF × cities powered is added to the acting
-seat's step when its powering resolves — the same income-analogous signal
-PowerGridSingleAgentEnv uses.
+a per-round bonus of POWER_SHAPING_COEF × (cities powered − mean of the other
+seats' counts) is added to the acting seat's step when its powering resolves.
+Unlike the raw-count bonus PowerGridSingleAgentEnv uses, this is zero-sum
+across seats: a shared policy can't farm it by collectively stalling the game
+(the exploit a 10M-step run actually found) — only out-powering the others pays.
 """
 
 import numpy as np
@@ -64,7 +66,7 @@ class PowerGridSelfPlayEnv(gym.Env):
     def step(self, action: int):
         assert self.game is not None
         try:
-            obs_arr, mask_arr, reward, terminal, powered_now = self.game.step_self_play(int(action))
+            obs_arr, mask_arr, reward, terminal, powered_delta = self.game.step_self_play(int(action))
         except ValueError:
             # Invalid action (out-of-mask move by the policy). End the episode
             # with a penalty so training can continue.
@@ -78,7 +80,7 @@ class PowerGridSelfPlayEnv(gym.Env):
 
         reward = float(reward)
         if self.reward_shaping and not terminal:
-            reward += int(powered_now) * POWER_SHAPING_COEF
+            reward += float(powered_delta) * POWER_SHAPING_COEF
 
         return obs, reward, terminal, False, {"action_mask": mask}
 

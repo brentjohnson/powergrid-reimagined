@@ -244,14 +244,20 @@ def test_reward_shaping_only_on_powering():
     env.close()
 
 
-def test_reward_shaping_self_play_only_on_powering():
+def test_reward_shaping_self_play_zero_sum_only_on_powering():
+    """Self-play shaping is zero-sum: coef × (own powered − mean of others').
+
+    Nonzero only on power-resolving steps; with 4 players the delta × 3 must be
+    a whole number (own − sum_others/3).
+    """
     from powergrid_env import PowerGridSelfPlayEnv
     from powergrid_env.constants import (
         POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
         N_ACTIONS, POWER_SHAPING_COEF,
     )
 
-    env = PowerGridSelfPlayEnv(num_players=4, seed=5, reward_shaping=True)
+    num_players = 4
+    env = PowerGridSelfPlayEnv(num_players=num_players, seed=5, reward_shaping=True)
     rng = np.random.default_rng(5)
     shaped_steps = 0
     for _ in range(3):
@@ -273,9 +279,9 @@ def test_reward_shaping_self_play_only_on_powering():
             assert is_power_action, (
                 f"nonzero non-terminal reward {reward} on non-power action {action}"
             )
-            k = reward / POWER_SHAPING_COEF
-            assert abs(k - round(k)) < 1e-6 and k >= 0, (
-                f"shaped reward {reward} is not a whole multiple of POWER_SHAPING_COEF"
+            k = reward / POWER_SHAPING_COEF * (num_players - 1)
+            assert abs(k - round(k)) < 1e-3, (
+                f"shaped reward {reward} is not coef × (own − others_sum/{num_players - 1})"
             )
     assert shaped_steps > 0, "no shaped rewards observed in 3 games"
     env.close()

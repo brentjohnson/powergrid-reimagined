@@ -28,11 +28,16 @@ from powergrid_env import PowerGridSelfPlayEnv, PowerGridSingleAgentEnv
 from powergrid_env.callbacks import PersistentBestEvalCallback
 
 
-def make_env(num_players: int, seed: int, reward_shaping: bool):
+def make_env(num_players: int, seed: int, reward_shaping: bool, max_episode_steps: int):
     def _init():
-        return PowerGridSelfPlayEnv(
+        env = PowerGridSelfPlayEnv(
             num_players=num_players, seed=seed, reward_shaping=reward_shaping
         )
+        if max_episode_steps:
+            # Cap stalled games: without an external opponent forcing the
+            # endgame, a shared policy can drag a game out indefinitely.
+            env = Monitor(gym.wrappers.TimeLimit(env, max_episode_steps=max_episode_steps))
+        return env
     return _init
 
 
@@ -74,6 +79,10 @@ def main():
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round bonus proportional to cities powered to the "
                              "acting seat's step. Eval is always unshaped.")
+    parser.add_argument("--max-episode-steps", type=int, default=2000,
+                        help="Truncate self-play training games after N total steps (all seats). "
+                             "Random play finishes in ~500; the cap stops a shared policy from "
+                             "stalling games forever. 0 disables.")
     parser.add_argument("--ent-coef", type=float, default=0.01,
                         help="PPO entropy bonus coefficient. SB3's default is 0.0, which let "
                              "long runs collapse to a near-deterministic policy. Unlike other "
@@ -83,7 +92,8 @@ def main():
 
     os.makedirs(args.run_dir, exist_ok=True)
 
-    env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping)
+    env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping,
+                        args.max_episode_steps)
                for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 

@@ -204,14 +204,17 @@ impl Game {
     }
 
     /// Fused self-play step: apply `action_id` for the current actor and return
-    /// `(obs, mask, reward, terminal, powered_now)` for the **next** actor in a
-    /// single PyO3 round-trip.  Both `obs` and `mask` are zero arrays when
+    /// `(obs, mask, reward, terminal, powered_delta)` for the **next** actor in
+    /// a single PyO3 round-trip.  Both `obs` and `mask` are zero arrays when
     /// `terminal` is True.
     /// Reward is +1 if the acting player won, -1 if they lost, 0 otherwise.
-    /// `powered_now` is the number of cities the *acting* seat just got paid
-    /// for, if this action resolved its powering for the round (PowerCities,
-    /// or the PowerCitiesFuel split that completes it); 0 otherwise. Used for
-    /// income-analogous reward shaping, same as in `step_vs_bots`.
+    /// `powered_delta` is the acting seat's cities-powered count minus the mean
+    /// of the other seats' most recent counts, emitted on the action that
+    /// resolves its powering for the round (PowerCities, or the PowerCitiesFuel
+    /// split that completes it); 0 otherwise. Zero-sum reward shaping: unlike
+    /// the raw count `step_vs_bots` returns, collectively prolonging the game
+    /// earns ~nothing, so a shared self-play policy can't farm the bonus by
+    /// stalling — only out-powering the other seats pays.
     #[allow(clippy::type_complexity)]
     fn step_self_play<'py>(
         &mut self,
@@ -222,7 +225,7 @@ impl Game {
         Bound<'py, PyArray1<u8>>,
         f32,
         bool,
-        u32,
+        f32,
     )> {
         let actor_id = current_actor_id(&self.state).ok_or_else(|| {
             PyValueError::new_err("no current actor (game may be terminal or in lobby)")
@@ -242,13 +245,30 @@ impl Game {
             &self.state.phase,
             Phase::PowerCitiesFuel { player, .. } if *player == actor_id
         );
-        let powered_now = if was_power_action && !power_pending {
-            self.state
+        let powered_delta = if was_power_action && !power_pending {
+            let own = self
+                .state
                 .player(actor_id)
-                .map(|p| p.last_cities_powered as u32)
-                .unwrap_or(0)
+                .map(|p| p.last_cities_powered as f32)
+                .unwrap_or(0.0);
+            // Seats earlier in this round's Bureaucracy already carry this
+            // round's count; later seats still carry last round's — a fine
+            // approximation for a per-round relative baseline.
+            let others: Vec<f32> = self
+                .state
+                .players
+                .iter()
+                .filter(|p| p.id != actor_id)
+                .map(|p| p.last_cities_powered as f32)
+                .collect();
+            let others_mean = if others.is_empty() {
+                0.0
+            } else {
+                others.iter().sum::<f32>() / others.len() as f32
+            };
+            own - others_mean
         } else {
-            0
+            0.0
         };
 
         let (reward, terminal) = match &self.state.phase {
@@ -279,7 +299,7 @@ impl Game {
             mask.into_pyarray(py),
             reward,
             terminal,
-            powered_now,
+            powered_delta,
         ))
     }
 
