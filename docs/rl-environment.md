@@ -222,5 +222,6 @@ make test
 | `python/scripts/train_selfplay.py` | Frozen-opponent self-play MaskablePPO training |
 | `python/scripts/train_vs_bots.py` | Single-agent MaskablePPO vs Rust bots |
 | `python/scripts/evaluate.py` | Win-rate evaluation of a checkpoint vs bots |
+| `python/scripts/run_report.py` | Status report for a run dir: checkpoints, live process, TB metrics, health flags |
 | `python/scripts/play_game.py` | Rollout viewer |
 | `python/tests/` | Encoding, API conformance, parity, reseeding, and random-play tests |

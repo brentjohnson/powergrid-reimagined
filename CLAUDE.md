@@ -40,6 +40,7 @@ python scripts/train_vs_bots.py                  # MaskablePPO vs Rust bots
 python scripts/train_selfplay.py                 # self-play (vs frozen snapshots of own policy)
 python scripts/train_selfplay.py --curriculum-start 3   # end-game-cities curriculum (trigger 3 → rulebook, +2 per --curriculum-every steps)
 python scripts/evaluate.py --model runs/vs_bots/best_model  # win-rate vs bots
+python scripts/run_report.py runs/selfplay           # training-run status: checkpoints, eval history, health flags
 python scripts/play_game.py --all-bots --render  # watch a rollout
 python scripts/export_policy.py --model runs/vs_bots/best_model  # export weights for the Rust Expert bot
 ```

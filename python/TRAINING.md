@@ -205,6 +205,19 @@ Notes:
 
 ## 5. Monitoring progress
 
+### One-shot status report
+
+```bash
+.venv/bin/python scripts/run_report.py runs/selfplay_frozen
+```
+
+Prints everything below without opening TensorBoard: checkpoint inventory and
+best-eval bar, whether the training process is still running, the recent eval
+history (with derived win rate), entropy/explained-variance/value-loss/fps
+trends, curriculum/snapshot tags, and health flags for the known failure
+patterns (eval pinned at −1, entropy collapse, critic converged to a constant,
+eval never firing because `--eval-freq` counts per-env steps).
+
 ### TensorBoard
 
 ```bash
