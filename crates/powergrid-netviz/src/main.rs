@@ -3,7 +3,12 @@
 //! Load a `PGRLPOL1` policy file (or use the embedded `expert.bin`), edit the
 //! 454-dim observation with labeled sliders, and watch the forward pass —
 //! input cells, both 64-wide hidden layers, and the 143 output logits — update
-//! live. Click a node to see the weighted connections feeding it.
+//! live. Click a node to trace its full weighted path through every layer
+//! (input → hidden1 → hidden2 → output); edge brightness is normalized
+//! per weight matrix so no single connection washes out the rest. In active-
+//! game mode, enable "Show Δ from real observation" to color nodes and edges
+//! by how much a hand-edited input changes the forward pass relative to the
+//! real observation.
 
 mod action_labels;
 mod game;
@@ -32,6 +37,39 @@ enum Layer {
     Hidden1,
     Hidden2,
     Output,
+}
+
+/// Which weight matrix an edge belongs to (input→hidden1, hidden1→hidden2,
+/// hidden2→output). Edge brightness is normalized independently per
+/// transition so one large weight doesn't wash out the others.
+#[derive(Clone, Copy)]
+enum Transition {
+    L1,
+    L2,
+    Out,
+}
+
+impl Transition {
+    const COUNT: usize = 3;
+
+    fn idx(self) -> usize {
+        match self {
+            Transition::L1 => 0,
+            Transition::L2 => 1,
+            Transition::Out => 2,
+        }
+    }
+}
+
+/// One edge drawn for the selected node: screen-space endpoints, the raw
+/// weight, the activation of the edge's source node, and which weight matrix
+/// it belongs to.
+struct Edge {
+    from: Pos2,
+    to: Pos2,
+    weight: f32,
+    src_activation: f32,
+    transition: Transition,
 }
 
 /// Screen-space positions and node sizes for one frame's network canvas.
@@ -189,6 +227,11 @@ struct NetViz {
     policy: Arc<MlpPolicy>,
     policy_source: String,
     obs: Vec<f32>,
+    /// The real observation as of the last sync from `self.game`, captured
+    /// so hand-edits to `obs` can be diffed against it in "Show Δ from real
+    /// observation" mode. `None` until a game has reached an inspected turn.
+    baseline_obs: Option<Vec<f32>>,
+    diff_mode: bool,
     selected: Option<(Layer, usize)>,
     weight_by_activation: bool,
     game: Option<GameDriver>,
@@ -203,6 +246,8 @@ impl NetViz {
             policy,
             policy_source,
             obs: vec![0.0; OBS_SIZE],
+            baseline_obs: None,
+            diff_mode: false,
             selected: None,
             weight_by_activation: false,
             game: None,
@@ -214,12 +259,14 @@ impl NetViz {
 
     /// Refreshes `obs`/`mask`/`status` from `self.game` after starting or
     /// stepping it. Leaves `obs` untouched (for hand-tweaking) once it's not
-    /// the inspected seat's turn.
+    /// the inspected seat's turn. Also captures the fresh observation as
+    /// `baseline_obs` for diff mode.
     fn sync_from_game(&mut self) {
         let Some(game) = &self.game else { return };
         self.status = game.status();
         if game.is_inspected_turn() {
             self.obs = game.observation();
+            self.baseline_obs = Some(self.obs.clone());
             self.mask = Some(game.action_mask());
         } else {
             self.mask = None;
@@ -261,6 +308,7 @@ impl NetViz {
         });
 
         if ui.button("New game").clicked() {
+            self.baseline_obs = None;
             match GameDriver::new(&self.game_cfg) {
                 Ok(driver) => {
                     self.game = Some(driver);
@@ -316,68 +364,149 @@ impl NetViz {
         self.sync_from_game();
     }
 
-    /// Edges feeding into (or, for `Layer::Input`, fed by) the selected node:
-    /// `(source_pos, target_pos, weight, source_activation)`.
+    /// All edges along the full path through the network from the selected
+    /// node: its own fan-in/fan-out, plus every weight in the layers beyond
+    /// it (the next hop's full layer fans out to the rest), so the entire
+    /// input→...→output path touching the selection is returned.
+    ///
+    /// `obs`/`trace` supply source activations and may be the real
+    /// observation/trace or a hand-edited one — callers pass both to build
+    /// a diff.
     fn edge_list(
         &self,
         layer: Layer,
         idx: usize,
+        obs: &[f32],
         trace: &ForwardTrace,
         lay: &NetLayout,
-    ) -> Vec<(Pos2, Pos2, f32, f32)> {
-        let (obs_size, hidden, _) = self.policy.dims();
+    ) -> Vec<Edge> {
+        let (obs_size, hidden, n_actions) = self.policy.dims();
+        let mut edges = Vec::new();
         match layer {
             Layer::Input => {
+                // input[idx] -> all of hidden1, then the full network beyond.
                 let (w, _) = self.policy.l1();
-                (0..hidden)
-                    .map(|o| {
-                        (
-                            lay.input_pos[idx],
-                            lay.h1_pos[o],
-                            w[o * obs_size + idx],
-                            self.obs[idx],
-                        )
-                    })
-                    .collect()
+                for o in 0..hidden {
+                    edges.push(Edge {
+                        from: lay.input_pos[idx],
+                        to: lay.h1_pos[o],
+                        weight: w[o * obs_size + idx],
+                        src_activation: obs[idx],
+                        transition: Transition::L1,
+                    });
+                }
+                self.push_full_l2(&mut edges, trace, lay);
+                self.push_full_out(&mut edges, trace, lay);
             }
             Layer::Hidden1 => {
-                let (w, _) = self.policy.l1();
-                (0..obs_size)
-                    .map(|i| {
-                        (
-                            lay.input_pos[i],
-                            lay.h1_pos[idx],
-                            w[idx * obs_size + i],
-                            self.obs[i],
-                        )
-                    })
-                    .collect()
+                // all of input -> hidden1[idx], and hidden1[idx] -> all of
+                // hidden2, then the full network beyond.
+                self.push_full_l1(&mut edges, obs, lay);
+                let (w, _) = self.policy.l2();
+                for o in 0..hidden {
+                    edges.push(Edge {
+                        from: lay.h1_pos[idx],
+                        to: lay.h2_pos[o],
+                        weight: w[o * hidden + idx],
+                        src_activation: trace.h1_post[idx],
+                        transition: Transition::L2,
+                    });
+                }
+                self.push_full_out(&mut edges, trace, lay);
             }
             Layer::Hidden2 => {
+                // all of input -> all of hidden1, all of hidden1 ->
+                // hidden2[idx], and hidden2[idx] -> all of output.
+                self.push_full_l1(&mut edges, obs, lay);
                 let (w, _) = self.policy.l2();
-                (0..hidden)
-                    .map(|i| {
-                        (
-                            lay.h1_pos[i],
-                            lay.h2_pos[idx],
-                            w[idx * hidden + i],
-                            trace.h1_post[i],
-                        )
-                    })
-                    .collect()
+                for i in 0..hidden {
+                    edges.push(Edge {
+                        from: lay.h1_pos[i],
+                        to: lay.h2_pos[idx],
+                        weight: w[idx * hidden + i],
+                        src_activation: trace.h1_post[i],
+                        transition: Transition::L2,
+                    });
+                }
+                let (w, _) = self.policy.out();
+                for o in 0..n_actions {
+                    edges.push(Edge {
+                        from: lay.h2_pos[idx],
+                        to: lay.out_pos[o],
+                        weight: w[o * hidden + idx],
+                        src_activation: trace.h2_post[idx],
+                        transition: Transition::Out,
+                    });
+                }
             }
             Layer::Output => {
+                // the full network feeding output[idx]: all of input -> all
+                // of hidden1, all of hidden1 -> all of hidden2, and all of
+                // hidden2 -> output[idx].
+                self.push_full_l1(&mut edges, obs, lay);
+                self.push_full_l2(&mut edges, trace, lay);
                 let (w, _) = self.policy.out();
-                (0..hidden)
-                    .map(|i| {
-                        (
-                            lay.h2_pos[i],
-                            lay.out_pos[idx],
-                            w[idx * hidden + i],
-                            trace.h2_post[i],
-                        )
-                    })
-                    .collect()
+                for i in 0..hidden {
+                    edges.push(Edge {
+                        from: lay.h2_pos[i],
+                        to: lay.out_pos[idx],
+                        weight: w[idx * hidden + i],
+                        src_activation: trace.h2_post[i],
+                        transition: Transition::Out,
+                    });
+                }
+            }
+        }
+        edges
+    }
+
+    /// Pushes every input -> hidden1 edge.
+    fn push_full_l1(&self, edges: &mut Vec<Edge>, obs: &[f32], lay: &NetLayout) {
+        let (obs_size, hidden, _) = self.policy.dims();
+        let (w, _) = self.policy.l1();
+        for o in 0..hidden {
+            for i in 0..obs_size {
+                edges.push(Edge {
+                    from: lay.input_pos[i],
+                    to: lay.h1_pos[o],
+                    weight: w[o * obs_size + i],
+                    src_activation: obs[i],
+                    transition: Transition::L1,
+                });
+            }
+        }
+    }
+
+    /// Pushes every hidden1 -> hidden2 edge.
+    fn push_full_l2(&self, edges: &mut Vec<Edge>, trace: &ForwardTrace, lay: &NetLayout) {
+        let (_, hidden, _) = self.policy.dims();
+        let (w, _) = self.policy.l2();
+        for o in 0..hidden {
+            for i in 0..hidden {
+                edges.push(Edge {
+                    from: lay.h1_pos[i],
+                    to: lay.h2_pos[o],
+                    weight: w[o * hidden + i],
+                    src_activation: trace.h1_post[i],
+                    transition: Transition::L2,
+                });
+            }
+        }
+    }
+
+    /// Pushes every hidden2 -> output edge.
+    fn push_full_out(&self, edges: &mut Vec<Edge>, trace: &ForwardTrace, lay: &NetLayout) {
+        let (_, hidden, n_actions) = self.policy.dims();
+        let (w, _) = self.policy.out();
+        for o in 0..n_actions {
+            for i in 0..hidden {
+                edges.push(Edge {
+                    from: lay.h2_pos[i],
+                    to: lay.out_pos[o],
+                    weight: w[o * hidden + i],
+                    src_activation: trace.h2_post[i],
+                    transition: Transition::Out,
+                });
             }
         }
     }
@@ -409,7 +538,15 @@ impl NetViz {
         }
     }
 
-    fn show_network(&mut self, ui: &mut egui::Ui, trace: &ForwardTrace) {
+    /// `baseline`, when present, is `(real_observation, real_forward_trace)`
+    /// — the position before any hand-edits — used by "Show Δ from real
+    /// observation" mode.
+    fn show_network(
+        &mut self,
+        ui: &mut egui::Ui,
+        trace: &ForwardTrace,
+        baseline: Option<(&[f32], &ForwardTrace)>,
+    ) {
         ui.horizontal(|ui| {
             ui.checkbox(
                 &mut self.weight_by_activation,
@@ -418,9 +555,13 @@ impl NetViz {
             if ui.button("Clear selection").clicked() {
                 self.selected = None;
             }
+            if baseline.is_some() {
+                ui.checkbox(&mut self.diff_mode, "Show Δ from real observation");
+            }
             ui.label(
                 egui::RichText::new(
-                    "edges: red = positive weight, blue = negative; width/opacity ∝ |weight|",
+                    "edges: red = positive, blue = negative; width/opacity ∝ |value|, \
+                     normalized per transition (input→h1 / h1→h2 / h2→out)",
                 )
                 .small()
                 .weak(),
@@ -435,16 +576,50 @@ impl NetViz {
         let (obs_size, hidden, n_actions) = self.policy.dims();
         let lay = NetLayout::new(rect, obs_size, hidden, n_actions);
 
-        // Edges for the selected node, drawn beneath the nodes.
+        // Active only when the user has both opted in and a real observation
+        // exists to diff against.
+        let (b_obs, b_trace) = match baseline {
+            Some((o, t)) if self.diff_mode => (Some(o), Some(t)),
+            _ => (None, None),
+        };
+
+        // Edges along the full path through the network from the selected
+        // node, drawn beneath the nodes.
         if let Some((layer, idx)) = self.selected {
-            let edges = self.edge_list(layer, idx, trace, &lay);
-            let values: Vec<f32> = edges
-                .iter()
-                .map(|&(_, _, w, a)| if self.weight_by_activation { w * a } else { w })
-                .collect();
-            let max_abs = values.iter().fold(1e-6f32, |m, v| m.max(v.abs()));
-            for (&(from, to, _, _), &v) in edges.iter().zip(&values) {
-                let t = (v.abs() / max_abs).clamp(0.0, 1.0);
+            let edges = self.edge_list(layer, idx, &self.obs, trace, &lay);
+            let values: Vec<f32> = match (b_obs, b_trace) {
+                (Some(bo), Some(bt)) => {
+                    // Δcontribution: how much this edge's contribution to its
+                    // target changes due to the hand-edited observation.
+                    let b_edges = self.edge_list(layer, idx, bo, bt, &lay);
+                    edges
+                        .iter()
+                        .zip(&b_edges)
+                        .map(|(e, b)| e.weight * (e.src_activation - b.src_activation))
+                        .collect()
+                }
+                _ => edges
+                    .iter()
+                    .map(|e| {
+                        if self.weight_by_activation {
+                            e.weight * e.src_activation
+                        } else {
+                            e.weight
+                        }
+                    })
+                    .collect(),
+            };
+
+            // Normalize brightness independently per weight matrix so the
+            // (much larger) input→h1 fan-out doesn't drown out h1→h2/h2→out.
+            let mut max_abs = [1e-6f32; Transition::COUNT];
+            for (e, &v) in edges.iter().zip(&values) {
+                let i = e.transition.idx();
+                max_abs[i] = max_abs[i].max(v.abs());
+            }
+            for (e, &v) in edges.iter().zip(&values) {
+                let m = max_abs[e.transition.idx()];
+                let t = (v.abs() / m).clamp(0.0, 1.0).powf(0.6);
                 let alpha = (40.0 + 180.0 * t) as u8;
                 let color = if v >= 0.0 {
                     Color32::from_rgba_unmultiplied(
@@ -461,35 +636,62 @@ impl NetViz {
                         alpha,
                     )
                 };
-                painter.line_segment([from, to], Stroke::new(0.4 + 2.6 * t, color));
+                painter.line_segment([e.from, e.to], Stroke::new(0.4 + 2.6 * t, color));
             }
         }
 
         // Nodes.
         for (i, &p) in lay.input_pos.iter().enumerate() {
             let cell = Rect::from_center_size(p, Vec2::splat(lay.input_cell - 1.0));
-            painter.rect_filled(cell, 1.0, heat_color_01(self.obs[i]));
+            let color = match b_obs {
+                Some(bo) => diverging_color(self.obs[i] - bo[i], 1.0),
+                None => heat_color_01(self.obs[i]),
+            };
+            painter.rect_filled(cell, 1.0, color);
         }
+        let h1_delta_scale = b_trace.map_or(1.0, |bt| {
+            trace
+                .h1_post
+                .iter()
+                .zip(&bt.h1_post)
+                .fold(1e-6f32, |m, (a, b)| m.max((a - b).abs()))
+        });
         for (i, &p) in lay.h1_pos.iter().enumerate() {
-            painter.circle(
-                p,
-                lay.h1_r,
-                diverging_color(trace.h1_post[i], 1.0),
-                Stroke::NONE,
-            );
+            let color = match b_trace {
+                Some(bt) => diverging_color(trace.h1_post[i] - bt.h1_post[i], h1_delta_scale),
+                None => diverging_color(trace.h1_post[i], 1.0),
+            };
+            painter.circle(p, lay.h1_r, color, Stroke::NONE);
         }
+        let h2_delta_scale = b_trace.map_or(1.0, |bt| {
+            trace
+                .h2_post
+                .iter()
+                .zip(&bt.h2_post)
+                .fold(1e-6f32, |m, (a, b)| m.max((a - b).abs()))
+        });
         for (i, &p) in lay.h2_pos.iter().enumerate() {
-            painter.circle(
-                p,
-                lay.h2_r,
-                diverging_color(trace.h2_post[i], 1.0),
-                Stroke::NONE,
-            );
+            let color = match b_trace {
+                Some(bt) => diverging_color(trace.h2_post[i] - bt.h2_post[i], h2_delta_scale),
+                None => diverging_color(trace.h2_post[i], 1.0),
+            };
+            painter.circle(p, lay.h2_r, color, Stroke::NONE);
         }
         let logit_scale = trace.logits.iter().fold(1e-6f32, |m, v| m.max(v.abs()));
+        let logit_delta_scale = b_trace.map_or(logit_scale, |bt| {
+            trace
+                .logits
+                .iter()
+                .zip(&bt.logits)
+                .fold(1e-6f32, |m, (a, b)| m.max((a - b).abs()))
+        });
         for (i, &p) in lay.out_pos.iter().enumerate() {
             let cell = Rect::from_center_size(p, Vec2::splat(lay.out_cell - 1.0));
-            painter.rect_filled(cell, 1.0, diverging_color(trace.logits[i], logit_scale));
+            let color = match b_trace {
+                Some(bt) => diverging_color(trace.logits[i] - bt.logits[i], logit_delta_scale),
+                None => diverging_color(trace.logits[i], logit_scale),
+            };
+            painter.rect_filled(cell, 1.0, color);
         }
 
         // Selection ring.
@@ -531,7 +733,7 @@ impl NetViz {
         // Hover tooltip.
         if let Some(pos) = response.hover_pos() {
             if let Some((layer, idx)) = lay.hit_test(pos) {
-                let text = match layer {
+                let mut text = match layer {
                     Layer::Input => format!("{}\nvalue = {:.4}", obs_label(idx), self.obs[idx]),
                     Layer::Hidden1 => format!(
                         "Hidden1[{idx}]\npre  = {:.4}\ntanh = {:.4}",
@@ -551,13 +753,47 @@ impl NetViz {
                         )
                     }
                 };
+                match (layer, b_obs, b_trace) {
+                    (Layer::Input, Some(bo), _) => {
+                        text.push_str(&format!(
+                            "\nreal  = {:.4}\nΔ     = {:+.4}",
+                            bo[idx],
+                            self.obs[idx] - bo[idx]
+                        ));
+                    }
+                    (Layer::Hidden1, _, Some(bt)) => {
+                        text.push_str(&format!(
+                            "\nΔtanh = {:+.4}",
+                            trace.h1_post[idx] - bt.h1_post[idx]
+                        ));
+                    }
+                    (Layer::Hidden2, _, Some(bt)) => {
+                        text.push_str(&format!(
+                            "\nΔtanh = {:+.4}",
+                            trace.h2_post[idx] - bt.h2_post[idx]
+                        ));
+                    }
+                    (Layer::Output, _, Some(bt)) => {
+                        text.push_str(&format!(
+                            "\nΔlogit = {:+.4}",
+                            trace.logits[idx] - bt.logits[idx]
+                        ));
+                    }
+                    _ => {}
+                }
                 draw_tooltip(&painter, pos, &text);
             }
         }
     }
 
-    fn show_outputs(&mut self, ui: &mut egui::Ui, trace: &ForwardTrace) {
-        ui.label(egui::RichText::new(self.selected_info(trace)).monospace());
+    fn show_outputs(
+        &mut self,
+        ui: &mut egui::Ui,
+        trace: &ForwardTrace,
+        baseline: Option<(&[f32], &ForwardTrace)>,
+    ) {
+        let baseline = baseline.filter(|_| self.diff_mode);
+        ui.label(egui::RichText::new(self.selected_info(trace, baseline)).monospace());
         ui.separator();
 
         if self
@@ -666,43 +902,78 @@ impl NetViz {
         });
     }
 
-    fn selected_info(&self, trace: &ForwardTrace) -> String {
+    /// `baseline`, when present, is `(real_observation, real_forward_trace)`
+    /// — used to append a `Δ` line for the selected node in diff mode.
+    fn selected_info(
+        &self,
+        trace: &ForwardTrace,
+        baseline: Option<(&[f32], &ForwardTrace)>,
+    ) -> String {
         match self.selected {
             None => {
                 "Click a node in the network view to inspect\nits value and weighted connections."
                     .to_string()
             }
             Some((Layer::Input, i)) => {
-                format!(
+                let mut s = format!(
                     "Selected: Input[{i}]\n{}\nvalue = {:.4}",
                     obs_label(i),
                     self.obs[i]
-                )
+                );
+                if let Some((b_obs, _)) = baseline {
+                    s.push_str(&format!(
+                        "\nreal  = {:.4}\nΔ     = {:+.4}",
+                        b_obs[i],
+                        self.obs[i] - b_obs[i]
+                    ));
+                }
+                s
             }
             Some((Layer::Hidden1, i)) => {
                 let (_, b) = self.policy.l1();
-                format!(
+                let mut s = format!(
                     "Selected: Hidden1[{i}]\npre-activation = {:.4}\nbias           = {:.4}\ntanh           = {:.4}",
                     trace.h1_pre[i], b[i], trace.h1_post[i]
-                )
+                );
+                if let Some((_, b_trace)) = baseline {
+                    s.push_str(&format!(
+                        "\nΔtanh          = {:+.4}",
+                        trace.h1_post[i] - b_trace.h1_post[i]
+                    ));
+                }
+                s
             }
             Some((Layer::Hidden2, i)) => {
                 let (_, b) = self.policy.l2();
-                format!(
+                let mut s = format!(
                     "Selected: Hidden2[{i}]\npre-activation = {:.4}\nbias           = {:.4}\ntanh           = {:.4}",
                     trace.h2_pre[i], b[i], trace.h2_post[i]
-                )
+                );
+                if let Some((_, b_trace)) = baseline {
+                    s.push_str(&format!(
+                        "\nΔtanh          = {:+.4}",
+                        trace.h2_post[i] - b_trace.h2_post[i]
+                    ));
+                }
+                s
             }
             Some((Layer::Output, i)) => {
                 let (_, b) = self.policy.out();
                 let (prob, _) = softmax_at(&trace.logits, i);
-                format!(
+                let mut s = format!(
                     "Selected: Output[{i}]: {}\nlogit = {:.4}\nbias  = {:.4}\nprob  = {:.2}%",
                     action_label(i),
                     trace.logits[i],
                     b[i],
                     prob * 100.0
-                )
+                );
+                if let Some((_, b_trace)) = baseline {
+                    s.push_str(&format!(
+                        "\nΔlogit = {:+.4}",
+                        trace.logits[i] - b_trace.logits[i]
+                    ));
+                }
+                s
             }
         }
     }
@@ -758,6 +1029,14 @@ fn draw_tooltip(painter: &egui::Painter, anchor: Pos2, text: &str) {
 impl eframe::App for NetViz {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let trace = self.policy.forward_trace(&self.obs);
+        // Clone (not borrow) so `baseline` doesn't alias `self` while we hold
+        // `&mut self` for the panel-rendering calls below.
+        let baseline_obs = self.baseline_obs.clone();
+        let baseline_trace = baseline_obs.as_ref().map(|b| self.policy.forward_trace(b));
+        let baseline: Option<(&[f32], &ForwardTrace)> = match (&baseline_obs, &baseline_trace) {
+            (Some(o), Some(t)) => Some((o.as_slice(), t)),
+            _ => None,
+        };
         let (obs_size, hidden, n_actions) = self.policy.dims();
 
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
@@ -788,11 +1067,11 @@ impl eframe::App for NetViz {
             .max_width(440.0)
             .show(ctx, |ui| {
                 ui.heading("Selection & outputs");
-                self.show_outputs(ui, &trace);
+                self.show_outputs(ui, &trace, baseline);
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.show_network(ui, &trace);
+            self.show_network(ui, &trace, baseline);
         });
     }
 }
