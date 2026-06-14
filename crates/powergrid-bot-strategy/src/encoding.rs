@@ -488,31 +488,45 @@ pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     }
     idx += N_REGIONS;
 
-    // 9. Plant market actual (4 × 6 = 24): number, kind, cost, cities, present, discount
-    for (i, plant) in state.market.actual.iter().take(4).enumerate() {
-        let base = idx + i * 6;
-        obs[base] = plant.number as f32 / 60.0;
-        obs[base + 1] = plant_kind_id(plant.kind) / 6.0;
-        obs[base + 2] = plant.cost as f32 / 5.0;
-        obs[base + 3] = plant.cities as f32 / 8.0;
-        obs[base + 4] = 1.0;
-        obs[base + 5] = if state.market.discount_token == Some(plant.number) {
-            1.0
+    // 9+10. Plant market (8 cards): chain `actual` then `future`, take 8.
+    // Cards 0-3 (24 = 4 × 6): number, kind, cost, cities, present, discount.
+    // Cards 4-7 (20 = 4 × 5): number, kind, cost, cities, present (no discount).
+    // In steps 1/2, `actual` has exactly 4 and `future` has exactly 4, so this
+    // reproduces the old per-section encoding exactly. In step 3, `future` is
+    // empty and `actual` holds all 6 plants, so the 5th/6th actual plants land
+    // in cards 4/5 instead of being dropped.
+    let actual_base = idx;
+    let future_base = idx + 24;
+    for (i, plant) in state
+        .market
+        .actual
+        .iter()
+        .chain(state.market.future.iter())
+        .take(8)
+        .enumerate()
+    {
+        if i < 4 {
+            let base = actual_base + i * 6;
+            obs[base] = plant.number as f32 / 60.0;
+            obs[base + 1] = plant_kind_id(plant.kind) / 6.0;
+            obs[base + 2] = plant.cost as f32 / 5.0;
+            obs[base + 3] = plant.cities as f32 / 8.0;
+            obs[base + 4] = 1.0;
+            obs[base + 5] = if state.market.discount_token == Some(plant.number) {
+                1.0
+            } else {
+                0.0
+            };
         } else {
-            0.0
-        };
+            let base = future_base + (i - 4) * 5;
+            obs[base] = plant.number as f32 / 60.0;
+            obs[base + 1] = plant_kind_id(plant.kind) / 6.0;
+            obs[base + 2] = plant.cost as f32 / 5.0;
+            obs[base + 3] = plant.cities as f32 / 8.0;
+            obs[base + 4] = 1.0;
+        }
     }
     idx += 24;
-
-    // 10. Plant market future (4 × 5 = 20): number, kind, cost, cities, present
-    for (i, plant) in state.market.future.iter().take(4).enumerate() {
-        let base = idx + i * 5;
-        obs[base] = plant.number as f32 / 60.0;
-        obs[base + 1] = plant_kind_id(plant.kind) / 6.0;
-        obs[base + 2] = plant.cost as f32 / 5.0;
-        obs[base + 3] = plant.cities as f32 / 8.0;
-        obs[base + 4] = 1.0;
-    }
     idx += 20;
 
     // 11. Market meta (3)
@@ -796,4 +810,120 @@ pub fn action_id_to_action(action_id: u16, state: &GameState, actor_id: PlayerId
     }
 
     Action::PassAuction
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use powergrid_core::map::default_map;
+    use powergrid_core::rules::apply_action;
+    use powergrid_core::types::PlayerColor;
+
+    /// Start a 2-player game and return (state, player ids in join order).
+    fn start_game(seed: u64) -> (GameState, Vec<PlayerId>) {
+        let mut state = GameState::new_with_seed(default_map(), 2, seed);
+        let ids: Vec<PlayerId> = (0..2)
+            .map(|i| PlayerId::from_u128(((seed as u128) << 8) | (i + 1) as u128))
+            .collect();
+        for (i, id) in ids.iter().enumerate() {
+            apply_action(
+                &mut state,
+                *id,
+                Action::JoinGame {
+                    name: format!("P{i}"),
+                    color: [PlayerColor::Red, PlayerColor::Blue][i],
+                },
+            )
+            .expect("join");
+        }
+        apply_action(&mut state, ids[0], Action::StartGame).expect("start");
+        (state, ids)
+    }
+
+    fn plant(number: u8, kind: PlantKind, cost: u8, cities: u8) -> PowerPlant {
+        PowerPlant {
+            number,
+            kind,
+            cost,
+            cities,
+        }
+    }
+
+    /// In Step 3, `market.actual` holds all 6 plants and `future` is empty.
+    /// The observation must encode all 6 — not just the first 4 — by spilling
+    /// the 5th/6th plants into the "future" card slots (cards 4/5).
+    fn pad(mut plants: Vec<PowerPlant>) -> Vec<PowerPlant> {
+        while plants.len() < 6 {
+            plants.push(plant(60, PlantKind::Wind, 0, 1));
+        }
+        plants
+    }
+
+    #[test]
+    fn step3_market_encodes_all_six_actual_plants() {
+        let (mut state, ids) = start_game(42);
+
+        state.market.in_step3 = true;
+        state.market.actual = pad(vec![
+            plant(3, PlantKind::Coal, 2, 1),
+            plant(4, PlantKind::Oil, 2, 1),
+            plant(5, PlantKind::Coal, 2, 1),
+            plant(6, PlantKind::Oil, 1, 1),
+            plant(7, PlantKind::GasOrOil, 3, 2),
+            plant(8, PlantKind::Coal, 3, 2),
+        ]);
+        state.market.future = Vec::new();
+        state.market.discount_token = None;
+
+        let obs = build_observation(&state, ids[0]);
+
+        // Cards 0-3 (indices 390..414) carry actual[0..4] as before.
+        for (i, p) in state.market.actual[..4].iter().enumerate() {
+            let base = 390 + i * 6;
+            assert_eq!(obs[base], p.number as f32 / 60.0, "card {i} number");
+            assert_eq!(obs[base + 4], 1.0, "card {i} present");
+        }
+
+        // Cards 4-5 (indices 414..424) now carry the 5th/6th actual plants,
+        // using the 5-feature "future" layout (no discount feature).
+        for (i, p) in state.market.actual[4..6].iter().enumerate() {
+            let base = 414 + i * 5;
+            assert_eq!(obs[base], p.number as f32 / 60.0, "card {} number", i + 4);
+            assert_eq!(
+                obs[base + 1],
+                plant_kind_id(p.kind) / 6.0,
+                "card {} kind",
+                i + 4
+            );
+            assert_eq!(obs[base + 4], 1.0, "card {} present", i + 4);
+        }
+
+        // Cards 6-7 (indices 424..434) stay empty.
+        for v in &obs[424..434] {
+            assert_eq!(*v, 0.0, "unused card slots stay zero");
+        }
+    }
+
+    #[test]
+    fn steps_1_2_market_encoding_unchanged() {
+        let (state, ids) = start_game(7);
+
+        // Fresh game: 4 actual + 4 future plants, not in step 3.
+        assert!(!state.market.in_step3);
+        assert_eq!(state.market.actual.len(), 4);
+        assert_eq!(state.market.future.len(), 4);
+
+        let obs = build_observation(&state, ids[0]);
+
+        for (i, p) in state.market.actual.iter().enumerate() {
+            let base = 390 + i * 6;
+            assert_eq!(obs[base], p.number as f32 / 60.0, "actual card {i} number");
+            assert_eq!(obs[base + 4], 1.0, "actual card {i} present");
+        }
+        for (i, p) in state.market.future.iter().enumerate() {
+            let base = 414 + i * 5;
+            assert_eq!(obs[base], p.number as f32 / 60.0, "future card {i} number");
+            assert_eq!(obs[base + 4], 1.0, "future card {i} present");
+        }
+    }
 }

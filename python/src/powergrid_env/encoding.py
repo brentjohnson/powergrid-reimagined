@@ -332,27 +332,35 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
             obs[idx + i] = 1.0
     idx += len(REGION_NAMES)
 
-    # 9. Plant market actual (4 × 6 = 24): number, kind, cost, cities, present, discount
+    # 9+10. Plant market (8 cards): chain `actual` then `future`, take 8.
+    # Cards 0-3 (24 = 4 × 6): number, kind, cost, cities, present, discount.
+    # Cards 4-7 (20 = 4 × 5): number, kind, cost, cities, present (no discount).
+    # In steps 1/2, `actual` has exactly 4 and `future` has exactly 4, so this
+    # reproduces the old per-section encoding exactly. In step 3, `future` is
+    # empty and `actual` holds all 6 plants, so the 5th/6th actual plants land
+    # in cards 4/5 instead of being dropped.
     mkt = state["market"]
     discount_tok = mkt.get("discount_token")
-    for i, plant in enumerate(mkt.get("actual", [])[:4]):
-        base = idx + i * 6
-        obs[base]   = plant["number"] / 60
-        obs[base+1] = KIND_IDS.get(plant["kind"], 0) / 6
-        obs[base+2] = plant["cost"] / 5
-        obs[base+3] = plant["cities"] / 8
-        obs[base+4] = 1.0
-        obs[base+5] = 1.0 if plant["number"] == discount_tok else 0.0
+    actual_base = idx
+    future_base = idx + 24
+    chained = list(mkt.get("actual", [])) + list(mkt.get("future", []))
+    for i, plant in enumerate(chained[:8]):
+        if i < 4:
+            base = actual_base + i * 6
+            obs[base]   = plant["number"] / 60
+            obs[base+1] = KIND_IDS.get(plant["kind"], 0) / 6
+            obs[base+2] = plant["cost"] / 5
+            obs[base+3] = plant["cities"] / 8
+            obs[base+4] = 1.0
+            obs[base+5] = 1.0 if plant["number"] == discount_tok else 0.0
+        else:
+            base = future_base + (i - 4) * 5
+            obs[base]   = plant["number"] / 60
+            obs[base+1] = KIND_IDS.get(plant["kind"], 0) / 6
+            obs[base+2] = plant["cost"] / 5
+            obs[base+3] = plant["cities"] / 8
+            obs[base+4] = 1.0
     idx += 24
-
-    # 10. Plant market future (4 × 5 = 20): number, kind, cost, cities, present
-    for i, plant in enumerate(mkt.get("future", [])[:4]):
-        base = idx + i * 5
-        obs[base]   = plant["number"] / 60
-        obs[base+1] = KIND_IDS.get(plant["kind"], 0) / 6
-        obs[base+2] = plant["cost"] / 5
-        obs[base+3] = plant["cities"] / 8
-        obs[base+4] = 1.0
     idx += 20
 
     # 11. Plant market meta (3)

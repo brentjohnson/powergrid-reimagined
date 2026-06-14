@@ -82,16 +82,16 @@ pub fn sections() -> Vec<ObsSection> {
             label: |i| REGION_NAMES[i].to_string(),
         },
         ObsSection {
-            name: "Plant market (actual)",
+            name: "Plant market (cards 1-4)",
             start: 390,
             len: 24,
-            label: |i| format!("card {}: {}", i / 6, ACTUAL_FEATS[i % 6]),
+            label: |i| format!("card {}: {}", i / 6 + 1, ACTUAL_FEATS[i % 6]),
         },
         ObsSection {
-            name: "Plant market (future)",
+            name: "Plant market (cards 5-8)",
             start: 414,
             len: 20,
-            label: |i| format!("card {}: {}", i / 5, FUTURE_FEATS[i % 5]),
+            label: |i| format!("card {}: {}", i / 5 + 5, FUTURE_FEATS[i % 5]),
         },
         ObsSection {
             name: "Market meta",
