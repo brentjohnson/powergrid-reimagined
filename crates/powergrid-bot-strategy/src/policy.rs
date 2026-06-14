@@ -69,6 +69,16 @@ fn linear(w: &[f32], b: &[f32], x: &[f32], out_dim: usize, in_dim: usize) -> Vec
     y
 }
 
+/// Every intermediate value of a forward pass, for inspection/visualization.
+/// `*_pre` are pre-activation (post-`linear`) values; `*_post` are after `tanh`.
+pub struct ForwardTrace {
+    pub h1_pre: Vec<f32>,
+    pub h1_post: Vec<f32>,
+    pub h2_pre: Vec<f32>,
+    pub h2_post: Vec<f32>,
+    pub logits: Vec<f32>,
+}
+
 impl MlpPolicy {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, PolicyLoadError> {
         if bytes.len() < HEADER_LEN || &bytes[..8] != MAGIC {
@@ -110,12 +120,50 @@ impl MlpPolicy {
 
     /// Forward pass: observation vector → unnormalised action logits.
     pub fn logits(&self, obs: &[f32]) -> Vec<f32> {
+        self.forward_trace(obs).logits
+    }
+
+    /// Forward pass keeping every intermediate value, for inspection/visualization.
+    pub fn forward_trace(&self, obs: &[f32]) -> ForwardTrace {
         debug_assert_eq!(obs.len(), self.obs_size);
-        let mut h = linear(&self.l1_w, &self.l1_b, obs, self.hidden, self.obs_size);
-        h.iter_mut().for_each(|v| *v = v.tanh());
-        let mut h = linear(&self.l2_w, &self.l2_b, &h, self.hidden, self.hidden);
-        h.iter_mut().for_each(|v| *v = v.tanh());
-        linear(&self.out_w, &self.out_b, &h, self.n_actions, self.hidden)
+        let h1_pre = linear(&self.l1_w, &self.l1_b, obs, self.hidden, self.obs_size);
+        let h1_post: Vec<f32> = h1_pre.iter().map(|v| v.tanh()).collect();
+        let h2_pre = linear(&self.l2_w, &self.l2_b, &h1_post, self.hidden, self.hidden);
+        let h2_post: Vec<f32> = h2_pre.iter().map(|v| v.tanh()).collect();
+        let logits = linear(
+            &self.out_w,
+            &self.out_b,
+            &h2_post,
+            self.n_actions,
+            self.hidden,
+        );
+        ForwardTrace {
+            h1_pre,
+            h1_post,
+            h2_pre,
+            h2_post,
+            logits,
+        }
+    }
+
+    /// `(obs_size, hidden, n_actions)` dimensions of this network.
+    pub fn dims(&self) -> (usize, usize, usize) {
+        (self.obs_size, self.hidden, self.n_actions)
+    }
+
+    /// Layer-1 weights (row-major `[hidden][obs_size]`) and biases (`[hidden]`).
+    pub fn l1(&self) -> (&[f32], &[f32]) {
+        (&self.l1_w, &self.l1_b)
+    }
+
+    /// Layer-2 weights (row-major `[hidden][hidden]`) and biases (`[hidden]`).
+    pub fn l2(&self) -> (&[f32], &[f32]) {
+        (&self.l2_w, &self.l2_b)
+    }
+
+    /// Output-layer weights (row-major `[n_actions][hidden]`) and biases (`[n_actions]`).
+    pub fn out(&self) -> (&[f32], &[f32]) {
+        (&self.out_w, &self.out_b)
     }
 }
 
@@ -291,6 +339,20 @@ mod tests {
                 .fold(0.0f32, f32::max);
             assert!(max_diff < 1e-3, "logits diverge from torch: {max_diff}");
         }
+    }
+
+    #[test]
+    fn forward_trace_logits_match_logits() {
+        let policy = default_policy().expect("embedded policy must load");
+        let obs = vec![0.0f32; OBS_SIZE];
+        let trace = policy.forward_trace(&obs);
+        let (_, hidden, n_actions) = policy.dims();
+        assert_eq!(trace.h1_pre.len(), hidden);
+        assert_eq!(trace.h1_post.len(), hidden);
+        assert_eq!(trace.h2_pre.len(), hidden);
+        assert_eq!(trace.h2_post.len(), hidden);
+        assert_eq!(trace.logits.len(), n_actions);
+        assert_eq!(trace.logits, policy.logits(&obs));
     }
 
     #[test]

@@ -1,0 +1,16 @@
+[package]
+name = "powergrid-netviz"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "netviz"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.33"
+powergrid-bot-strategy = { path = "../powergrid-bot-strategy" }
+powergrid-core = { path = "../powergrid-core" }
+rand = "0.8"
+uuid = { workspace = true }

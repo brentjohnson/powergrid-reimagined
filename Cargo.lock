@@ -3060,6 +3060,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "powergrid-netviz"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "powergrid-bot-strategy",
+ "powergrid-core",
+ "rand 0.8.6",
+ "uuid",
+]
+
+[[package]]
 name = "powergrid-py"
 version = "0.1.0"
 dependencies = [

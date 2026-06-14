@@ -30,6 +30,10 @@ DATABASE_URL=postgres://... cargo run -p powergrid-lobby
 cargo run -p powergrid-client
 cargo run -p powergrid-client --features dev   # fast incremental rebuilds
 
+# RL policy network inspector (load expert.bin, edit obs, watch the forward pass)
+cargo run -p powergrid-netviz
+cargo run -p powergrid-netviz -- path/to/policy.bin
+
 # Docker (lobby + postgres)
 docker compose up --build
 
@@ -56,7 +60,7 @@ If adding or removing crates, update the stubs in the Dockerfile.
 
 ## Architecture
 
-Seven-crate Cargo workspace:
+Eight-crate Cargo workspace:
 
 ```
 crates/
@@ -67,6 +71,7 @@ crates/
   powergrid-client/        # egui GUI — online (lobby) or local play (in-process session)
   powergrid-py/            # PyO3 extension module for the Python RL environment
   powergrid-maptool/       # egui desktop tool for creating/editing map TOML files
+  powergrid-netviz/        # egui desktop tool for inspecting the RL Expert policy network
 assets/
   maps/usa.toml            # default map asset (49 cities), embedded at compile time via powergrid-core
   maps/germany.toml        # alternate map (42 cities), usable via MAP_FILE
@@ -84,7 +89,7 @@ python/                    # PettingZoo RL environment (see docs/rl-environment.
 
 Dependency graph (Rust): core ← bot-strategy ← {session, powergrid-py} ← {lobby, client}.
 `powergrid-client` also depends on `powergrid-bot-strategy` directly (for the
-bot valuation popup — see below).
+bot valuation popup — see below), as does `powergrid-netviz` (for `policy`/`encoding`).
 
 `powergrid-py` depends only on `powergrid-core` and `powergrid-bot-strategy` — no server, lobby, or async runtime.
 
@@ -189,6 +194,16 @@ Run with `cargo run -p powergrid-client` or `cargo run -p powergrid-client --fea
 egui desktop tool for creating and editing map TOML files. Point it at a background image and click to place cities, set region colors, and draw connections; it writes `assets/maps/*.toml` directly.
 
 - `main.rs` — self-contained eframe app. Usage: `cargo run -p powergrid-maptool -- <image_path> [output.toml]`. If `output.toml` already exists it is loaded automatically.
+
+### powergrid-netviz
+
+egui desktop tool for interactively inspecting the RL Expert policy network (`powergrid_bot_strategy::policy::MlpPolicy`, 454 → 64 → tanh → 64 → tanh → 143). Loads a `PGRLPOL1` policy file (CLI arg) or the embedded `expert.bin` (no arg), lets you edit the 454-dim observation with labeled sliders grouped by section, and renders the live forward pass as a four-column node graph (input cells, both hidden layers, output logits). Clicking a node draws its weighted incoming connections (or, for input cells, outgoing connections to hidden layer 1), colored by sign and scaled by magnitude; hovering shows exact values. The right panel lists all 143 actions sorted by logit with softmax probabilities.
+
+- `main.rs` — self-contained eframe app (`NetViz`). Usage: `cargo run -p powergrid-netviz [-- path/to/policy.bin]`.
+- `obs_layout.rs` — labeled sections of the 454-dim observation vector, mirroring `encoding::build_observation`'s numbered layout (money, resources, plants, city one-hots, market, phase scalars, etc.).
+- `action_labels.rs` — human-readable names for all 143 actions, derived from `encoding`'s action-base-index constants and `CITY_IDS`.
+- Relies on `MlpPolicy::forward_trace` (returns every pre/post-tanh intermediate) and the `l1`/`l2`/`out` weight accessors added to `policy.rs` for this tool.
+- `game.rs` — `GameDriver`/`GameConfig`: drives a real local game (pure-sync, mirroring `powergrid-py`'s `Game::start`/`drive_bots` — no tokio/`Session`) with one inspected seat (the host) plus heuristic bot opponents of a configurable difficulty, player count, seed, and optional end-game-cities override. The left panel's "New game" button starts it; once it's the inspected seat's turn, its real observation and action mask load into the sliders and into the output panel's legality/legal-softmax columns. Sliders stay editable afterward for hand-tweaking. "Apply policy move" samples a masked action from the policy's logits over the *current* (possibly hand-tweaked) observation and plays it; "Apply selected action" plays whichever output-list action is selected, if legal. Either advances the game (bots play their turns) and reloads the next real observation/mask.
 
 ### powergrid-py
 
