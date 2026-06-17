@@ -57,14 +57,21 @@ Key arguments (defaults in parentheses):
 
 | Flag | Meaning |
 |---|---|
+| `--num-players` (4) | Total seats (learner + bots) |
+| `--learner-seat` (0) | Which seat index the learner occupies |
 | `--bot-difficulty` (normal) | `easy` / `normal` / `hard` opponents |
 | `--num-envs` (8) | Parallel envs in a `DummyVecEnv`. 4–8 is the sweet spot; the Rust steps are too fast for subprocess vectorisation to pay off |
 | `--total-timesteps` (500 000) | Learner steps for this invocation |
-| `--reward-shaping` (on) | Per-round bonus ∝ cities powered, granted when the learner's powering resolves — analogous to income, so it values plants, resources, and cities in the game's own balance. Disable with `--no-reward-shaping` for pure win/loss reward |
+| `--seed` (0) | Reproducible env seed streams and PPO init |
+| `--device` (auto) | `cpu` / `cuda`; `auto` picks the GPU if available. For this MLP-sized policy, CPU is often as fast |
+| `--run-dir` (runs/vs_bots) | Directory for checkpoints, `best_model.zip`, and TensorBoard logs |
+| `--resume-from` | Path to a checkpoint `.zip` (without the suffix) to continue from; omit for a fresh run |
 | `--save-freq` (50 000) | Checkpoint every N steps *per env*; `0` disables |
 | `--eval-freq` (25 000) | Win-rate eval vs bots every N steps *per env*; `0` disables |
-| `--device` (auto) | `cpu` / `cuda`; `auto` picks the GPU if available. For this MLP-sized policy, CPU is often as fast |
-| `--seed` (0) | Reproducible env seed streams and PPO init |
+| `--eval-episodes` (20) | Games played per eval pass |
+| `--reward-shaping` (on) | Per-round bonus ∝ cities powered, granted when the learner's powering resolves — analogous to income, so it values plants, resources, and cities in the game's own balance. Disable with `--no-reward-shaping` for pure win/loss reward |
+| `--end-game-cities` | Pin the end-game city trigger to a fixed value for training and eval (omit to use the rulebook number) |
+| `--ent-coef` (0.01) | PPO entropy bonus coefficient; re-applied on `--resume-from` to prevent policy collapse |
 
 While running, SB3 prints a table every iteration. The numbers that matter:
 `rollout/ep_rew_mean` (should rise toward +1), `fps`, and after each eval pass
@@ -114,6 +121,16 @@ grounding against self-play degeneracies. Progress is measured externally:
 the eval callback plays the policy *against normal bots* every `--eval-freq`
 steps, always unshaped, so `eval/mean_reward` is comparable between the two
 scripts.
+
+Key self-play-only arguments (other flags match vs-bots — `--learner-seat` and
+`--bot-difficulty` are absent since all non-learner seats use the frozen snapshot):
+
+| Flag | Meaning |
+|---|---|
+| `--snapshot-every` (100 000) | Freeze the current policy and update the envs' opponent every N total timesteps |
+| `--bot-mix` (0.0) | Per-episode probability of replacing the snapshot with normal heuristic bots — useful grounding against self-play degeneracies |
+| `--eval-episodes` (20) | Games per eval pass (eval is always vs normal bots, unshaped) |
+| `--end-game-cities` | Pin the end-game trigger (mutually exclusive with `--curriculum-start`) |
 
 PPO hyperparameters are CPU-tuned in both scripts (`n_steps=512`,
 `batch_size=512`, `n_epochs=4`) — fewer, larger mini-batch updates per rollout
@@ -208,7 +225,7 @@ Notes:
 ### One-shot status report
 
 ```bash
-.venv/bin/python scripts/run_report.py runs/selfplay_frozen
+.venv/bin/python scripts/run_report.py runs/selfplay
 ```
 
 Prints everything below without opening TensorBoard: checkpoint inventory and
@@ -217,6 +234,12 @@ history (with derived win rate), entropy/explained-variance/value-loss/fps
 trends, curriculum/snapshot tags, and health flags for the known failure
 patterns (eval pinned at −1, entropy collapse, critic converged to a constant,
 eval never firing because `--eval-freq` counts per-env steps).
+
+| Flag | Meaning |
+|---|---|
+| `run_dir` (positional) | Training run directory, e.g. `runs/selfplay` |
+| `--last` (10) | How many recent eval points to list |
+| `--all-tags` | Also dump the last value of every TensorBoard scalar tag |
 
 ### TensorBoard
 
@@ -250,21 +273,103 @@ length. Random play wins ≈0% against normal bots; meaningful progress shows up
 as a rising win rate across checkpoints. Evaluate against `--bot-difficulty
 hard` once the normal bots are beaten.
 
-By default actions are sampled stochastically. `--deterministic` plays the
-greedy policy, but beware: an undertrained greedy policy can pass forever and
-stall games (they count as losses via `--max-steps`).
+| Flag | Meaning |
+|---|---|
+| `--model` **(required)** | Path to a saved checkpoint (without `.zip`) |
+| `--games` (100) | Number of games to play |
+| `--num-players` (4) | Total seats |
+| `--learner-seat` (0) | Which seat index the learner occupies |
+| `--bot-difficulty` (normal) | `easy` / `normal` / `hard` opponents |
+| `--seed` (0) | RNG seed |
+| `--device` (auto) | PyTorch device |
+| `--deterministic` | Greedy action selection — an undertrained greedy policy can pass forever and stall games (counted as losses via `--max-steps`) |
+| `--max-steps` (2000) | Per-game step cap; a game hitting it counts as a loss |
+| `--end-game-cities` | Match this to the trigger the model was trained at |
+
+### Mixed-field evaluation
+
+To benchmark the expert against easy / normal / hard bots all in the same game:
+
+```bash
+.venv/bin/python scripts/evaluate_mixed.py \
+    --model runs/vs_bots/best_model \
+    --games 100
+```
+
+Runs 4-player games (easy + normal + hard + expert) and reports each bot's 1st–4th
+placement distribution plus average cities and plant capacity.
+
+| Flag | Meaning |
+|---|---|
+| `--model` **(required)** | Path to a saved checkpoint (without `.zip`) |
+| `--games` (100) | Number of games to play |
+| `--seed` (0) | RNG seed |
+| `--device` (auto) | PyTorch device |
+| `--deterministic` | Greedy action selection for the expert (see caveat above) |
+| `--max-steps` (5000) | Per-game step cap; stalled games are dropped from rankings |
 
 ### Watching a game
 
 ```bash
-.venv/bin/python scripts/play_game.py --model runs/vs_bots/best_model --render
+.venv/bin/python scripts/play_game.py \
+    --model runs/vs_bots/best_model \
+    --render
 ```
 
 Renders each state to the terminal and prints the event log at the end.
 
+| Flag | Meaning |
+|---|---|
+| `--model` | Path to a saved checkpoint; omit to run all bots |
+| `--render` | Print board state each step |
+| `--all-bots` | All seats use Rust heuristic bots (useful for sanity-checking the env) |
+| `--num-players` (4) | Total seats |
+| `--seed` | RNG seed (random if omitted) |
+| `--bot-difficulty` (normal) | `easy` / `normal` / `hard` |
+| `--max-steps` (5000) | Per-game step cap |
+| `--end-game-cities` | Match the trigger the model was trained at |
+
 ---
 
-## 6. Typical workflow
+## 6. Exporting the policy to the game
+
+Once you have a checkpoint you're happy with, export it so the in-game Expert
+bot uses it. The policy weights are embedded in the Rust binary at compile time,
+so you need to export first, then rebuild.
+
+```bash
+.venv/bin/python scripts/export_policy.py \
+    --model runs/vs_bots/best_model \
+    --out ../assets/policies/expert.bin \
+    --golden ../assets/policies/expert.golden.json
+```
+
+| Flag | Meaning |
+|---|---|
+| `--model` (runs/vs_bots/best_model) | Source checkpoint (without `.zip`) |
+| `--out` (../assets/policies/expert.bin) | Destination for the flat `PGRLPOL1` binary weights file |
+| `--golden` (../assets/policies/expert.golden.json) | Destination for a torch reference logit file used by the Rust parity test |
+
+After exporting:
+
+1. **Rebuild** the Rust workspace so `expert.bin` is re-embedded:
+   ```bash
+   cd ..
+   cargo build -p powergrid-bot-strategy
+   ```
+2. **Run the parity test** to verify the Rust forward pass matches torch to
+   floating-point tolerance:
+   ```bash
+   cargo test -p powergrid-bot-strategy
+   ```
+
+The Expert bot in `powergrid-client` and `powergrid-lobby` picks up the new
+weights after the rebuild. If the parity test fails, the export probably
+targeted a different architecture — retrain from a compatible checkpoint.
+
+---
+
+## 7. Typical workflow
 
 ```bash
 cd python
@@ -281,11 +386,16 @@ make develop                                          # once, and after Rust cha
 # then graduate to self-play:
 .venv/bin/python scripts/train_selfplay.py \
     --total-timesteps 5_000_000 --run-dir runs/selfplay
+# export the best checkpoint into the game:
+.venv/bin/python scripts/export_policy.py --model runs/selfplay/best_model
+cd ..
+cargo build -p powergrid-bot-strategy                 # re-embeds expert.bin
+cargo test -p powergrid-bot-strategy                  # parity check
 ```
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 **`KeyError: 'gas'` (or similar) in encoding, or parity test failures** —
 the compiled extension is stale. Run `make develop`, then `make test`.

@@ -65,7 +65,9 @@ def main():
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
-                        help="Add a small per-step bonus proportional to cities owned.")
+                        help="Add a per-round bonus proportional to cities powered, granted when "
+                             "the learner's powering resolves. Disable with --no-reward-shaping "
+                             "for pure win/loss reward.")
     parser.add_argument("--end-game-cities", type=int, default=None,
                         help="Play every game (training AND eval) to this fixed end-game "
                              "city trigger instead of the rulebook number. Eval scores at "
