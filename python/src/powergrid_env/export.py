@@ -21,25 +21,34 @@ import struct
 from .constants import N_ACTIONS, OBS_SIZE
 
 MAGIC = b"PGRLPOL1"
-HIDDEN = 64
 
-# (state-dict key prefix, expected shape) in file order.
-LAYERS = [
-    ("mlp_extractor.policy_net.0", (HIDDEN, OBS_SIZE)),
-    ("mlp_extractor.policy_net.2", (HIDDEN, HIDDEN)),
-    ("action_net", (N_ACTIONS, HIDDEN)),
-]
+# Net width (the single hidden size shared by both layers) is inferred from the
+# state_dict rather than hard-coded — the format encodes it in the header, the
+# Rust loader reads it back, and this serializer is used live during self-play
+# to snapshot opponents, so it must track whatever width the model was built
+# with. The architecture is fixed at two equal-width hidden layers.
+def _hidden_size(state_dict) -> int:
+    return int(state_dict["mlp_extractor.policy_net.0.weight"].shape[0])
 
 
 def policy_tensors_from_state_dict(state_dict) -> list:
-    """Policy-path tensors in file order, shape-checked against LAYERS."""
+    """Policy-path tensors in file order, shape-checked for the
+    ``OBS_SIZE -> hidden -> hidden -> N_ACTIONS`` MLP (hidden inferred)."""
+    hidden = _hidden_size(state_dict)
+    # (state-dict key prefix, expected weight shape) in file order.
+    layers = [
+        ("mlp_extractor.policy_net.0", (hidden, OBS_SIZE)),
+        ("mlp_extractor.policy_net.2", (hidden, hidden)),
+        ("action_net", (N_ACTIONS, hidden)),
+    ]
     tensors = []
-    for key, shape in LAYERS:
+    for key, shape in layers:
         weight = state_dict[f"{key}.weight"]
         bias = state_dict[f"{key}.bias"]
         assert tuple(weight.shape) == shape, (
             f"{key}.weight has shape {tuple(weight.shape)}, expected {shape} — "
-            "was the model trained with a custom net_arch?"
+            "the net must be two equal-width hidden layers (net_arch=dict("
+            "pi=[h, h], vf=[h, h]))."
         )
         assert tuple(bias.shape) == (shape[0],)
         tensors.extend([weight, bias])
@@ -49,7 +58,7 @@ def policy_tensors_from_state_dict(state_dict) -> list:
 def policy_state_dict_to_bytes(state_dict) -> bytes:
     """Serialize the policy path of a MaskablePPO ``policy.state_dict()``."""
     out = bytearray(MAGIC)
-    out += struct.pack("<III", OBS_SIZE, HIDDEN, N_ACTIONS)
+    out += struct.pack("<III", OBS_SIZE, _hidden_size(state_dict), N_ACTIONS)
     for t in policy_tensors_from_state_dict(state_dict):
         out += t.detach().cpu().numpy().astype("<f4").tobytes()
     return bytes(out)

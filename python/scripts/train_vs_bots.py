@@ -79,6 +79,14 @@ def main():
                              "long runs collapse to a near-deterministic policy. Unlike other "
                              "hyperparameters, this is applied on --resume-from too "
                              "(overrides the checkpoint's value).")
+    parser.add_argument("--net-width", type=int, default=64,
+                        help="Hidden width of the policy/value MLP (two equal-width hidden "
+                             "layers) for a fresh run. The default 64 matches SB3's default "
+                             "and the historical checkpoints. Ignored with --resume-from "
+                             "(architecture comes from the checkpoint). The Rust Expert port "
+                             "reads the width from the exported policy header, so widening "
+                             "needs no Rust changes — but the net must stay two equal-width "
+                             "layers (the PGRLPOL1 format constraint).")
     args = parser.parse_args()
 
     os.makedirs(args.run_dir, exist_ok=True)
@@ -105,6 +113,10 @@ def main():
             batch_size=512,
             n_epochs=4,
             ent_coef=args.ent_coef,
+            # Two equal-width hidden layers (dict form keeps the separate
+            # policy_net/value_net heads the PGRLPOL1 exporter reads).
+            policy_kwargs=dict(net_arch=dict(pi=[args.net_width, args.net_width],
+                                             vf=[args.net_width, args.net_width])),
             tensorboard_log=os.path.join(args.run_dir, "tb"),
         )
 
