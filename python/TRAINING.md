@@ -66,6 +66,7 @@ Key arguments (defaults in parentheses):
 | `--device` (auto) | `cpu` / `cuda`; `auto` picks the GPU if available. For this MLP-sized policy, CPU is often as fast |
 | `--run-dir` (runs/vs_bots) | Directory for checkpoints, `best_model.zip`, and TensorBoard logs |
 | `--resume-from` | Path to a checkpoint `.zip` (without the suffix) to continue from; omit for a fresh run |
+| `--net-width` (128) | Hidden width of the two equal-width MLP layers, fresh runs only (ignored with `--resume-from`). 128 is the default; 64 = the old SB3 default / pre-2026-06 checkpoints. A new width can't resume an old-width checkpoint |
 | `--save-freq` (50 000) | Checkpoint every N steps *per env*; `0` disables |
 | `--eval-freq` (25 000) | Win-rate eval vs bots every N steps *per env*; `0` disables |
 | `--eval-episodes` (20) | Games played per eval pass |
