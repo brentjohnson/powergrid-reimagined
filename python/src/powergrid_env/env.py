@@ -50,12 +50,15 @@ class PowerGridAECEnv(AECEnv):
         num_players: int = 4,
         seed: int | None = None,
         reward_shaping: bool = False,
+        shaping_mode: str = "absolute",
         render_mode: str | None = None,
         end_game_cities: int | None = None,
     ):
         super().__init__()
         if not (2 <= num_players <= MAX_PLAYERS):
             raise ValueError(f"num_players must be 2–{MAX_PLAYERS}")
+        if shaping_mode not in ("absolute", "relative"):
+            raise ValueError("shaping_mode must be 'absolute' or 'relative'")
         # Curriculum override of the end-game city trigger. None = rulebook
         # default. Applied at reset.
         self.end_game_cities = end_game_cities
@@ -65,6 +68,7 @@ class PowerGridAECEnv(AECEnv):
         # reusing one fixed seed every reset would replay the identical game.
         self._seed_rng = np.random.default_rng(seed)
         self.reward_shaping = reward_shaping
+        self.shaping_mode = shaping_mode
         self.render_mode = render_mode
 
         # Spaces are constant regardless of game state.
@@ -222,9 +226,10 @@ class PowerGridAECEnv(AECEnv):
         return mask_from_info(move_info, state, uuid)
 
     def _shape_rewards(self, agent: str, uuid: str, action: int) -> None:
-        """Per-round bonus ∝ the acting agent's powered-cities *lead* over the
-        best opponent, granted when its powering resolves. Relative (it rewards
-        out-powering the field, the win condition) and can go negative."""
+        """Per-round powered-cities bonus, granted when the acting agent's
+        powering resolves. `shaping_mode="absolute"` adds its own powered count
+        (always ≥ 0); `"relative"` adds its lead over the best opponent (rewards
+        out-powering the field, the win condition, and can go negative)."""
         was_power_action = (
             POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
             or POWER_FUEL_BASE <= action < N_ACTIONS
@@ -249,7 +254,8 @@ class PowerGridAECEnv(AECEnv):
                 mine = powered
             else:
                 opp_max = max(opp_max, powered)
-        self.rewards[agent] += (mine - opp_max) * POWER_SHAPING_COEF
+        shaped = mine - opp_max if self.shaping_mode == "relative" else mine
+        self.rewards[agent] += shaped * POWER_SHAPING_COEF
 
 
 def _render_ansi(state: dict) -> str:

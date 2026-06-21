@@ -247,16 +247,20 @@ def test_step_vs_bots_obs_matches_observation():
 # Reward shaping: bonus only when the learner's powering resolves
 # ---------------------------------------------------------------------------
 
-def test_reward_shaping_only_on_powering():
+@pytest.mark.parametrize("shaping_mode", ["absolute", "relative"])
+def test_reward_shaping_only_on_powering(shaping_mode):
     from powergrid_env import PowerGridSingleAgentEnv
     from powergrid_env.constants import (
         POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
         N_ACTIONS, POWER_SHAPING_COEF,
     )
 
-    env = PowerGridSingleAgentEnv(num_players=4, seed=3, reward_shaping=True)
+    env = PowerGridSingleAgentEnv(
+        num_players=4, seed=3, reward_shaping=True, shaping_mode=shaping_mode
+    )
     rng = np.random.default_rng(3)
     shaped_steps = 0
+    saw_negative = False
     for _ in range(3):
         obs, info = env.reset()
         terminated = False
@@ -276,13 +280,20 @@ def test_reward_shaping_only_on_powering():
             assert is_power_action, (
                 f"nonzero non-terminal reward {reward} on non-power action {action}"
             )
-            # Relative shaping: own_powered − max_opponent_powered, so the
-            # reward is a whole multiple of the coefficient but may be negative.
+            # Both modes yield a whole multiple of the coefficient. Absolute
+            # (own powered) is always ≥ 0; relative (own − best opponent) may
+            # go negative.
             k = reward / POWER_SHAPING_COEF
             assert abs(k - round(k)) < 1e-6, (
                 f"shaped reward {reward} is not a whole multiple of POWER_SHAPING_COEF"
             )
+            if shaping_mode == "absolute":
+                assert k >= 0, f"absolute shaping produced negative reward {reward}"
+            saw_negative = saw_negative or k < 0
     assert shaped_steps > 0, "no shaped rewards observed in 3 games"
+    if shaping_mode == "relative":
+        # Random play trails the heuristic bots, so the lead term goes negative.
+        assert saw_negative, "relative shaping never produced a negative reward"
     env.close()
 
 

@@ -99,7 +99,11 @@ for agent in env.agent_iter():
 **Common parameters:**
 - `num_players` — 2–6 players (default 4)
 - `seed` — seeds a per-env generator that draws a *fresh game seed each episode*, so consecutive resets play different games while the overall sequence stays reproducible. `None` for nondeterministic.
-- `reward_shaping` — if `True`, adds a per-round bonus proportional to the player's **powered-cities lead over the best opponent** (`POWER_SHAPING_COEF × (own_powered − max_opponent_powered)`, in constants.py), granted when the player's powering resolves. The term is *relative* — it rewards out-powering the field (the win condition) rather than absolute output, and can go negative on a round the player trails.
+- `reward_shaping` — if `True`, adds a per-round powered-cities bonus (× `POWER_SHAPING_COEF`, in constants.py), granted when the player's powering resolves. `shaping_mode` selects the quantity:
+  - `"absolute"` (default) — the player's **own** powered count (always ≥ 0). A clean "build more = more reward" signal; the better *teacher* for from-scratch runs.
+  - `"relative"` — the player's **lead over the best opponent** (`own_powered − max_opponent_powered`, can go negative). Better *aligned* with the win condition (out-power the field), but a poor cold-start teacher: a from-scratch agent at full end-game-cities trails the bots every round, so the signal is always-negative and dominated by the opponent term, giving no usable gradient toward building.
+
+  Recommended flow: **bootstrap with `absolute` (+ the egc curriculum)** to learn the build→power→win loop, then `--resume-from` with `--shaping-mode relative` (or `--no-reward-shaping`) to fine-tune for positional play. Eval is always unshaped, so `eval/mean_reward` stays a clean ±1 yardstick across phases.
 - `render_mode` — `"ansi"` or `"human"` for text rendering
 
 **Spaces:**

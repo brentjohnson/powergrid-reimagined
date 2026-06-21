@@ -43,12 +43,13 @@ from powergrid_env.export import policy_state_dict_to_bytes
 
 
 def make_env(num_players: int, seed: int, reward_shaping: bool,
+             shaping_mode: str = "absolute",
              end_game_cities: int | None = None, bot_mix: float = 0.0):
     def _init():
         return PowerGridSingleAgentEnv(
             num_players=num_players, bot_difficulty="policy", seed=seed,
-            reward_shaping=reward_shaping, end_game_cities=end_game_cities,
-            bot_mix=bot_mix,
+            reward_shaping=reward_shaping, shaping_mode=shaping_mode,
+            end_game_cities=end_game_cities, bot_mix=bot_mix,
         )
     return _init
 
@@ -96,8 +97,15 @@ def main():
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
-                        help="Add a per-round bonus proportional to cities powered to the "
-                             "learner's step. Eval is always unshaped.")
+                        help="Add a per-round powered-cities bonus to the learner's step. "
+                             "Eval is always unshaped.")
+    parser.add_argument("--shaping-mode", choices=["absolute", "relative"], default="absolute",
+                        help="Powered-cities shaping quantity. 'absolute' (default) rewards "
+                             "the learner's own powered count — a clean 'build more = more "
+                             "reward' teacher for from-scratch runs. 'relative' rewards the "
+                             "lead over the best opponent (aligned with winning, can go "
+                             "negative) but is a poor cold-start teacher. Bootstrap with "
+                             "absolute, then --resume-from with relative to fine-tune.")
     parser.add_argument("--end-game-cities", type=int, default=None,
                         help="Play every game (training AND eval) to this fixed end-game "
                              "city trigger instead of the rulebook number. Mutually "
@@ -140,7 +148,8 @@ def main():
     os.makedirs(args.run_dir, exist_ok=True)
 
     env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping,
-                        args.end_game_cities, args.bot_mix)
+                        shaping_mode=args.shaping_mode,
+                        end_game_cities=args.end_game_cities, bot_mix=args.bot_mix)
                for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
@@ -149,7 +158,8 @@ def main():
         model.tensorboard_log = os.path.join(args.run_dir, "tb")
         model.ent_coef = args.ent_coef
         print(f"Resumed from {args.resume_from} at {model.num_timesteps} timesteps "
-              f"(ent_coef={args.ent_coef})")
+              f"(ent_coef={args.ent_coef}, "
+              f"shaping={'off' if not args.reward_shaping else args.shaping_mode})")
     else:
         # n_epochs/batch_size are the dominant cost on CPU.
         # Default PPO (n_epochs=10, batch=64) does 1280 mini-batch updates per
@@ -171,6 +181,8 @@ def main():
                                              vf=[args.net_width, args.net_width])),
             tensorboard_log=os.path.join(args.run_dir, "tb"),
         )
+        print(f"Fresh model (ent_coef={args.ent_coef}, net_width={args.net_width}, "
+              f"shaping={'off' if not args.reward_shaping else args.shaping_mode})")
 
     # Seed the envs with an initial opponent snapshot before learn() resets
     # them (SB3 resets envs before any callback fires); the callback keeps

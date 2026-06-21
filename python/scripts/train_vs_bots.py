@@ -33,6 +33,7 @@ def make_env(args, seed: int, reward_shaping: bool, max_episode_steps: int | Non
             bot_difficulty=args.bot_difficulty,
             seed=seed,
             reward_shaping=reward_shaping,
+            shaping_mode=args.shaping_mode,
             end_game_cities=args.end_game_cities,
         )
         if max_episode_steps:
@@ -65,9 +66,14 @@ def main():
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
     parser.add_argument("--eval-episodes", type=int, default=20)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
-                        help="Add a per-round bonus proportional to cities powered, granted when "
-                             "the learner's powering resolves. Disable with --no-reward-shaping "
-                             "for pure win/loss reward.")
+                        help="Add a per-round powered-cities bonus, granted when the learner's "
+                             "powering resolves. Disable with --no-reward-shaping for pure "
+                             "win/loss reward.")
+    parser.add_argument("--shaping-mode", choices=["absolute", "relative"], default="absolute",
+                        help="Powered-cities shaping quantity. 'absolute' (default) rewards the "
+                             "learner's own powered count (clean cold-start teacher); 'relative' "
+                             "rewards the lead over the best opponent (aligned with winning, can "
+                             "go negative). Bootstrap with absolute, fine-tune with relative.")
     parser.add_argument("--end-game-cities", type=int, default=None,
                         help="Play every game (training AND eval) to this fixed end-game "
                              "city trigger instead of the rulebook number. Eval scores at "

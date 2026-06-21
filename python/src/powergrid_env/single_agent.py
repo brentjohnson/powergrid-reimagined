@@ -30,12 +30,16 @@ class PowerGridSingleAgentEnv(gym.Env):
     Observation: flat float32 vector of length OBS_SIZE.
     Action:      Discrete(N_ACTIONS) with action_mask in info dict.
     Reward:      +1 on win, -1 on loss, 0 each step. With `reward_shaping`,
-                 a per-round bonus of POWER_SHAPING_COEF × (cities the learner
-                 powered − the most any opponent powered) is added when the
-                 learner's powering resolves. The term is *relative* so it
-                 rewards out-powering the field (the actual win condition)
-                 rather than absolute output, and can go negative on a round
-                 the learner trails.
+                 a per-round bonus is added when the learner's powering
+                 resolves, scaled by POWER_SHAPING_COEF. `shaping_mode` selects
+                 the quantity:
+                   "absolute" — cities the learner powered (always ≥ 0; a clean
+                     "build more = more reward" teacher for from-scratch runs);
+                   "relative" — cities powered minus the most any opponent
+                     powered (rewards out-powering the field, the actual win
+                     condition; can go negative on a round the learner trails,
+                     better aligned but a poor cold-start teacher).
+                 Bootstrap with "absolute", fine-tune with "relative".
     """
 
     metadata = {"render_modes": ["human", "ansi"]}
@@ -47,6 +51,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         bot_difficulty: str = "normal",
         seed: int | None = None,
         reward_shaping: bool = False,
+        shaping_mode: str = "absolute",
         render_mode: str | None = None,
         end_game_cities: int | None = None,
         bot_mix: float = 0.0,
@@ -58,6 +63,8 @@ class PowerGridSingleAgentEnv(gym.Env):
             raise ValueError("learner_seat must be in range [0, num_players)")
         if not (0.0 <= bot_mix <= 1.0):
             raise ValueError("bot_mix must be in [0, 1]")
+        if shaping_mode not in ("absolute", "relative"):
+            raise ValueError("shaping_mode must be 'absolute' or 'relative'")
 
         # Curriculum override of the end-game city trigger. None = rulebook
         # default. Applied at reset.
@@ -70,6 +77,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         # reusing one fixed seed every reset would replay the identical game.
         self._seed_rng = np.random.default_rng(seed)
         self.reward_shaping = reward_shaping
+        self.shaping_mode = shaping_mode
         self.render_mode = render_mode
 
         self.observation_space = spaces.Box(0.0, 1.0, (OBS_SIZE,), dtype=np.float32)
@@ -147,9 +155,13 @@ class PowerGridSingleAgentEnv(gym.Env):
 
         reward = float(reward)
         if self.reward_shaping and not terminal:
-            # Relative powered-cities shaping: lead over the best opponent.
-            # Both terms are 0 on non-powering steps, so this is 0 off-round.
-            reward += (int(powered_now) - int(opp_powered_max)) * POWER_SHAPING_COEF
+            # Powered-cities shaping. Both terms are 0 on non-powering steps,
+            # so this is 0 off-round regardless of mode.
+            shaped = int(powered_now)
+            if self.shaping_mode == "relative":
+                # Lead over the best opponent (can go negative).
+                shaped -= int(opp_powered_max)
+            reward += shaped * POWER_SHAPING_COEF
 
         return obs, reward, terminal, False, {"action_mask": mask}
 
