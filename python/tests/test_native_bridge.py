@@ -133,7 +133,7 @@ def test_step_vs_policy_runs_full_game(random_policy_bytes):
         legal = np.where(current_mask)[0]
         assert len(legal) > 0, "empty mask at non-terminal step"
         action = int(rng.choice(legal))
-        obs, mask, reward, terminal, cities, powered = game.step_vs_bots(
+        obs, mask, reward, terminal, cities, powered, opp_powered = game.step_vs_bots(
             learner, action, "policy"
         )
         obs = np.asarray(obs)
@@ -205,7 +205,9 @@ def test_step_vs_bots_runs_full_game():
         legal = np.where(current_mask)[0]
         assert len(legal) > 0, "empty mask at non-terminal step"
         action = int(rng.choice(legal))
-        obs, mask, reward, terminal, cities, powered = game.step_vs_bots(learner, action, "normal")
+        obs, mask, reward, terminal, cities, powered, opp_powered = game.step_vs_bots(
+            learner, action, "normal"
+        )
         obs = np.asarray(obs)
         current_mask = np.asarray(mask, dtype=np.uint8)
         steps += 1
@@ -224,8 +226,8 @@ def test_step_vs_bots_obs_matches_observation():
 
     mask = np.asarray(game.action_mask(learner), dtype=np.uint8)
     action = int(np.where(mask)[0][0])
-    obs_from_step, mask_from_step, reward, terminal, cities, powered = game.step_vs_bots(
-        learner, action, "normal"
+    obs_from_step, mask_from_step, reward, terminal, cities, powered, opp_powered = (
+        game.step_vs_bots(learner, action, "normal")
     )
 
     if not terminal:
@@ -274,8 +276,10 @@ def test_reward_shaping_only_on_powering():
             assert is_power_action, (
                 f"nonzero non-terminal reward {reward} on non-power action {action}"
             )
+            # Relative shaping: own_powered − max_opponent_powered, so the
+            # reward is a whole multiple of the coefficient but may be negative.
             k = reward / POWER_SHAPING_COEF
-            assert abs(k - round(k)) < 1e-6 and k >= 0, (
+            assert abs(k - round(k)) < 1e-6, (
                 f"shaped reward {reward} is not a whole multiple of POWER_SHAPING_COEF"
             )
     assert shaped_steps > 0, "no shaped rewards observed in 3 games"

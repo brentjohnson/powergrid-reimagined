@@ -222,8 +222,9 @@ class PowerGridAECEnv(AECEnv):
         return mask_from_info(move_info, state, uuid)
 
     def _shape_rewards(self, agent: str, uuid: str, action: int) -> None:
-        """Per-round bonus ∝ cities powered, granted when the acting agent's
-        powering resolves (analogous to income)."""
+        """Per-round bonus ∝ the acting agent's powered-cities *lead* over the
+        best opponent, granted when its powering resolves. Relative (it rewards
+        out-powering the field, the win condition) and can go negative."""
         was_power_action = (
             POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
             or POWER_FUEL_BASE <= action < N_ACTIONS
@@ -240,10 +241,15 @@ class PowerGridAECEnv(AECEnv):
             fuel = phase.get("power_cities_fuel")
             if fuel and fuel.get("player") == uuid:
                 return
+        mine = 0
+        opp_max = 0
         for p in state.get("players", []):
+            powered = p.get("last_cities_powered", 0)
             if p["id"] == uuid:
-                self.rewards[agent] += p.get("last_cities_powered", 0) * POWER_SHAPING_COEF
-                break
+                mine = powered
+            else:
+                opp_max = max(opp_max, powered)
+        self.rewards[agent] += (mine - opp_max) * POWER_SHAPING_COEF
 
 
 def _render_ansi(state: dict) -> str:

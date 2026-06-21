@@ -269,15 +269,20 @@ impl Game {
 
     /// Fused vs-bots step: apply `action_id` for the learner, drive all bot
     /// seats until the learner acts again or the game ends, and return
-    /// `(obs, mask, reward, terminal, learner_cities, powered_now)` in one
-    /// PyO3 round-trip.
+    /// `(obs, mask, reward, terminal, learner_cities, powered_now, opp_powered_max)`
+    /// in one PyO3 round-trip.
     /// Reward is +1 if the learner won, -1 if anyone else did, 0 otherwise.
     /// `obs` and `mask` are zero arrays when `terminal` is True.
     /// `learner_cities` is the learner's current city count.
     /// `powered_now` is the number of cities the learner just got paid for, if
     /// this action resolved their powering for the round (PowerCities, or the
-    /// PowerCitiesFuel split that completes it); 0 otherwise. Used for
-    /// income-analogous reward shaping.
+    /// PowerCitiesFuel split that completes it); 0 otherwise.
+    /// `opp_powered_max` is the most cities any opponent powered in the round
+    /// the learner just resolved (read after the bots have acted), or 0 when
+    /// this step did not resolve the learner's powering. The pair lets Python
+    /// shape rewards on `powered_now - opp_powered_max` — the learner's powered
+    /// lead over the field — without a second round-trip; both are 0 on
+    /// non-powering steps so the relative term is 0 there too.
     #[allow(clippy::type_complexity)]
     fn step_vs_bots<'py>(
         &mut self,
@@ -290,6 +295,7 @@ impl Game {
         Bound<'py, PyArray1<u8>>,
         f32,
         bool,
+        u32,
         u32,
         u32,
     )> {
@@ -324,6 +330,21 @@ impl Game {
             self.drive_bots(learner_id, &mode)?;
         }
 
+        // Best opponent powering this round, read after the bots have acted so
+        // it reflects the same round the learner just resolved. Gated to the
+        // same steps as `powered_now` so the relative term is 0 off-round.
+        let opp_powered_max = if was_power_action && !power_pending {
+            self.state
+                .players
+                .iter()
+                .filter(|p| p.id != learner_id)
+                .map(|p| p.last_cities_powered as u32)
+                .max()
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         let (reward, terminal) = match &self.state.phase {
             Phase::GameOver { winner } => {
                 let r = if *winner == learner_id {
@@ -353,6 +374,7 @@ impl Game {
             terminal,
             learner_cities,
             powered_now,
+            opp_powered_max,
         ))
     }
 }

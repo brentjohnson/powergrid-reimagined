@@ -115,9 +115,11 @@ def main():
                         help="Raise the trigger every N total timesteps until it reaches "
                              "the rulebook value. The stage is derived from num_timesteps, "
                              "so --resume-from lands on the right stage.")
-    parser.add_argument("--ent-coef", type=float, default=0.01,
+    parser.add_argument("--ent-coef", type=float, default=0.03,
                         help="PPO entropy bonus coefficient. SB3's default is 0.0, which let "
-                             "long runs collapse to a near-deterministic policy. Unlike other "
+                             "long runs collapse to a near-deterministic policy; even 0.01 "
+                             "collapsed (entropy → ~0.15 nats by 20M steps), so the default "
+                             "is now 0.03 to keep exploration alive. Unlike other "
                              "hyperparameters, this is applied on --resume-from too "
                              "(overrides the checkpoint's value).")
     parser.add_argument("--net-width", type=int, default=128,

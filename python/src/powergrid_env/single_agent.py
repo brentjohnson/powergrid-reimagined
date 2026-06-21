@@ -30,10 +30,12 @@ class PowerGridSingleAgentEnv(gym.Env):
     Observation: flat float32 vector of length OBS_SIZE.
     Action:      Discrete(N_ACTIONS) with action_mask in info dict.
     Reward:      +1 on win, -1 on loss, 0 each step. With `reward_shaping`,
-                 a per-round bonus of POWER_SHAPING_COEF × cities powered is
-                 added when the learner's powering resolves — analogous to
-                 income, so it values plants, resources, and cities in the
-                 ratio the game itself does.
+                 a per-round bonus of POWER_SHAPING_COEF × (cities the learner
+                 powered − the most any opponent powered) is added when the
+                 learner's powering resolves. The term is *relative* so it
+                 rewards out-powering the field (the actual win condition)
+                 rather than absolute output, and can go negative on a round
+                 the learner trails.
     """
 
     metadata = {"render_modes": ["human", "ansi"]}
@@ -125,7 +127,9 @@ class PowerGridSingleAgentEnv(gym.Env):
         assert self.game is not None and self._learner_id is not None
 
         try:
-            obs_arr, mask_arr, reward, terminal, cities, powered_now = self.game.step_vs_bots(
+            (
+                obs_arr, mask_arr, reward, terminal, cities, powered_now, opp_powered_max
+            ) = self.game.step_vs_bots(
                 self._learner_id, int(action), self._episode_difficulty
             )
         except ValueError:
@@ -143,7 +147,9 @@ class PowerGridSingleAgentEnv(gym.Env):
 
         reward = float(reward)
         if self.reward_shaping and not terminal:
-            reward += int(powered_now) * POWER_SHAPING_COEF
+            # Relative powered-cities shaping: lead over the best opponent.
+            # Both terms are 0 on non-powering steps, so this is 0 off-round.
+            reward += (int(powered_now) - int(opp_powered_max)) * POWER_SHAPING_COEF
 
         return obs, reward, terminal, False, {"action_mask": mask}
 
