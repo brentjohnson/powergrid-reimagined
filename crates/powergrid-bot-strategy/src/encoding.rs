@@ -348,13 +348,31 @@ pub fn compute_legal_move_info(state: &GameState, actor_id: PlayerId) -> LegalMo
 
         Phase::PowerCitiesFuel {
             player: fuel_player,
+            plant_numbers,
             hybrid_cost,
             ..
         } => {
             if *fuel_player == actor_id {
+                // Pure gas/oil plants in the same selection are paid from the
+                // same pools; the hybrid split may only use what's left after
+                // those — mirrors handle_power_cities_fuel's validation.
+                let pure_gas: u8 = plant_numbers
+                    .iter()
+                    .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+                    .filter(|p| p.kind == PlantKind::Gas)
+                    .map(|p| p.cost)
+                    .sum();
+                let pure_oil: u8 = plant_numbers
+                    .iter()
+                    .filter_map(|&num| player.plants.iter().find(|p| p.number == num))
+                    .filter(|p| p.kind == PlantKind::Oil)
+                    .map(|p| p.cost)
+                    .sum();
+                let gas_after_pure = player.resources.gas.saturating_sub(pure_gas);
+                let oil_after_pure = player.resources.oil.saturating_sub(pure_oil);
                 for gas in 0..=*hybrid_cost {
                     let oil = hybrid_cost - gas;
-                    if gas <= player.resources.gas && oil <= player.resources.oil {
+                    if gas <= gas_after_pure && oil <= oil_after_pure {
                         info.fuel_gas.push(gas);
                     }
                 }
@@ -815,6 +833,7 @@ pub fn action_id_to_action(action_id: u16, state: &GameState, actor_id: PlayerId
 #[cfg(test)]
 mod tests {
     use super::*;
+    use powergrid_core::actions::ActionError;
     use powergrid_core::map::default_map;
     use powergrid_core::rules::apply_action;
     use powergrid_core::types::PlayerColor;
@@ -925,5 +944,81 @@ mod tests {
             assert_eq!(obs[base], p.number as f32 / 60.0, "future card {i} number");
             assert_eq!(obs[base + 4], 1.0, "future card {i} present");
         }
+    }
+
+    /// Regression test: `fuel_gas` must only offer splits that
+    /// `handle_power_cities_fuel` will actually accept. A pure-Oil plant
+    /// fired alongside a hybrid plant consumes oil from the same pool the
+    /// hybrid split draws from — `fuel_gas` must subtract that pure usage
+    /// before checking feasibility, not just compare against full resources.
+    ///
+    /// Setup: pure-Oil #10 (cost 1), hybrid #5 (GasOrOil, cost 3).
+    /// Resources: oil=3, gas=3. oil_after_pure = 3-1 = 2, gas_after_pure = 3.
+    /// min_gas = 3-2 = 1, max_gas = 3 → ambiguous, gas=0 is NOT feasible
+    /// (pure_oil_cost(1) + oil(3) = 4 > resources.oil(3)).
+    #[test]
+    fn fuel_gas_excludes_splits_invalid_after_pure_plant_usage() {
+        use powergrid_core::types::Phase;
+
+        let (mut state, ids) = start_game(99);
+        let p1 = ids[0];
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+        let player = state.player_mut(p1).unwrap();
+        player.plants = vec![
+            plant(5, PlantKind::GasOrOil, 3, 2),
+            plant(10, PlantKind::Oil, 1, 1),
+        ];
+        player.resources = PlayerResources {
+            coal: 0,
+            oil: 3,
+            gas: 3,
+            uranium: 0,
+        };
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5, 10],
+            },
+        )
+        .expect("power cities");
+        assert!(
+            matches!(state.phase, Phase::PowerCitiesFuel { hybrid_cost, .. } if hybrid_cost == 3),
+            "expected ambiguous PowerCitiesFuel with hybrid_cost=3, got {:?}",
+            state.phase
+        );
+
+        let info = compute_legal_move_info(&state, p1);
+        assert_eq!(
+            info.fuel_gas,
+            vec![1, 2, 3],
+            "gas=0 (oil=3) double-spends oil already committed to the pure-Oil plant"
+        );
+
+        // Every offered split must actually be accepted by the real handler.
+        for &gas in &info.fuel_gas {
+            let mut trial = state.clone();
+            let oil = 3 - gas;
+            apply_action(&mut trial, p1, Action::PowerCitiesFuel { gas, oil })
+                .unwrap_or_else(|e| panic!("offered split gas={gas} oil={oil} rejected: {e:?}"));
+        }
+
+        // The excluded split must indeed be rejected, confirming this isn't
+        // a false-negative regression.
+        let mut rejected_trial = state.clone();
+        let result = apply_action(
+            &mut rejected_trial,
+            p1,
+            Action::PowerCitiesFuel { gas: 0, oil: 3 },
+        );
+        assert!(
+            matches!(result, Err(ActionError::InvalidFuelSplit)),
+            "expected gas=0 to be rejected, got {:?}",
+            result
+        );
     }
 }
