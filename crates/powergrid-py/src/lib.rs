@@ -181,6 +181,20 @@ impl Game {
         }
     }
 
+    /// Deep-clone the game state into a fresh, independent `Game` (including
+    /// the seeded RNG, so deck order stays reproducible from the fork point).
+    /// Does not carry over `opponent_policy`/`opponent_bots` — those are
+    /// self-play scaffolding unrelated to the cloned state. Used by search
+    /// algorithms (e.g. MCTS) that need to explore alternative futures from a
+    /// node without mutating the original.
+    fn copy(&self) -> Game {
+        Game {
+            state: self.state.clone(),
+            opponent_policy: None,
+            opponent_bots: HashMap::new(),
+        }
+    }
+
     /// Apply an action. Raises `ValueError` on invalid actions (including wrong-phase, not-your-turn, etc.).
     fn apply(&mut self, actor: &str, action_json: &str) -> PyResult<()> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;

@@ -85,6 +85,7 @@ python/                    # PettingZoo RL environment (see docs/rl-environment.
   TRAINING.md              # step-by-step training runbook (start/resume/monitor)
   pyproject.toml           # hatchling build; maturin builds the Rust extension separately
   Makefile                 # make develop = build Rust + install Python
+alphazero/                 # AlphaZero (MCTS self-play) training — see alphazero/README.md
 ```
 
 Dependency graph (Rust): core ← bot-strategy ← {session, powergrid-py} ← {lobby, client}.
@@ -210,7 +211,7 @@ egui desktop tool for interactively inspecting the RL Expert policy network (`po
 
 PyO3 extension module (Python 3.14, pyo3 0.28). Exposes the game engine to the Python RL environment without any network layer.
 
-- `src/lib.rs` — `Game` pyclass with methods: `start(names, colors)`, `apply(actor, action_json)`, `state_json(viewer=None)` (viewer's own money included when given), `current_actor()`, `legal_move_info(actor)`, `bot_decide(actor, difficulty)`, `city_ids()`, `is_terminal()`, `winner()`, `set_end_game_cities(n)` (post-`start()` override of the end-game city trigger; the trigger is part of the observation, so policies can condition on it — used by the training curriculum).
+- `src/lib.rs` — `Game` pyclass with methods: `start(names, colors)`, `apply(actor, action_json)`, `state_json(viewer=None)` (viewer's own money included when given), `current_actor()`, `legal_move_info(actor)`, `bot_decide(actor, difficulty)`, `city_ids()`, `is_terminal()`, `winner()`, `set_end_game_cities(n)` (post-`start()` override of the end-game city trigger; the trigger is part of the observation, so policies can condition on it — used by the training curriculum), `copy()` (deep-clones the `GameState`, including the seeded RNG, into a fresh independent `Game` — used by `alphazero/`'s MCTS to fork search nodes without mutating the original).
 - Fast native methods (no JSON, numpy in/out): `observation(actor)`, `action_mask(actor)`, `apply_action_id(actor, id)`, `step_vs_bots(learner, id, difficulty)` + `advance_bots(learner, difficulty)` (fused step: opponents driven inside Rust; also returns the learner's powered-cities count for reward shaping), `load_opponent_policy(bytes)` (loads a frozen PGRLPOL1 policy snapshot; difficulty `"policy"` then drives opponents with it via persistent per-seat bots — frozen-opponent self-play, used by `train_selfplay.py`).
 - `legal_move_info` returns a JSON blob encoding every legal move for the given actor — used by the Python env to build `info["action_mask"]` without re-implementing game rules.
 - The obs/mask/action-id encoding lives in `powergrid_bot_strategy::encoding` (shared with the Expert bot); this crate only adds the PyO3/numpy wrappers. The encoding targets the **default (USA) map**; changing the default map invalidates trained checkpoints.
@@ -219,6 +220,16 @@ PyO3 extension module (Python 3.14, pyo3 0.28). Exposes the game engine to the P
 - crate-type = `["cdylib"]` — produces a `.so` wheel, not a binary.
 
 See [docs/rl-environment.md](docs/rl-environment.md) for the full Python API and training workflow.
+
+### alphazero/
+
+A second, independent training approach for the Expert policy — MCTS-guided self-play (AlphaZero), tried after the PettingZoo+PPO stack above repeatedly struggled (entropy collapse, pinned eval reward, brittle shaping). Not a PyO3 crate; a plain Python package at the repo root, structured like `alpha-zero-general` (Game adapter / NNet wrapper / MCTS / Coach) but fixed at **4 players** and built around action masking from the start. Reuses `powergrid_py` and `powergrid_env.constants` — no duplicated game logic, no sb3/PettingZoo dependency. Run with the `python/` venv as a module from the repo root (`python/.venv/bin/python -m alphazero.train ...`); see `alphazero/README.md` for the full runbook.
+
+- `game.py` — `PowerGridGame`: adapter over `powergrid_py.Game` exposing `fork()` (wraps the Rust `copy()` above), `observation()`/`action_mask()`, `apply(action_id)`, `is_terminal()`/`outcome()`. Also the perspective-relative value-vector helpers (`relative_order`, `to_relative_vector`, `to_absolute_dict`) — the value head's 4-vector is ordered `[self, opponents...]` exactly like `build_observation`, so it lines up with the network's own input convention.
+- `mcts.py` — `MCTS`/`Node`: node-based PUCT search (each node holds a forked `PowerGridGame`, not a transposition-table entry — Power Grid's state doesn't canonicalize cheaply, and forking is cheap). Perfect-information search on the full seeded `GameState` (deck order, opponent money all visible to the *search*); the network itself is only ever shown the masked `observation()`, so the trained policy never cheats, only the search does. Single-actor-per-turn means a plain absolute `{player_id: value}` dict backs up the tree unchanged — no per-player Q arrays needed.
+- `network.py` — `PGNet`/`NNetWrapper`: trunk + policy head exactly match the exportable shape (`OBS_SIZE → H → tanh → H → tanh → N_ACTIONS`); `policy_state_dict()` emits those three layers under sb3's MaskablePPO key names so `powergrid_env.export.policy_state_dict_to_bytes` serializes it to PGRLPOL1 unchanged. The value head (4-vector) is a separate training-only branch, never exported.
+- `selfplay.py`/`coach.py`/`arena.py` — one self-play game (every seat played by the same shared net, since observations are already perspective-relative) → labeled examples; the iterate-train-eval-checkpoint loop; win-rate evaluation vs. Rust heuristic bots (same methodology as `python/scripts/evaluate.py`) or net-vs-net.
+- `export.py` — checkpoint → `assets/policies/expert.bin` + golden JSON, reusing `python/scripts/export_policy.py`'s serializer; verify with the Rust golden-logits parity test in `policy.rs`.
 
 ### Protocol
 

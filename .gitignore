@@ -29,6 +29,9 @@ coverage.xml
 # maturin / PyO3 build artifacts (python/src/*.so, target/)
 python/target/
 
+# AlphaZero training checkpoints/metrics (same convention as python/runs/)
+/alphazero/runs/
+
 # Editor / OS
 .DS_Store
 .idea/
