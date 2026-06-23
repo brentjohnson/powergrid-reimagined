@@ -15,6 +15,8 @@ never exported.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -71,6 +73,11 @@ class NNetWrapper:
         self.net = PGNet(
             cfg.num_players, hidden=cfg.net_width, value_hidden=cfg.value_hidden
         ).to(self.device)
+        # Created once and reused across `train()` calls (rather than
+        # recreated per call) so Adam's running moments persist across
+        # training iterations — recreating it every call effectively resets
+        # momentum each time, which destabilizes finetuning.
+        self.opt = torch.optim.Adam(self.net.parameters(), lr=cfg.lr)
 
     def predict(self, obs: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """obs: (OBS_SIZE,) float array. mask: (N_ACTIONS,) 0/1 array.
@@ -93,7 +100,7 @@ class NNetWrapper:
     ) -> dict[str, float]:
         """`examples`: list of (obs, mask, target_pi, target_value)."""
         self.net.train()
-        opt = torch.optim.Adam(self.net.parameters(), lr=self.cfg.lr)
+        opt = self.opt
         n = len(examples)
         idx = np.arange(n)
         pi_losses: list[float] = []
@@ -133,6 +140,7 @@ class NNetWrapper:
         torch.save(
             {
                 "model_state": self.net.state_dict(),
+                "optimizer_state": self.opt.state_dict(),
                 "num_players": self.cfg.num_players,
                 "net_width": self.cfg.net_width,
                 "value_hidden": self.cfg.value_hidden,
@@ -141,9 +149,20 @@ class NNetWrapper:
         )
 
     @classmethod
-    def load(cls, path: str, device: str = "cpu") -> NNetWrapper:
+    def load(cls, path: str, device: str = "cpu", cfg: AZConfig | None = None) -> NNetWrapper:
+        """Load a checkpoint's weights (and optimizer momentum, if present).
+
+        `cfg`, if given, supplies the training hyperparameters to use going
+        forward (lr, batch_size, train_epochs, ...) — e.g. a lower finetune
+        LR. Only the *architecture* fields (num_players/net_width/
+        value_hidden), which must match the saved weights, are taken from
+        the checkpoint, overriding whatever `cfg` says. Without `cfg`, a
+        fresh default `AZConfig` is used (e.g. for arena/eval-only loads).
+        """
         ckpt = torch.load(path, map_location=device, weights_only=True)
-        cfg = AZConfig(
+        base = cfg if cfg is not None else AZConfig()
+        cfg = dataclasses.replace(
+            base,
             num_players=ckpt["num_players"],
             net_width=ckpt["net_width"],
             value_hidden=ckpt["value_hidden"],
@@ -151,4 +170,6 @@ class NNetWrapper:
         )
         wrapper = cls(cfg)
         wrapper.net.load_state_dict(ckpt["model_state"])
+        if "optimizer_state" in ckpt:
+            wrapper.opt.load_state_dict(ckpt["optimizer_state"])
         return wrapper

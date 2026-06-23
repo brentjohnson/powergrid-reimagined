@@ -248,8 +248,195 @@ trying to do both.
 
 We added a setting (`--shaping-mode`, choosing `absolute` or `relative`) so we
 can deliberately teach with one reward and then fine-tune with the other. It's a
-small change because the underlying engine already provides both numbers. This is
-the setup for the next run, which we haven't done yet.
+small change because the underlying engine already provides both numbers.
+
+### A fork in the road: trying a completely different algorithm
+
+That two-phase plan was the obvious next move. Instead, we made a bigger bet
+first. PPO had now failed four times in a row, each time in a *different* way
+(weak baseline, a reward-plumbing bug, exploration collapse, a reward that
+taught the wrong lesson) — and all four failures trace back to the same root
+problem: a single +1/−1 number, seventy moves late, is a very thin trickle of
+feedback to learn from. Rather than keep patching the same algorithm's
+relationship with that thin trickle, we tried something built differently from
+the ground up: **AlphaZero**.
+
+AlphaZero pairs a neural network with an explicit **search** procedure called
+**Monte Carlo Tree Search (MCTS)**. Before committing to a move, it mentally
+plays out many possible continuations ("simulations" — typically dozens to
+hundreds per move), using the network to judge which branches are worth
+exploring and how good a resulting position looks, without playing any of them
+all the way to the end. The move it actually plays is whatever search liked
+best — not just whatever the raw network would have guessed on its own. PPO,
+by contrast, has the network output a move directly from its own judgment, no
+lookahead at all. The hope: that explicit "think a few moves ahead before
+committing" step would inject far denser, more immediate signal than waiting
+for one win/loss number per entire game.
+
+It was also, usefully, an experiment in itself: if a completely different
+algorithm — different training loop, different update rule, the only shared
+code being the Rust game engine and the 143-action move encoding — *also*
+collapsed to 0%, that would be a meaningful clue that the problem wasn't
+specific to PPO at all. That clue is exactly what happened, though not for the
+reason we expected at the time.
+
+### Episode 5 — First AlphaZero run: 0%, again
+
+We built a separate implementation (following an established public AlphaZero
+pattern) reusing only the Rust engine and the action encoding — no other code
+shared with the PPO work. First real run: 200 training iterations, 25
+self-play games per iteration, 50 search simulations per move, with the same
+kind of curriculum as before ramping the end-game city trigger from 5 up to
+the full 17.
+
+Result: **0% win rate against even the easiest heuristic bots**, at every
+single checkpoint we saved — iteration 1, 50, 100, 150, 200, and the run's
+self-reported "best." In fact "best" turned out to just be iteration 1 — the
+run never beat its own first attempt the entire time.
+
+Same instinct as Episode 0: don't trust 0% at face value, go check the
+plumbing first. A few read-only diagnostics, no code changes:
+
+- The evaluation harness itself was fair — a heuristic bot dropped into the
+  same seat against equal-strength opponents wins 17–37% of games (close to
+  the 25% baseline four equal players would each get by chance), so the seat
+  isn't rigged to lose.
+- A **uniformly random** policy in that seat *also* won 0%. That told us our
+  trained network wasn't merely weak — it had landed at the absolute floor,
+  no better than blind guessing, against the weakest bots we have.
+- The network itself wasn't broken or degenerate: its move probabilities
+  stayed healthily varied (no entropy collapse this time), and its value
+  head — the part that predicts who wins — had clearly learned to recognize
+  the eventual *self-play* winner late in a game.
+
+That last point pinned the diagnosis. The network had genuinely learned
+something — just the wrong thing. It got good at reading the patterns of
+games against earlier, weaker versions of itself, but that skill never once
+had to face a truly competent opponent, so it had nothing useful to do
+against the real bots. Left alone, self-play can wander off into a closed
+little world of its own making rather than climbing toward real skill. We'd
+also used only 50 search simulations per move — a thin amount of lookahead
+for a 143-action game lasting 100+ moves, not nearly enough for the search
+itself to meaningfully out-think a still-bad underlying network.
+
+**Lesson:** self-play is not automatically self-correcting. Without something
+actively pulling it toward genuinely good play — real opponents mixed in, or
+far deeper search — it can become a confident expert at beating an
+out-of-shape version of itself. This is Episode 1's self-play danger again in
+a new costume, and the sharpest version of it yet: training that looks
+*completely healthy* by every internal gauge (steady entropy, a value head
+doing its job) can still be teaching exactly the wrong lesson, if the
+opponents it's training against aren't the ones that actually matter.
+
+### Episode 6 — Trying to shortcut the problem: cloning the hard bot directly
+
+The fixes Episode 5 pointed to (deeper search, mixing in real opponents, and
+more) were each expensive to test properly, and we didn't yet know which one
+actually mattered. Before burning another full run finding out, we tried a
+much cheaper, more direct diagnostic: **behavior cloning**.
+
+Behavior cloning skips reinforcement learning's "try things and see what
+scores well" loop entirely. You record a *competent player's* actual
+decisions across many games — here, our own hand-written "hard" bot — and
+train the network with ordinary supervised learning to imitate those exact
+moves. It's "watch the expert and copy them," not reinforcement learning at
+all — a great fast warm-start if it works, and a great diagnostic if it
+doesn't.
+
+We generated 400 games of the hard bot playing itself (four hard-bot seats,
+~156,000 individual decisions in total) and trained the network to match each
+one. After 20 passes over that data, the network correctly predicted the hard
+bot's actual move **73% of the time** on moves outside its training data — a
+genuinely strong score for this kind of task.
+
+Then we let it actually play real games. **0% win rate.** Not "low" —
+zero, the exact same wall as every previous attempt, despite faithfully
+imitating a genuinely good player nearly three times out of four.
+
+We re-checked the obvious suspects before accepting that: always playing the
+single most-likely move, sampling randomly in proportion to the network's
+confidence, even bolting real MCTS search on top of the cloned network with
+up to 200 simulations per move. All 0%.
+
+**Why a 73%-accurate copy can still lose every game:** this is the
+**compounding error** problem, and it's a genuinely different failure mode
+from sparse reward. Imagine copying a chef's recipe with 73% per-step
+fidelity: get one early step slightly wrong — a bit too much salt — and every
+later step the chef intended no longer quite applies; you're now improvising
+in a situation the chef never actually faced. One misstep early in a
+~70-move game can push play into a state the hard bot itself would never have
+created, and from there the clone has no idea what a good "hard bot" move
+even looks like, because it never saw anything resembling that state during
+training. Small per-step errors compound, multiplicatively, over a long game
+into near-certain derailment by the end — exactly why long-horizon tasks are
+unusually punishing for plain imitation, even imitation that looks excellent
+move by move.
+
+**Lesson:** per-step accuracy and full-game competence are *different things
+that can disagree wildly.* A 73%-accurate clone that loses literally every
+game is the cleanest demonstration of that gap this whole project has
+produced.
+
+### Episode 7 — The actual culprit, finally: a one-unit-per-turn bug
+
+Three genuinely different approaches — direct PPO, self-play AlphaZero, and
+now behavior cloning — had each independently bottomed out at essentially 0%.
+Three different algorithms hitting the *exact same wall* is a strong hint the
+wall isn't about any one algorithm. So we asked a different question: is
+there something **structural** about the game's 143-action move encoding
+itself that makes it hard for *any* learned policy to play well, no matter
+how it's trained?
+
+We went looking, and found a real bug — not in any learning code, but in the
+interface between policy and game. Buying fuel resources (coal, oil, gas,
+uranium) is supposed to let a player buy *several units in one turn* — e.g.
+"3 coal and 2 oil" in one trip to the market, exactly what the hand-written
+bots do. But the 143-action encoding had only **one action id per resource
+type**, and that single action was wired to a game-engine function that
+quietly **ended the player's entire turn** after buying just one unit, as a
+side effect of how it had been written.
+
+The consequence: every policy we trained could buy **at most one unit of
+fuel per round**, while every heuristic opponent it played against bought
+normal multi-unit batches. A power plant starved of more than half its
+needed fuel can't power its cities; a player who can't power cities can't
+win. This wasn't a subtle disadvantage — it's closer to playing with one
+hand tied behind your back — and it applied identically whether the "hand"
+belonged to PPO, AlphaZero, or a behavior-cloned copy of our own best bot. It
+explains, in one stroke, every single 0% result this entire project has
+produced.
+
+Our diagnostic instincts along the way (the eval harness, the random/heuristic
+floor, the entropy and value-head checks) were genuinely useful and correctly
+ruled out plenty of other explanations — but they could only ever tell us
+"this isn't working," never "the move encoding itself is broken," because
+none of the algorithms we'd tried were actually the problem.
+
+### The fix
+
+We changed the encoding so each "buy resource" action adds exactly **one
+unit and lets the turn continue** — the same action can be chosen again,
+buying another unit, as many times as wanted, before an explicit "done
+buying" action ends the turn. This mirrors how *building cities* already
+worked in the encoding (one action per city, then a separate "done building"
+action) — so the fix brings buying resources in line with a pattern that was
+already correct elsewhere. Nothing needed to change about which moves are
+*legal* at each moment (the existing checks already correctly accounted for
+plant capacity, market stock, and the game's hybrid gas/oil plants) — only
+what a single action *does*.
+
+We made the same change in both places the move encoding lives (the Rust game
+engine, and the separate Python copy used for PPO training) and added an
+automated test that plays a multi-unit purchase across several resources in
+one turn, proving the turn no longer ends early.
+
+**Important consequence:** every checkpoint trained so far — every PPO run,
+the AlphaZero run, the behavior clone — was trained against the *broken*,
+one-unit encoding. None of them are valid evidence about whether their
+underlying algorithm can actually work on this game. We have, in effect, been
+grading three different students on an exam with a typo that made every
+answer come out wrong. The fix doesn't tell us PPO or AlphaZero will now
+succeed — it means we finally get to ask that question for the first time.
 
 ---
 
@@ -282,6 +469,20 @@ Hard-won principles:
 6. **Self-play can chase its own tail** — it can get good at beating a weak
    version of itself while still losing to everyone else. Keep some real
    opponents in the mix and always measure against an outside benchmark.
+7. **If wildly different algorithms all fail the same way, suspect the shared
+   interface, not the algorithms.** PPO, AlphaZero, and plain supervised
+   behavior cloning are about as different from each other as three
+   approaches get. When all three landed at the same 0%, the far more likely
+   explanation was something they all depended on in common — here, the move
+   encoding — not three unrelated algorithmic failures.
+8. **A high-accuracy clone that still loses every game is itself a strong,
+   specific signal** — it points at compounding error / a broken interface,
+   not just "imitation didn't work." Behavior cloning is worth doing as a
+   cheap diagnostic even when it isn't the intended final approach.
+9. **An action that's supposed to represent "buy a few of these" can hide a
+   bug if it secretly ends the turn after the first one** — and that kind of
+   bug is invisible to every metric that only watches the *learning*, because
+   the hand-written bots never go through that same encoding at all.
 
 ## Where we are now
 
@@ -289,30 +490,45 @@ Hard-won principles:
 - ✅ Self-play is sound (the reward-attribution bug is fixed).
 - ✅ The exploration-collapse problem is fixed.
 - ✅ We can now switch between the two reward styles at will.
-- ❌ **No version has yet beaten the hand-written bots.** The best result ever
-  was ~21% on the easiest setting — still below random — and the most recent
-  full-scale runs sit at 0%.
-- 🔎 Best current theory: the network never learned the core **build → power →
-  win** loop, because we never managed to give it a *teachable* reward and
-  *winnable* games at the same time.
+- ✅ Tried a structurally different algorithm (AlphaZero/MCTS, Episode 5) —
+  it also failed at 0%, but the diagnosis (a closed self-play loop, too
+  little search) was genuinely informative and ruled out "PPO specifically is
+  broken" as the only explanation.
+- ✅ Tried behavior cloning the hard bot as a cheap diagnostic (Episode 6) —
+  73% per-move accuracy, still 0% win rate — which is what sent us looking
+  for something structural rather than algorithmic.
+- ✅ **Found and fixed a real bug** (Episode 7): the move encoding could buy
+  at most one unit of fuel per turn no matter which algorithm was driving it,
+  while every opponent bought normal multi-unit batches. Fixed to be
+  additive (buy one unit, turn continues) across both the Rust engine and the
+  Python training copy of the encoding.
+- ❌ **No version has yet beaten the hand-written bots.** But for the first
+  time, every prior 0% result has an actual, shared explanation, rather than
+  being three separate mysteries — and every checkpoint trained before this
+  fix was trained against a hobbled version of the game and isn't valid
+  evidence about anything.
 
 ### What we're trying next
 
-A **two-phase** run that combines everything that worked:
+Before reaching for anything elaborate again — curricula, self-play,
+AlphaZero, cloning — we're going back to the very first thing we ever tried
+(**Episode 0**: plain PPO trained directly against the heuristic bots) and
+simply rerunning it with the buy-resource fix in place. Nothing else changes.
 
-- **Phase 1 — teach it to build.** Use the *absolute* reward (clear "build more"
-  signal) plus the easy-games curriculum (now safe to use again, since
-  exploration no longer collapses). Success means the win rate clearly clears the
-  ~25% random bar, *and* watching it play shows real cities going up and the money
-  hoard going down — not just a prettier reward graph.
-- **Phase 2 — teach it to win.** Take that competent network and fine-tune it
-  with the *relative* reward on full-length games, to learn the subtler
-  positional play. Possibly a third phase with no shaping at all, optimizing
-  purely for winning.
+The logic: every approach in this story so far was tested with one hand tied
+behind its back. We don't yet know whether PPO, AlphaZero, or cloning is
+the right algorithm for this game — we only know that none of them were
+fairly tested. Re-running the *simplest* approach first is the cheapest way
+to find out whether the bug, not any algorithmic limitation, was the real
+obstacle all along. If plain PPO now clears the ~25% random baseline where it
+previously couldn't, that's a strong, simple result. If it still can't, we'll
+have learned the bug wasn't the whole story, and the two-phase
+absolute-then-relative plan (and the AlphaZero fixes from Episode 5) are
+still waiting in the wings.
 
 Open questions still circling:
-- Is the 3-city game actually "easy," or is it so short and luck-driven that no
-  amount of skill can beat random there?
+- Is the 3-city curriculum game actually "easy," or is it so short and
+  luck-driven that no amount of skill can beat random there?
 - Should the curriculum advance based on *proven mastery* rather than a fixed
   timer? (Almost certainly yes.)
 - Does the relative reward really over-encourage leading once the network is

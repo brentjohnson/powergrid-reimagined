@@ -100,6 +100,35 @@ class PowerGridGame:
         self._game.apply(actor, action_json)
         return True
 
+    def bot_decide_id(self, difficulty: str) -> int | None:
+        """The current actor's heuristic-bot move as an action id (for the
+        encoding's 143-action space), or `None` if there's no current actor,
+        the bot has no move, or its choice isn't representable as an id."""
+        actor = self.current_player()
+        if actor is None:
+            return None
+        return self._game.bot_decide_id(actor, difficulty)
+
+    def bot_decide_json(self, difficulty: str) -> str | None:
+        """The current actor's heuristic-bot move as the full, raw action
+        JSON — used by `imitation.py` for `build_cities`/`buy_resources`,
+        where the bot's real decision is a multi-unit batch that
+        `bot_decide_id` can't match against any single id (see that
+        module's module docstring for why)."""
+        actor = self.current_player()
+        if actor is None:
+            return None
+        return self._game.bot_decide(actor, difficulty)
+
+    def apply_json(self, action_json: str) -> None:
+        """Apply a raw action JSON for the current actor, bypassing the
+        action-id encoding — used to advance the game with the bot's real
+        (possibly multi-unit) decision when that decision isn't representable
+        as a single id."""
+        actor = self.current_player()
+        assert actor is not None, "apply_json() requires a current actor"
+        self._game.apply(actor, action_json)
+
 
 # ---------------------------------------------------------------------------
 # Perspective-relative value vectors

@@ -48,6 +48,17 @@ def main() -> None:
     )
     parser.add_argument("--curriculum-every", type=int, default=5)
     parser.add_argument("--curriculum-step", type=int, default=2)
+    parser.add_argument(
+        "--vs-bot-fraction",
+        type=float,
+        default=0.0,
+        help="Fraction of each iteration's episodes played as MCTS-learner vs "
+        "--vs-bot-difficulty heuristic bots instead of pure self-play. Raise "
+        "this if self-play win rate vs bots stalls or regresses.",
+    )
+    parser.add_argument(
+        "--vs-bot-difficulty", default="hard", choices=["easy", "normal", "hard"]
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--run-dir", default="alphazero/runs/default")
@@ -70,6 +81,8 @@ def main() -> None:
         end_game_cities_target=args.end_game_cities or 17,
         end_game_cities_step=args.curriculum_step,
         curriculum_every=args.curriculum_every,
+        vs_bot_fraction=args.vs_bot_fraction,
+        vs_bot_difficulty=args.vs_bot_difficulty,
         seed=args.seed,
         device=args.device,
         run_dir=args.run_dir,
@@ -80,7 +93,10 @@ def main() -> None:
 
     coach = Coach(cfg)
     if args.resume:
-        coach.nnet = NNetWrapper.load(args.resume, device=cfg.device)
+        # Pass `cfg` through so resuming keeps this run's hyperparameters
+        # (lr, batch_size, ...) — only the checkpoint's architecture fields
+        # (num_players/net_width/value_hidden) are taken from the file.
+        coach.nnet = NNetWrapper.load(args.resume, device=cfg.device, cfg=cfg)
     coach.run()
 
 

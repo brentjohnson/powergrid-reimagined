@@ -48,3 +48,13 @@ class AZConfig:
     eval_games: int = 20
     eval_bot_difficulty: str = "normal"
     run_dir: str = "alphazero/runs/default"
+
+    # --- Anchor episodes --------------------------------------------------------
+    # Fraction of each iteration's episodes played as MCTS-learner vs
+    # `vs_bot_difficulty` heuristic bots (see `selfplay.play_episode_vs_bots`)
+    # instead of pure self-play. 0 = pure self-play (the default). Raise this
+    # if self-play win rate vs bots stalls or regresses — it keeps some
+    # training data grounded in the competent-opponent state distribution the
+    # net is actually evaluated on.
+    vs_bot_fraction: float = 0.0
+    vs_bot_difficulty: str = "hard"

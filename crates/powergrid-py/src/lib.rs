@@ -208,20 +208,35 @@ impl Game {
     /// Returns the action as a JSON string, or None if the bot has no move.
     fn bot_decide(&self, actor: &str, difficulty: &str) -> PyResult<Option<String>> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let player = self
-            .state
-            .players
-            .iter()
-            .find(|p| p.id == actor_id)
-            .ok_or_else(|| PyValueError::new_err("actor not found in game"))?;
-        let diff = parse_difficulty(difficulty);
-        let registry = default_registry();
-        let profile = registry.profile_for(diff).clone();
-        let seed = actor_id.as_u128() as u64;
-        let mut bot = Bot::new(actor_id, player.name.clone(), player.color, profile, seed);
-        Ok(bot
-            .decide(&self.state)
+        Ok(self
+            .bot_decide_action(actor_id, difficulty)?
             .map(|a| serde_json::to_string(&a).expect("serialize action")))
+    }
+
+    /// Like `bot_decide`, but returns the action's integer id (0..N_ACTIONS)
+    /// instead of JSON, by matching the bot's chosen action against
+    /// `action_id_to_action` over every legal id in the mask. Returns `None`
+    /// if the bot has no move, or if its choice isn't representable in the
+    /// 143-action encoding (rare edge cases, e.g. a bid outside the encoded
+    /// range) — callers (e.g. imitation-learning data generation) should
+    /// skip those examples rather than guess.
+    fn bot_decide_id(&self, actor: &str, difficulty: &str) -> PyResult<Option<u16>> {
+        let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let Some(action) = self.bot_decide_action(actor_id, difficulty)? else {
+            return Ok(None);
+        };
+        let chosen_json = serde_json::to_string(&action).expect("serialize action");
+        let mask = build_action_mask(&self.state, actor_id);
+        for (id, &legal) in mask.iter().enumerate() {
+            if legal == 0 {
+                continue;
+            }
+            let candidate = action_id_to_action(id as u16, &self.state, actor_id);
+            if serde_json::to_string(&candidate).expect("serialize action") == chosen_json {
+                return Ok(Some(id as u16));
+            }
+        }
+        Ok(None)
     }
 
     /// Sorted list of all city IDs in the map (stable across calls — use to build the city index).
@@ -405,6 +420,23 @@ fn parse_difficulty(s: &str) -> BotDifficulty {
 }
 
 impl Game {
+    /// Construct a one-shot strategy bot for `actor_id` and ask it to decide
+    /// an action, shared by `bot_decide` and `bot_decide_id`.
+    fn bot_decide_action(&self, actor_id: Uuid, difficulty: &str) -> PyResult<Option<Action>> {
+        let player = self
+            .state
+            .players
+            .iter()
+            .find(|p| p.id == actor_id)
+            .ok_or_else(|| PyValueError::new_err("actor not found in game"))?;
+        let diff = parse_difficulty(difficulty);
+        let registry = default_registry();
+        let profile = registry.profile_for(diff).clone();
+        let seed = actor_id.as_u128() as u64;
+        let mut bot = Bot::new(actor_id, player.name.clone(), player.color, profile, seed);
+        Ok(bot.decide(&self.state))
+    }
+
     /// Resolve a difficulty string into an opponent-driving mode.
     fn opponent_mode(&self, difficulty: &str) -> PyResult<OpponentMode> {
         if difficulty == "policy" {

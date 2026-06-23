@@ -781,8 +781,16 @@ pub fn action_id_to_action(action_id: u16, state: &GameState, actor_id: PlayerId
             Resource::Gas,
             Resource::Uranium,
         ][ri];
-        return Action::BuyResourceBatch {
-            purchases: vec![(resource, 1)],
+        // Additive single-unit buy: this does NOT end the buy phase (see
+        // rules::handle_buy_resources), so a policy buys one unit at a time and
+        // sequences as many as it wants before choosing DoneBuying. The per-step
+        // mask (buyable_resources in compute_legal_move_info) already enforces
+        // capacity (hybrid-aware), market availability, and affordability for
+        // each +1, and the intra-turn coupling resolves automatically because
+        // every unit commits before the next mask is computed.
+        return Action::BuyResources {
+            resource,
+            amount: 1,
         };
     }
 
@@ -1019,6 +1027,146 @@ mod tests {
             matches!(result, Err(ActionError::InvalidFuelSplit)),
             "expected gas=0 to be rejected, got {:?}",
             result
+        );
+    }
+
+    /// `powergrid-py`'s `bot_decide_id` matches a heuristic bot's chosen
+    /// `Action` against `action_id_to_action` over the legal ids in
+    /// `build_action_mask`, comparing by JSON string. This pins the
+    /// invariant that makes that match-up actually find something for most
+    /// moves of a real game — the imitation-learning pipeline
+    /// (`alphazero/imitation.py`) depends on it to harvest training pairs.
+    #[test]
+    fn hard_bot_decisions_round_trip_through_action_mask() {
+        use crate::bot::Bot;
+        use crate::profile::default_registry;
+        use powergrid_core::types::BotDifficulty;
+
+        let (mut state, _ids) = start_game(2024);
+        let registry = default_registry();
+        let mut round_tripped = 0;
+
+        for _ in 0..500 {
+            let Some(actor_id) = current_actor_id(&state) else {
+                break;
+            };
+            let player = state
+                .players
+                .iter()
+                .find(|p| p.id == actor_id)
+                .expect("actor is a player");
+            let profile = registry.profile_for(BotDifficulty::Hard).clone();
+            let mut bot = Bot::new(
+                actor_id,
+                player.name.clone(),
+                player.color,
+                profile,
+                actor_id.as_u128() as u64,
+            );
+            let Some(action) = bot.decide(&state) else {
+                break;
+            };
+
+            let mask = build_action_mask(&state, actor_id);
+            let chosen_json = serde_json::to_string(&action).expect("serialize action");
+            let matched_id = (0..N_ACTIONS as u16).find(|&id| {
+                mask[id as usize] == 1
+                    && serde_json::to_string(&action_id_to_action(id, &state, actor_id))
+                        .expect("serialize action")
+                        == chosen_json
+            });
+            if let Some(id) = matched_id {
+                round_tripped += 1;
+                let candidate = action_id_to_action(id, &state, actor_id);
+                apply_action(&mut state, actor_id, candidate)
+                    .expect("round-tripped action must be legal");
+            } else {
+                // Not every heuristic choice is representable in the
+                // 143-action encoding (e.g. some bid amounts); apply the
+                // bot's real action directly so the game still progresses.
+                apply_action(&mut state, actor_id, action).expect("bot move should be legal");
+            }
+            if matches!(state.phase, powergrid_core::types::Phase::GameOver { .. }) {
+                break;
+            }
+        }
+
+        assert!(
+            round_tripped > 20,
+            "expected most moves of a real game to round-trip, got {round_tripped}"
+        );
+    }
+
+    /// Regression test for the additive single-unit buy-resource encoding:
+    /// each `BUY_RESOURCE_BASE + ri` id must apply `Action::BuyResources
+    /// {resource, amount: 1}` (via `handle_buy_resources`, which does *not*
+    /// pop `remaining`), so a policy can sequence several +1 buys — across
+    /// several resources — in the same buy phase before ending it with
+    /// `DoneBuying`. This is the fix for the structural cap where the old
+    /// decode produced a single-unit `BuyResourceBatch`, which
+    /// `handle_buy_resource_batch` ended the turn after unconditionally.
+    #[test]
+    fn buy_resource_ids_are_additive_and_dont_end_the_turn() {
+        use powergrid_core::types::Phase;
+
+        let (mut state, ids) = start_game(123);
+        let p1 = ids[0];
+
+        state.phase = Phase::BuyResources {
+            remaining: vec![p1, ids[1]],
+        };
+        {
+            let player = state.player_mut(p1).unwrap();
+            // Coal plant with cost 5 -> capacity = cost * 2 = 10, plenty of
+            // headroom for several +1 buys. Give ample money too.
+            player.plants = vec![plant(3, PlantKind::Coal, 5, 1)];
+            player.money = 200;
+        }
+
+        let coal_id = (BUY_RESOURCE_BASE) as u16; // ri=0 -> Coal
+        let oil_id = (BUY_RESOURCE_BASE + 1) as u16; // ri=1 -> Oil
+
+        // Coal: buy 3 units one id-application at a time. Each must be the
+        // additive, non-turn-ending variant and must NOT advance `remaining`.
+        for expected_coal in 1..=3u8 {
+            let action = action_id_to_action(coal_id, &state, p1);
+            assert!(
+                matches!(
+                    action,
+                    Action::BuyResources {
+                        resource: Resource::Coal,
+                        amount: 1
+                    }
+                ),
+                "expected additive 1-unit BuyResources, got {action:?}"
+            );
+            apply_action(&mut state, p1, action).expect("buy 1 coal");
+            let player = state.player(p1).unwrap();
+            assert_eq!(player.resources.coal, expected_coal);
+            assert!(
+                matches!(&state.phase, Phase::BuyResources { remaining } if remaining == &vec![p1, ids[1]]),
+                "a single-unit buy must not advance the buy-phase turn order"
+            );
+        }
+
+        // Oil plant capacity is zero (player only owns the Coal plant above),
+        // so attempting to also buy oil now should be illegal via the mask —
+        // confirming capacity is still enforced per-unit, hybrid-aware logic
+        // notwithstanding (no GasOrOil plant in this setup).
+        let mask = build_action_mask(&state, p1);
+        assert_eq!(
+            mask[oil_id as usize], 0,
+            "no oil capacity, must be masked out"
+        );
+
+        // DoneBuying still ends this player's turn in the buy phase and
+        // advances to the next player (only DoneBuying pops `remaining`).
+        let action = action_id_to_action(DONE_BUYING_IDX as u16, &state, p1);
+        assert!(matches!(action, Action::DoneBuying));
+        apply_action(&mut state, p1, action).expect("done buying");
+        assert!(
+            matches!(&state.phase, Phase::BuyResources { remaining } if remaining == &vec![ids[1]]),
+            "DoneBuying must advance turn order, unlike a single-unit buy"
         );
     }
 }

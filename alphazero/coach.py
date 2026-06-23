@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import os
 import time
 from collections import deque
@@ -9,7 +10,21 @@ from collections import deque
 from . import arena
 from .config import AZConfig
 from .network import NNetWrapper
-from .selfplay import Example, curriculum_end_game_cities, play_episode
+from .selfplay import Example, curriculum_end_game_cities, play_episode, play_episode_vs_bots
+
+METRICS_FIELDS = [
+    "iter",
+    "end_game_cities",
+    "new_examples",
+    "aborted_episodes",
+    "buffer_size",
+    "policy_loss",
+    "value_loss",
+    "win_rate",
+    "best_win_rate",
+    "is_best",
+    "elapsed_s",
+]
 
 
 class Coach:
@@ -19,6 +34,10 @@ class Coach:
         self.buffer: deque[Example] = deque(maxlen=cfg.buffer_size)
         self.best_win_rate = -1.0
         os.makedirs(cfg.run_dir, exist_ok=True)
+        self.metrics_path = os.path.join(cfg.run_dir, "metrics.csv")
+        if not os.path.exists(self.metrics_path):
+            with open(self.metrics_path, "w", newline="") as f:
+                csv.DictWriter(f, fieldnames=METRICS_FIELDS).writeheader()
 
     def run_iteration(self, it: int) -> dict:
         """Run one self-play -> train -> eval -> checkpoint iteration
@@ -26,11 +45,18 @@ class Coach:
         t0 = time.time()
         egc = curriculum_end_game_cities(self.cfg, it)
 
+        n_vs_bot = round(self.cfg.episodes_per_iter * self.cfg.vs_bot_fraction)
+
         new_examples = 0
         aborted = 0
         for ep in range(self.cfg.episodes_per_iter):
             seed = self.cfg.seed + it * 10_000 + ep
-            examples, outcome = play_episode(self.nnet, self.cfg, seed, egc)
+            if ep < n_vs_bot:
+                examples, outcome = play_episode_vs_bots(
+                    self.nnet, self.cfg, seed, egc, self.cfg.vs_bot_difficulty
+                )
+            else:
+                examples, outcome = play_episode(self.nnet, self.cfg, seed, egc)
             if outcome is None:
                 aborted += 1
                 continue
@@ -76,6 +102,8 @@ class Coach:
     def run(self) -> None:
         for it in range(1, self.cfg.num_iters + 1):
             m = self.run_iteration(it)
+            with open(self.metrics_path, "a", newline="") as f:
+                csv.DictWriter(f, fieldnames=METRICS_FIELDS).writerow(m)
             print(
                 f"[iter {m['iter']:4d}] end_game_cities={m['end_game_cities']!s:>4}  "
                 f"examples+={m['new_examples']:5d} (buf={m['buffer_size']}, "

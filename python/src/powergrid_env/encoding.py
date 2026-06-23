@@ -9,7 +9,7 @@ Action space layout (N_ACTIONS = 143, USA map with 49 cities):
   11..60     PlaceBid     offset 0..49  amount = active_bid.amount+1 + offset
   61..63     DiscardPlant slot 0..2   (index into player.plants sorted by number)
   64..112    BuildCity    city index 0..48 in CITY_IDS order
-  113..116   BuyResources resource index 0..3 (coal/oil/gas/uranium), 1 unit
+  113..116   BuyResources resource index 0..3 (coal/oil/gas/uranium), +1 unit (additive, does not end turn)
   117..124   PowerCities  bitmask 0..7 over first 3 plants (sorted by number)
   125..133   DiscardResource  gas_drop 0..8  (oil = drop_total - gas)
   134..142   PowerCitiesFuel  gas 0..8       (oil = hybrid_cost - gas)
@@ -130,7 +130,10 @@ def id_to_action_json(action_id: int, state: dict, actor_id: str) -> str:
     if BUY_RESOURCE_BASE <= action_id < POWER_CITIES_BASE:
         ri = action_id - BUY_RESOURCE_BASE
         resource = ["coal", "oil", "gas", "uranium"][ri]
-        return json.dumps({"type": "buy_resource_batch", "purchases": [[resource, 1]]})
+        # Additive single-unit buy (does NOT end the buy phase) — the policy
+        # buys one unit at a time and sequences as many as it wants before
+        # choosing DoneBuying. Mirrors the Rust decode in encoding.rs.
+        return json.dumps({"type": "buy_resources", "resource": resource, "amount": 1})
 
     if POWER_CITIES_BASE <= action_id < DISCARD_RESOURCE_BASE:
         bitmask = action_id - POWER_CITIES_BASE

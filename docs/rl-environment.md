@@ -127,7 +127,7 @@ Each integer maps to one game action. The mask in `info["action_mask"]` is `1` o
 | 11–60 | `PlaceBid` offset 0–49 | Bid amount = `active_bid.amount + 1 + offset`; masked above player's money |
 | 61–63 | `DiscardPlant` slot 0–2 | Index into player's plants sorted by number; forced when winning a 4th plant |
 | 64–112 | `BuildCity` city 0–48 | Sorted alphabetically; see constants.py for order |
-| 113–116 | `BuyResources` coal/oil/gas/uranium | Buys 1 unit; masked if market empty, player over capacity, or unaffordable |
+| 113–116 | `BuyResources` coal/oil/gas/uranium | Additive: buys +1 unit and does *not* end the buy phase (mirrors `BuildCity`/`DoneBuilding`) — sequence several before `DoneBuying`. Masked per-unit if market empty, player over capacity (hybrid-aware), or unaffordable |
 | 117–124 | `PowerCities` bitmask 0–7 | Bitmask over player's first 3 plants sorted by number; 0 = power nothing |
 | 125–133 | `DiscardResource` gas\_drop 0–8 | `oil_drop = drop_total − gas_drop`; forced on hybrid-slot overflow |
 | 134–142 | `PowerCitiesFuel` gas 0–8 | `oil = hybrid_cost − gas`; forced when hybrid fuel split is ambiguous |
@@ -173,7 +173,7 @@ Two reference policies live in `python/src/powergrid_env/policies/`:
 
 **`RandomPolicy`** — samples uniformly from the legal action mask. Useful as a baseline and in random-rollout tests.
 
-**`RustBotPolicy`** — delegates to the Rust strategy bot at a chosen difficulty via `game.bot_decide()`. Note that batch actions (multi-city builds, multi-resource buys) are lossily mapped onto the single-action id space, so bots are slightly weaker through this bridge than in the lobby.
+**`RustBotPolicy`** — delegates to the Rust strategy bot at a chosen difficulty via `game.bot_decide()`. The bot is re-consulted every step, so its batch decisions (multi-city builds, multi-resource buys) aren't lost — they're realized incrementally as repeated single-unit/single-city ids (`BuildCity`×N + `DoneBuilding`; `BuyResources`×N + `DoneBuying`) until the bot itself returns the `Done*` action, exactly mirroring a real turn.
 
 ---
 
