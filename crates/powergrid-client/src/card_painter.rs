@@ -268,7 +268,7 @@ fn paint_full_card(
         egui::pos2(rect.center().x, center_area_mid_y),
         Vec2::splat(CENTER_ICON_SIZE),
     );
-    paint_fuel(ui, center_icon_rect, plant.kind);
+    paint_fuel(ui, center_icon_rect, plant.kind, None);
     // painter is still valid — Painter holds Arc<Context>, not a &Ui borrow.
 
     // ── Bottom row: fuel icons → cities → house outline ───────────────────────
@@ -307,10 +307,15 @@ fn paint_full_card(
     let total_w = fuel_w + 10.0 + 8.0 + 2.0 + house_r * 2.0;
     let mut x = rect.max.x - PAD - total_w;
 
+    let fuel_tint_override = if nominated {
+        Some(Color32::BLACK)
+    } else {
+        None
+    };
     if plant.kind.needs_resources() {
         for _ in 0..plant.cost {
             let icon_rect = Rect::from_min_size(egui::pos2(x, icon_top), Vec2::splat(icon_s));
-            paint_fuel(ui, icon_rect, plant.kind);
+            paint_fuel(ui, icon_rect, plant.kind, fuel_tint_override);
             x += icon_s + 1.0;
         }
         x += 1.0; // extra gap before arrow
@@ -363,21 +368,21 @@ fn paint_full_card(
 
 /// Paint a fuel icon scaled to `rect` for the given `PlantKind`.
 /// Wind → wind turbine SVG; GasOrOil → diagonal split; others → tinted SVG.
-fn paint_fuel(ui: &mut egui::Ui, rect: Rect, kind: PlantKind) {
+fn paint_fuel(ui: &mut egui::Ui, rect: Rect, kind: PlantKind, tint_override: Option<Color32>) {
     match kind {
         PlantKind::Wind => {
             egui::Image::new(egui::include_image!("../assets/wind-svgrepo-com.svg"))
-                .tint(theme::CARD_WIND)
+                .tint(tint_override.unwrap_or(theme::CARD_WIND))
                 .paint_at(ui, rect);
         }
         PlantKind::GasOrOil => {
-            paint_hybrid_diagonal(ui, rect);
+            paint_hybrid_diagonal(ui, rect, tint_override);
         }
         _ => {
             let resources = kind.resources();
             if let Some(&res) = resources.first() {
                 egui::Image::new(crate::ui::helpers::resource_image(res))
-                    .tint(crate::ui::helpers::resource_color(res))
+                    .tint(tint_override.unwrap_or_else(|| crate::ui::helpers::resource_color(res)))
                     .paint_at(ui, rect);
             }
         }
@@ -389,11 +394,13 @@ fn paint_fuel(ui: &mut egui::Ui, rect: Rect, kind: PlantKind) {
 /// Uses GPU mesh triangles so the split is a true diagonal, not a rect clip.
 /// If a texture is still `Pending` on the first frame it is skipped silently
 /// (SVGs are cached and ready from frame 2 onward).
-fn paint_hybrid_diagonal(ui: &mut egui::Ui, rect: Rect) {
+fn paint_hybrid_diagonal(ui: &mut egui::Ui, rect: Rect, tint_override: Option<Color32>) {
     use egui::load::TexturePoll;
 
-    let gas_color = crate::ui::helpers::resource_color(Resource::Gas);
-    let oil_color = crate::ui::helpers::resource_color(Resource::Oil);
+    let gas_color =
+        tint_override.unwrap_or_else(|| crate::ui::helpers::resource_color(Resource::Gas));
+    let oil_color =
+        tint_override.unwrap_or_else(|| crate::ui::helpers::resource_color(Resource::Oil));
 
     let gas_src = egui::Image::new(crate::ui::helpers::resource_image(Resource::Gas));
     let oil_src = egui::Image::new(crate::ui::helpers::resource_image(Resource::Oil));
