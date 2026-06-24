@@ -92,6 +92,7 @@ def main():
     placements = {d: [0] * 4 for d in ROSTER}
     powered = {d: 0 for d in ROSTER}
     capacity = {d: 0 for d in ROSTER}
+    owned = {d: 0 for d in ROSTER}
     stalls = 0
     ranked_games = 0
 
@@ -117,6 +118,7 @@ def main():
             placements[diff][s["rank"] - 1] += 1
             powered[diff] += s["powered"]
             capacity[diff] += s["capacity"]
+            owned[diff] += s["cities"]
             parts.append(f"{diff}={s['rank']}({s['powered']}p)")
         print(f"game {g + 1:3d}/{args.games}: steps={steps:4d}  "
               + "  ".join(sorted(parts)))
@@ -129,11 +131,12 @@ def main():
         return
     print()
     print(f"{'bot':<8} {'1st':>5} {'2nd':>5} {'3rd':>5} {'4th':>5} "
-          f"{'avg powered':>12} {'avg capacity':>13}")
+          f"{'avg powered':>12} {'avg owned':>10} {'avg capacity':>13}")
     for diff in ROSTER:
         p = placements[diff]
         print(f"{diff:<8} {p[0]:>5} {p[1]:>5} {p[2]:>5} {p[3]:>5} "
               f"{powered[diff] / ranked_games:>12.1f} "
+              f"{owned[diff] / ranked_games:>10.1f} "
               f"{capacity[diff] / ranked_games:>13.1f}")
 
 
