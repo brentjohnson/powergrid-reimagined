@@ -1,18 +1,19 @@
 """
 Action and observation encoding/decoding for the PettingZoo env.
 
-Action space layout (N_ACTIONS = 143, USA map with 49 cities):
+Action space layout (N_ACTIONS = 94, USA map with 49 cities):
   0          PassAuction
   1          DoneBuying
   2          DoneBuilding
   3..10      SelectPlant  slot 0..7   (actual[0..5]; only actual plants are selectable)
-  11..60     PlaceBid     offset 0..49  amount = active_bid.amount+1 + offset
-  61..63     DiscardPlant slot 0..2   (index into player.plants sorted by number)
-  64..112    BuildCity    city index 0..48 in CITY_IDS order
-  113..116   BuyResources resource index 0..3 (coal/oil/gas/uranium), +1 unit (additive, does not end turn)
-  117..124   PowerCities  bitmask 0..7 over first 3 plants (sorted by number)
-  125..133   DiscardResource  gas_drop 0..8  (oil = drop_total - gas)
-  134..142   PowerCitiesFuel  gas 0..8       (oil = hybrid_cost - gas)
+  11         PlaceBid     raise +1 over the standing bid (English-auction style;
+                          PassAuction covers dropping out — no jump bids)
+  12..14     DiscardPlant slot 0..2   (index into player.plants sorted by number)
+  15..63     BuildCity    city index 0..48 in CITY_IDS order
+  64..67     BuyResources resource index 0..3 (coal/oil/gas/uranium), +1 unit (additive, does not end turn)
+  68..75     PowerCities  bitmask 0..7 over first 3 plants (sorted by number)
+  76..84     DiscardResource  gas_drop 0..8  (oil = drop_total - gas)
+  85..93     PowerCitiesFuel  gas 0..8       (oil = hybrid_cost - gas)
 
 Base indices are derived in constants.py; this table is illustrative.
 """
@@ -48,12 +49,8 @@ def mask_from_info(move_info: dict, state: dict, actor_id: str) -> np.ndarray:
 
     bid_min = move_info.get("bid_min")
     bid_max = move_info.get("bid_max")
-    if bid_min is not None and bid_max is not None:
-        for offset in range(50):
-            if bid_min + offset <= bid_max:
-                mask[PLACE_BID_BASE + offset] = 1
-            else:
-                break
+    if bid_min is not None and bid_max is not None and bid_min <= bid_max:
+        mask[PLACE_BID_BASE] = 1
 
     for slot in move_info.get("discard_plant_slots", []):
         if 0 <= slot < 3:
@@ -103,12 +100,12 @@ def id_to_action_json(action_id: int, state: dict, actor_id: str) -> str:
         return '{"type":"pass_auction"}'
 
     if PLACE_BID_BASE <= action_id < DISCARD_PLANT_BASE:
-        offset = action_id - PLACE_BID_BASE
+        # Only one bid action exists: raise by +1 over the standing bid.
         phase = state["phase"]
         if isinstance(phase, dict) and "auction" in phase:
             ab = phase["auction"].get("active_bid")
             if ab:
-                amount = ab["amount"] + 1 + offset
+                amount = ab["amount"] + 1
                 return json.dumps({"type": "place_bid", "amount": amount})
         return '{"type":"pass_auction"}'
 
@@ -190,15 +187,8 @@ def action_json_to_id(action_json: str, state: dict, actor_id: str) -> int:
         return PASS_AUCTION
 
     if t == "place_bid":
-        amount = action["amount"]
-        phase = state["phase"]
-        if isinstance(phase, dict) and "auction" in phase:
-            ab = phase["auction"].get("active_bid")
-            if ab:
-                base_min = ab["amount"] + 1
-                offset = max(0, min(49, amount - base_min))
-                return PLACE_BID_BASE + offset
-        return PASS_AUCTION
+        # Only one bid action exists: raise by +1 over the standing bid.
+        return PLACE_BID_BASE
 
     if t == "discard_plant":
         plant_num = action["plant_number"]

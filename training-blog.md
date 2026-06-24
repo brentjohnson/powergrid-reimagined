@@ -39,7 +39,8 @@ policy network in Python, then export its weights to a tiny custom format and
 run the finished bot natively in the game's Rust engine — so at game time there's
 no Python, no heavyweight ML library, just fast matrix math. The bot sees the
 game as a 454-number summary (money, plants, cities, the market, etc.) and
-chooses from 143 possible actions.
+chooses from 94 possible actions. (This was 143 for most of the events below —
+see Episode 8 for why it shrank.)
 
 That whole pipeline — train, export, load, play — **works.** This blog isn't
 about the pipeline. It's about the much harder problem of getting the network to
@@ -438,6 +439,60 @@ grading three different students on an exam with a typo that made every
 answer come out wrong. The fix doesn't tell us PPO or AlphaZero will now
 succeed — it means we finally get to ask that question for the first time.
 
+### Episode 8 — The fix actually works, and a new, smaller bug: the agent over-bids
+
+It worked. A self-play run trained after the buy-resource fix produced the
+first checkpoint that plays *real* games: **30% win rate** against three
+Normal bots in a 4-player game (previous best, pre-fix, was under 1%), with
+realistic city and money counts and no stalled games. The bug really had been
+the whole story for Episodes 0 through 7.
+
+With a checkpoint that finally played competently, a new and much subtler
+problem showed up on inspection: watching it play, the agent would jump a
+plant auction's price up by 20 or 30 Elektro in a single move, where a human
+(and every hand-written bot) raises a standing bid by the smallest amount that
+keeps them in the auction — "+1 and see what happens" — because winning the
+same plant for less leaves more money for everything else later in the round.
+
+First question, as always: bug or learned behavior? It turned out to be
+neither a rules bug nor an encoding bug exactly — both the game rules and the
+move encoding *intentionally* allow a bid to jump by any amount up to the
+player's cash (the encoding offered 50 different raise sizes, +1 through +50
+over the standing bid, as separate action choices). Nothing was broken; the
+agent was just freely picking from a menu of jump sizes that humans, by
+convention rather than rule, never use.
+
+Self-play had no particular reason to discover the "+1" convention on its own.
+The convention exists for humans because overpaying is a real cost — but in
+self-play, "overpaying" was a soft, delayed signal (less cash, sometime later,
+maybe), while winning the auction was an immediate, obvious win. With 50
+near-equivalent jump-size buttons and only a faint reward gradient telling them
+apart, the policy had little pressure to ever prefer the small one. This was
+also the second time in this project a single large degree of freedom in the
+*action space* — not the algorithm, not the reward — quietly made good
+strategy harder to find than it needed to be (Episode 7's one-unit fuel-buy
+bug was the first, though that one really was a bug; this one is intentional
+design that simply gave self-play more rope than it needed).
+
+**The fix:** rather than hope more training or better shaping would eventually
+teach frugality, we removed the temptation structurally. The 50 bid-raise
+actions collapsed into a single one — raise by exactly +1 over the standing
+bid (pass still covers dropping out) — turning every price level into the one
+decision that actually matters: *is this plant worth one more Elektro, yes or
+no?* Any final price still reachable by jumping is equally reachable by
+repeated +1s, since the bidding queue revisits every remaining player at each
+price step; the only thing removed is the jump itself, which a sequential
+agent never needed anyway. Action count dropped from 143 to 94 as a result —
+every checkpoint trained before this point, including the 30%-win-rate one
+above, is now incompatible with the encoding and must be retrained.
+
+**Lesson:** when an action space offers more freedom than the real decision
+actually requires, don't assume training will discover the "obviously sane"
+restriction on its own — self-play has no instinct for human convention, only
+for whatever the reward gradient happens to favor. If a degree of freedom only
+exists to be thrown away by every competent player anyway, removing it from
+the encoding is cheaper and more reliable than teaching an agent not to use it.
+
 ---
 
 ## The cheat sheet
@@ -483,6 +538,13 @@ Hard-won principles:
    bug if it secretly ends the turn after the first one** — and that kind of
    bug is invisible to every metric that only watches the *learning*, because
    the hand-written bots never go through that same encoding at all.
+10. **Don't expect self-play to discover a human convention the reward doesn't
+    require.** If a degree of freedom in the action space (e.g. "jump the bid
+    by any amount, not just +1") only exists because the rules permit it, not
+    because a good player would ever use it, an agent has no particular reason
+    to avoid it on its own — the cost of using it shows up too late and too
+    faintly. When you spot this, constrain the encoding to match the real
+    decision instead of hoping training learns the restriction.
 
 ## Where we are now
 
@@ -502,31 +564,35 @@ Hard-won principles:
   while every opponent bought normal multi-unit batches. Fixed to be
   additive (buy one unit, turn continues) across both the Rust engine and the
   Python training copy of the encoding.
-- ❌ **No version has yet beaten the hand-written bots.** But for the first
-  time, every prior 0% result has an actual, shared explanation, rather than
-  being three separate mysteries — and every checkpoint trained before this
-  fix was trained against a hobbled version of the game and isn't valid
-  evidence about anything.
+- ✅ **First real, non-degenerate checkpoint:** a self-play run trained after
+  the buy-resource fix hit 30% win rate vs three Normal bots (4-player game) —
+  full games, no stalls, realistic money/cities. Every prior 0% result really
+  did share the one explanation above.
+- ✅ **Found and fixed a second, smaller bug-shaped problem** (Episode 8): that
+  checkpoint had learned to jump auction bids by large, non-strategic amounts
+  instead of the human "+1 and see" convention. Not a rules or encoding bug —
+  both intentionally allowed any jump up to the player's cash — but self-play
+  had no reason to discover the human convention on its own. Collapsed the
+  50-action bid-raise range to a single +1 action; action count is now 94
+  (was 143). Every checkpoint trained before this point is invalid and must be
+  retrained.
+- ❌ **No version has yet been retrained against the cleaned-up 94-action
+  encoding.** That's the next run.
 
 ### What we're trying next
 
-Before reaching for anything elaborate again — curricula, self-play,
-AlphaZero, cloning — we're going back to the very first thing we ever tried
-(**Episode 0**: plain PPO trained directly against the heuristic bots) and
-simply rerunning it with the buy-resource fix in place. Nothing else changes.
+The buy-resource fix (Episode 7) worked — the first real, non-degenerate
+checkpoint came out of it. But that checkpoint was trained against the
+50-action bid-raise range Episode 8 just collapsed to a single +1 action, so
+it's no longer valid evidence about anything either. The plan is the simplest
+possible next step: retrain the same self-play setup, unchanged except for the
+now-94-action encoding, and see whether win rate holds at ~30% or improves now
+that jump-bidding isn't an option. If it holds or improves, that's confirmation
+the bid fix was a net positive and not just a cosmetic change. If it regresses,
+that's itself informative — it would mean the agent had been relying on
+jump-bidding for something beyond what it looked like from the outside.
 
-The logic: every approach in this story so far was tested with one hand tied
-behind its back. We don't yet know whether PPO, AlphaZero, or cloning is
-the right algorithm for this game — we only know that none of them were
-fairly tested. Re-running the *simplest* approach first is the cheapest way
-to find out whether the bug, not any algorithmic limitation, was the real
-obstacle all along. If plain PPO now clears the ~25% random baseline where it
-previously couldn't, that's a strong, simple result. If it still can't, we'll
-have learned the bug wasn't the whole story, and the two-phase
-absolute-then-relative plan (and the AlphaZero fixes from Episode 5) are
-still waiting in the wings.
-
-Open questions still circling:
+Open questions still circling from earlier episodes:
 - Is the 3-city curriculum game actually "easy," or is it so short and
   luck-driven that no amount of skill can beat random there?
 - Should the curriculum advance based on *proven mastery* rather than a fixed

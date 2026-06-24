@@ -3,12 +3,12 @@
 MCTS-guided self-play training, as an alternative to the PettingZoo+PPO stack
 in `python/` (which repeatedly struggled with entropy collapse and brittle
 reward shaping). Fixed at **4 players**. Reuses the Rust game engine and the
-480-dim observation / 143-action encoding via `powergrid_py` and
+480-dim observation / 94-action encoding via `powergrid_py` and
 `powergrid_env.constants` — no duplicated game logic.
 
 Structured like [alpha-zero-general](https://github.com/suragnair/alpha-zero-general)
 (Game adapter / NNet wrapper / MCTS / Coach), adapted for:
-- **Action masking** (143-action space, mostly illegal at any given state).
+- **Action masking** (94-action space, mostly illegal at any given state).
 - **4-player value** (a value *vector*, not a single zero-sum scalar).
 - **Perfect-information search on the full seeded engine state.** MCTS forks
   the real `GameState` (including the hidden deck order and opponent money)

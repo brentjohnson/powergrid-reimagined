@@ -18,9 +18,7 @@ pub fn action_label(id: usize) -> String {
         id if (SELECT_PLANT_BASE..PLACE_BID_BASE).contains(&id) => {
             format!("SelectPlant[slot {}]", id - SELECT_PLANT_BASE)
         }
-        id if (PLACE_BID_BASE..DISCARD_PLANT_BASE).contains(&id) => {
-            format!("PlaceBid[bid+1+{}]", id - PLACE_BID_BASE)
-        }
+        id if (PLACE_BID_BASE..DISCARD_PLANT_BASE).contains(&id) => "PlaceBid[+1]".to_string(),
         id if (DISCARD_PLANT_BASE..BUILD_CITY_BASE).contains(&id) => {
             format!("DiscardPlant[slot {}]", id - DISCARD_PLANT_BASE)
         }

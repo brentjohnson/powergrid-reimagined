@@ -2,7 +2,7 @@
 //!
 //! Load a `PGRLPOL1` policy file (or use the embedded `expert.bin`), edit the
 //! 454-dim observation with labeled sliders, and watch the forward pass —
-//! input cells, both 64-wide hidden layers, and the 143 output logits — update
+//! input cells, both 64-wide hidden layers, and the 94 output logits — update
 //! live. Click a node to trace its full weighted path through every layer
 //! (input → hidden1 → hidden2 → output); edge brightness is normalized
 //! per weight matrix so no single connection washes out the rest. In active-

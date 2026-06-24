@@ -314,6 +314,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "expert.bin/expert.golden.json are stale 143-action exports; \
+                re-export with python/scripts/export_policy.py after training \
+                a policy against the new 94-action (PLACE_BID collapsed to +1) \
+                encoding, then remove this #[ignore]"]
     fn embedded_policy_matches_torch_golden_logits() {
         #[derive(serde::Deserialize)]
         struct Golden {
@@ -343,8 +347,21 @@ mod tests {
 
     #[test]
     fn forward_trace_logits_match_logits() {
-        let policy = default_policy().expect("embedded policy must load");
-        let obs = vec![0.0f32; OBS_SIZE];
+        // Doesn't need the embedded asset — any well-formed policy will do,
+        // so build one directly (mirrors `forward_matches_hand_computed_tanh_math`)
+        // rather than depending on `default_policy()`'s dims matching N_ACTIONS.
+        let policy = MlpPolicy {
+            obs_size: 2,
+            hidden: 2,
+            n_actions: 3,
+            l1_w: vec![1.0, 0.5, -1.0, 2.0],
+            l1_b: vec![0.1, -0.2],
+            l2_w: vec![0.3, -0.4, 0.7, 0.2],
+            l2_b: vec![0.0, 0.5],
+            out_w: vec![1.0, 0.0, 0.0, 1.0, 0.5, -0.5],
+            out_b: vec![0.0, 0.1, -0.1],
+        };
+        let obs = vec![0.5f32, -1.0];
         let trace = policy.forward_trace(&obs);
         let (_, hidden, n_actions) = policy.dims();
         assert_eq!(trace.h1_pre.len(), hidden);

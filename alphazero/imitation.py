@@ -9,7 +9,7 @@ move the Rust hard bot actually played. Feeding that into the same
 cloning of the teacher policy.
 
 Most phases (auction, bureaucracy, discard_plant, discard_resource,
-power_cities_fuel) map one bot decision to exactly one of the 143 action
+power_cities_fuel) map one bot decision to exactly one of the 94 action
 ids, so `bot_decide_id` is a direct match. Two phases decide a whole-turn
 *batch* (`Action::BuildCities{city_ids}`, `Action::BuyResourceBatch
 {purchases}`) where the encoding only has single-unit ids — but both decode

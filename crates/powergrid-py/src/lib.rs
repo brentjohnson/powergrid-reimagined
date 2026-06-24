@@ -217,8 +217,8 @@ impl Game {
     /// instead of JSON, by matching the bot's chosen action against
     /// `action_id_to_action` over every legal id in the mask. Returns `None`
     /// if the bot has no move, or if its choice isn't representable in the
-    /// 143-action encoding (rare edge cases, e.g. a bid outside the encoded
-    /// range) — callers (e.g. imitation-learning data generation) should
+    /// 94-action encoding (rare edge cases, e.g. a jump bid larger than the
+    /// encoded +1 raise) — callers (e.g. imitation-learning data generation) should
     /// skip those examples rather than guess.
     fn bot_decide_id(&self, actor: &str, difficulty: &str) -> PyResult<Option<u16>> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;

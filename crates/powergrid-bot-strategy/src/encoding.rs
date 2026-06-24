@@ -98,8 +98,14 @@ pub const DONE_BUYING_IDX: usize = 1;
 pub const DONE_BUILDING_IDX: usize = 2;
 pub const SELECT_PLANT_BASE: usize = 3;
 pub const PLACE_BID_BASE: usize = 11;
-pub const DISCARD_PLANT_BASE: usize = 61;
-pub const BUILD_CITY_BASE: usize = 64;
+/// Auction raises are English-auction style: the only representable raise is
+/// +1 over the standing bid (`PassAuction` covers dropping out). This makes
+/// over-bidding unrepresentable and turns each price level into a single
+/// raise-vs-pass decision. See `assets/policies/expert.bin` notes in
+/// `policy.rs` — this constant must match the embedded policy's output dim.
+pub const N_BID_ACTIONS: usize = 1;
+pub const DISCARD_PLANT_BASE: usize = PLACE_BID_BASE + N_BID_ACTIONS;
+pub const BUILD_CITY_BASE: usize = DISCARD_PLANT_BASE + 3;
 pub const BUY_RESOURCE_BASE: usize = BUILD_CITY_BASE + N_CITIES;
 pub const POWER_CITIES_BASE: usize = BUY_RESOURCE_BASE + 4;
 pub const DISCARD_RESOURCE_BASE: usize = POWER_CITIES_BASE + 8;
@@ -658,12 +664,9 @@ pub fn build_action_mask(state: &GameState, actor_id: PlayerId) -> Vec<u8> {
     }
 
     if let (Some(bid_min), Some(bid_max)) = (info.bid_min, info.bid_max) {
-        for offset in 0u32..50 {
-            if bid_min + offset <= bid_max {
-                mask[PLACE_BID_BASE + offset as usize] = 1;
-            } else {
-                break;
-            }
+        // Only raise representable is +1 over the standing bid.
+        if bid_min <= bid_max {
+            mask[PLACE_BID_BASE] = 1;
         }
     }
 
@@ -735,14 +738,14 @@ pub fn action_id_to_action(action_id: u16, state: &GameState, actor_id: PlayerId
     }
 
     if (PLACE_BID_BASE..DISCARD_PLANT_BASE).contains(&aid) {
-        let offset = (aid - PLACE_BID_BASE) as u32;
+        // Only one bid action exists: raise by +1 over the standing bid.
         if let Phase::Auction {
             active_bid: Some(bid),
             ..
         } = &state.phase
         {
             return Action::PlaceBid {
-                amount: bid.amount + 1 + offset,
+                amount: bid.amount + 1,
             };
         }
         return Action::PassAuction;
@@ -1082,8 +1085,9 @@ mod tests {
                     .expect("round-tripped action must be legal");
             } else {
                 // Not every heuristic choice is representable in the
-                // 143-action encoding (e.g. some bid amounts); apply the
-                // bot's real action directly so the game still progresses.
+                // action encoding (e.g. jump bids, since only +1 raises are
+                // representable); apply the bot's real action directly so
+                // the game still progresses.
                 apply_action(&mut state, actor_id, action).expect("bot move should be legal");
             }
             if matches!(state.phase, powergrid_core::types::Phase::GameOver { .. }) {

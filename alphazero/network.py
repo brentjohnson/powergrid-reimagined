@@ -2,7 +2,7 @@
 
 The shared trunk and policy head exactly mirror the exportable Rust shape
 (`crates/powergrid-bot-strategy/src/policy.rs::MlpPolicy`): two equal-width
-tanh hidden layers feeding a 143-logit policy head. `policy_state_dict()`
+tanh hidden layers feeding a 94-logit policy head. `policy_state_dict()`
 exposes those three layers under the same key names sb3's MaskablePPO uses
 (`mlp_extractor.policy_net.{0,2}` / `action_net`), so the existing
 `powergrid_env.export.policy_state_dict_to_bytes` serializes this net to

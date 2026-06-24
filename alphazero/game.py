@@ -102,7 +102,7 @@ class PowerGridGame:
 
     def bot_decide_id(self, difficulty: str) -> int | None:
         """The current actor's heuristic-bot move as an action id (for the
-        encoding's 143-action space), or `None` if there's no current actor,
+        encoding's 94-action space), or `None` if there's no current actor,
         the bot has no move, or its choice isn't representable as an id."""
         actor = self.current_player()
         if actor is None:

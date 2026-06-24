@@ -91,7 +91,7 @@ for agent in env.agent_iter():
     if terminated or truncated:
         action = None
     else:
-        mask = info["action_mask"]          # np.ndarray of shape (143,), dtype int8
+        mask = info["action_mask"]          # np.ndarray of shape (94,), dtype int8
         action = env.action_space(agent).sample(mask)
     env.step(action)
 ```
@@ -108,13 +108,13 @@ for agent in env.agent_iter():
 
 **Spaces:**
 - `observation_space` → `Box(0.0, 1.0, (454,), float32)` — flat normalised feature vector
-- `action_space` → `Discrete(143)` — see action encoding table below
+- `action_space` → `Discrete(94)` — see action encoding table below
 
 **Rewards:** sparse — `+1.0` to winner, `-1.0` to all others at game end; `0.0` every other step.
 
 ---
 
-## Action encoding (N = 143)
+## Action encoding (N = 94)
 
 Each integer maps to one game action. The mask in `info["action_mask"]` is `1` only for legal actions in the current state. City actions cover the 49 cities of the default USA map (`assets/maps/usa.toml`), sorted alphabetically.
 
@@ -124,13 +124,13 @@ Each integer maps to one game action. The mask in `info["action_mask"]` is `1` o
 | 1 | `DoneBuying` | Always legal during BuyResources |
 | 2 | `DoneBuilding` | Always legal during BuildCities |
 | 3–10 | `SelectPlant` slot 0–7 | Only `actual` market plants (up to 6 in Step 3); future market not selectable |
-| 11–60 | `PlaceBid` offset 0–49 | Bid amount = `active_bid.amount + 1 + offset`; masked above player's money |
-| 61–63 | `DiscardPlant` slot 0–2 | Index into player's plants sorted by number; forced when winning a 4th plant |
-| 64–112 | `BuildCity` city 0–48 | Sorted alphabetically; see constants.py for order |
-| 113–116 | `BuyResources` coal/oil/gas/uranium | Additive: buys +1 unit and does *not* end the buy phase (mirrors `BuildCity`/`DoneBuilding`) — sequence several before `DoneBuying`. Masked per-unit if market empty, player over capacity (hybrid-aware), or unaffordable |
-| 117–124 | `PowerCities` bitmask 0–7 | Bitmask over player's first 3 plants sorted by number; 0 = power nothing |
-| 125–133 | `DiscardResource` gas\_drop 0–8 | `oil_drop = drop_total − gas_drop`; forced on hybrid-slot overflow |
-| 134–142 | `PowerCitiesFuel` gas 0–8 | `oil = hybrid_cost − gas`; forced when hybrid fuel split is ambiguous |
+| 11 | `PlaceBid` | English-auction style: the only raise is +1 over the standing bid (`active_bid.amount + 1`); masked out once the player can't afford it. No jump bids — `PassAuction` (0) covers dropping out. (Before 2026-06-24 this was a 50-action range, offset 0–49, allowing arbitrary jump bids up to the player's money; self-play exploited it with large, non-strategic raises, so it was collapsed to a single +1 action.) |
+| 12–14 | `DiscardPlant` slot 0–2 | Index into player's plants sorted by number; forced when winning a 4th plant |
+| 15–63 | `BuildCity` city 0–48 | Sorted alphabetically; see constants.py for order |
+| 64–67 | `BuyResources` coal/oil/gas/uranium | Additive: buys +1 unit and does *not* end the buy phase (mirrors `BuildCity`/`DoneBuilding`) — sequence several before `DoneBuying`. Masked per-unit if market empty, player over capacity (hybrid-aware), or unaffordable |
+| 68–75 | `PowerCities` bitmask 0–7 | Bitmask over player's first 3 plants sorted by number; 0 = power nothing |
+| 76–84 | `DiscardResource` gas\_drop 0–8 | `oil_drop = drop_total − gas_drop`; forced on hybrid-slot overflow |
+| 85–93 | `PowerCitiesFuel` gas 0–8 | `oil = hybrid_cost − gas`; forced when hybrid fuel split is ambiguous |
 
 ---
 

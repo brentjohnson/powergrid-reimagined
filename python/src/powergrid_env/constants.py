@@ -62,9 +62,12 @@ PASS_AUCTION         = 0          # 1 action
 DONE_BUYING          = 1          # 1 action
 DONE_BUILDING        = 2          # 1 action
 SELECT_PLANT_BASE    = 3          # 8 actions: actual[0..7] (only 0..5 used; future not selectable)
-PLACE_BID_BASE       = 11         # 50 actions: bid at min+0, min+1, ..., min+49
-DISCARD_PLANT_BASE   = 61         # 3 actions: discard player.plants[0..2]
-BUILD_CITY_BASE      = 64         # MAX_CITIES actions: one per city in CITY_IDS order
+PLACE_BID_BASE       = 11         # 1 action: raise +1 over the standing bid (English-auction
+                                   # style; PassAuction covers dropping out). Mirrors the Rust
+                                   # N_BID_ACTIONS constant in encoding.rs.
+N_BID_ACTIONS        = 1
+DISCARD_PLANT_BASE   = PLACE_BID_BASE + N_BID_ACTIONS  # 3 actions: discard player.plants[0..2]
+BUILD_CITY_BASE      = DISCARD_PLANT_BASE + 3          # MAX_CITIES actions: one per city in CITY_IDS order
 BUY_RESOURCE_BASE    = BUILD_CITY_BASE + MAX_CITIES   # 4 actions: coal/oil/gas/uranium (1 unit)
 POWER_CITIES_BASE    = BUY_RESOURCE_BASE + 4          # 8 actions: bitmask 0..7 over first 3 plants
 DISCARD_RESOURCE_BASE = POWER_CITIES_BASE + 8         # 9 actions: gas_drop 0..8 (oil = total - gas)

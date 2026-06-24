@@ -404,7 +404,9 @@ the compiled extension is stale. Run `make develop`, then `make test`.
 **`ValueError: Observation spaces do not match` when resuming or evaluating** —
 the checkpoint was trained with a different observation/action layout (e.g.
 before a map or encoding change). Old checkpoints cannot be migrated; retrain.
-Current layout: obs 454, actions 143 (USA map, 49 cities).
+Current layout: obs 454, actions 94 (USA map, 49 cities). (Before 2026-06-24
+this was 143 actions — auction bidding allowed raises of +1..+50 over the
+standing bid; it's now collapsed to a single +1 raise, see CLAUDE.md.)
 
 **Eval pass seems to hang** — eval episodes are stochastic and time-limited
 (2000 steps) precisely because deterministic pass-everything policies stall

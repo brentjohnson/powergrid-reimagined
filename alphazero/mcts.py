@@ -53,7 +53,7 @@ class MCTS:
         self, root_game: PowerGridGame, temp: float = 1.0, add_noise: bool = True
     ) -> np.ndarray:
         """Run `cfg.num_sims` simulations from `root_game` and return the
-        visit-count distribution over the 143 actions (masked to legal
+        visit-count distribution over the 94 actions (masked to legal
         moves), tempered by `temp` (0 = greedy one-hot)."""
         root = Node(root_game)
         self._expand(root)
