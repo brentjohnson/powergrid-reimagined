@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+from collections import defaultdict
 
 from sb3_contrib import MaskablePPO
 
@@ -94,6 +95,9 @@ def main():
     total_capacity = 0
     total_rounds = 0
     placements = [0] * args.num_players
+    plant_games = defaultdict(int)
+    plant_wins = defaultdict(int)
+    plant_lasts = defaultdict(int)
     for g in range(args.games):
         obs, info = env.reset()
         learner_id = env.game.player_ids()[args.learner_seat]
@@ -123,6 +127,12 @@ def main():
         total_rounds += stats["round"]
         if terminated and winner_id is not None:
             placements[stats["rank"] - 1] += 1
+            for plant in stats["plants"]:
+                plant_games[plant] += 1
+                if won:
+                    plant_wins[plant] += 1
+                if stats["rank"] == args.num_players:
+                    plant_lasts[plant] += 1
         outcome = "WIN " if won else ("stall" if not terminated else "loss")
         # winner_id is None both for non-terminated games and for the
         # degenerate invalid-action termination (game never reached a real
@@ -151,6 +161,25 @@ def main():
     print(f"avg steps/game:  {total_steps / n:.1f}")
     if timeouts:
         print(f"stalled games:   {timeouts} (hit --max-steps, counted as losses, no rank)")
+
+    min_occurrences = 3
+
+    def top_plants(hits: dict) -> list[tuple[int, float, int]]:
+        ranked = [
+            (plant, hits[plant] / plant_games[plant], plant_games[plant])
+            for plant in plant_games
+            if plant_games[plant] >= min_occurrences
+        ]
+        ranked.sort(key=lambda x: (-x[1], -x[2]))
+        return ranked[:3]
+
+    def format_plants(ranked: list[tuple[int, float, int]]) -> str:
+        if not ranked:
+            return "(insufficient data)"
+        return ", ".join(f"#{p} ({rate:.0%}, n={n})" for p, rate, n in ranked)
+
+    print(f"top plants (win):   {format_plants(top_plants(plant_wins))}")
+    print(f"top plants (last):  {format_plants(top_plants(plant_lasts))}")
     env.close()
 
 
