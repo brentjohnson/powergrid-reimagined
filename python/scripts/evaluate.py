@@ -18,12 +18,15 @@ from sb3_contrib import MaskablePPO
 from powergrid_env import PowerGridSingleAgentEnv
 
 
-def learner_stats(state: dict, learner_id: str) -> dict:
+def learner_stats(state: dict, learner_id: str, winner_id: str | None = None) -> dict:
     """Final-state stats for the learner, plus its placement among all players.
 
     Placement is ranked by (cities powered last round, cities connected).
-    Opponent money is hidden from the view, so the money tiebreak is not
-    applied; tied players share the better rank.
+    Opponent money is hidden from the view, so the money tiebreak can't be
+    reconstructed for opponent-vs-opponent ties; those tied players share the
+    better rank. The engine's authoritative winner_id (which does use the
+    hidden-money tiebreak) is treated as strictly ahead of everyone else, so
+    rank 1 always agrees with the actual win/loss outcome.
     """
     city_owners = state["city_owners"]
 
@@ -33,7 +36,14 @@ def learner_stats(state: dict, learner_id: str) -> dict:
     scores = {p["id"]: (p["last_cities_powered"], cities_of(p["id"]))
               for p in state["players"]}
     me = next(p for p in state["players"] if p["id"] == learner_id)
-    rank = 1 + sum(s > scores[learner_id] for s in scores.values())
+    me_score = scores[learner_id]
+    if winner_id == learner_id:
+        rank = 1
+    else:
+        rank = 1 + sum(
+            (s > me_score) or (pid == winner_id)
+            for pid, s in scores.items() if pid != learner_id
+        )
     return {
         "money": me["money"],
         "powered": me["last_cities_powered"],
@@ -102,18 +112,22 @@ def main():
         total_cities += env.learner_cities
         total_steps += steps
 
-        stats = learner_stats(json.loads(env.game.state_json(learner_id)), learner_id)
-        if won:
-            stats["rank"] = 1
+        winner_id = env.game.winner() if terminated else None
+        stats = learner_stats(
+            json.loads(env.game.state_json(learner_id)), learner_id, winner_id
+        )
         total_powered += stats["powered"]
         total_money += stats["money"]
         total_plants += len(stats["plants"])
         total_capacity += stats["capacity"]
         total_rounds += stats["round"]
-        if terminated:
+        if terminated and winner_id is not None:
             placements[stats["rank"] - 1] += 1
         outcome = "WIN " if won else ("stall" if not terminated else "loss")
-        rank = f"{stats['rank']}/{args.num_players}" if terminated else " - "
+        # winner_id is None both for non-terminated games and for the
+        # degenerate invalid-action termination (game never reached a real
+        # GameOver), so rank is meaningless in either case.
+        rank = f"{stats['rank']}/{args.num_players}" if winner_id is not None else " - "
         print(f"game {g + 1:3d}/{args.games}: {outcome}  rank={rank}  "
               f"cities={env.learner_cities:2d}  powered={stats['powered']:2d}  "
               f"money={stats['money']:3d}  plants={stats['plants']}  "
