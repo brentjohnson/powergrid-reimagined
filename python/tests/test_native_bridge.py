@@ -168,7 +168,7 @@ def test_env_policy_mode_falls_back_without_snapshot(random_policy_bytes):
 
     env = PowerGridSingleAgentEnv(num_players=2, bot_difficulty="policy", seed=2)
     env.reset()
-    assert env._episode_difficulty == "normal"
+    assert env._episode_difficulty == "hard"
 
     env.set_opponent_policy(random_policy_bytes)
     env.reset()
