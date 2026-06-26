@@ -77,10 +77,20 @@ def report_inventory(run_dir: str) -> None:
     print(f"final_model:   {'present (run completed)' if os.path.exists(final) else 'absent'}")
 
 
+TRAINING_SCRIPTS = {"train_vs_bots.py", "train_selfplay.py"}
+
+
 def report_process(run_dir: str) -> None:
-    """Find a live python process whose command line mentions this run dir."""
+    """Find a live python training process whose command line mentions this run dir.
+
+    Prefers processes running a known training script over other Python processes
+    (e.g. TensorBoard) that happen to reference the same directory.
+    """
     print("\n== Process ==")
+    abs_run_dir = os.path.abspath(run_dir)
     needle = os.path.basename(os.path.normpath(run_dir))
+
+    training, other = [], []
     for pid_dir in glob.glob("/proc/[0-9]*"):
         try:
             with open(os.path.join(pid_dir, "cmdline"), "rb") as f:
@@ -89,13 +99,28 @@ def report_process(run_dir: str) -> None:
             continue
         if not any("python" in a for a in argv[:2]):
             continue
-        if not any(needle in a for a in argv[1:]):
+        if not any(abs_run_dir in a or needle in a for a in argv[1:]):
             continue
+        pid = os.path.basename(pid_dir)
         started = fmt_ts(os.path.getmtime(pid_dir))
-        print(f"RUNNING — pid {os.path.basename(pid_dir)}, started {started}")
-        print(f"  {' '.join(a for a in argv if a)}")
-        return
-    print("not running")
+        cmd = " ".join(a for a in argv if a)
+        script = next((os.path.basename(a) for a in argv if a.endswith(".py")), "")
+        (training if script in TRAINING_SCRIPTS else other).append((pid, started, cmd, script))
+
+    if training:
+        for pid, started, cmd, _ in training:
+            print(f"RUNNING — pid {pid}, started {started}")
+            print(f"  {cmd}")
+        if other:
+            skipped = ", ".join(f"pid {pid} ({script or '?'})" for pid, _, _, script in other)
+            print(f"  (skipped non-training processes also referencing this dir: {skipped})")
+    elif other:
+        for pid, started, cmd, script in other:
+            label = script or "unknown"
+            print(f"RUNNING ({label}) — pid {pid}, started {started}")
+            print(f"  {cmd}")
+    else:
+        print("not running")
 
 
 def newest_tb_dir(run_dir: str) -> str | None:
