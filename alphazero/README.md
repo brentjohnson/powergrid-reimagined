@@ -3,7 +3,7 @@
 MCTS-guided self-play training, as an alternative to the PettingZoo+PPO stack
 in `python/` (which repeatedly struggled with entropy collapse and brittle
 reward shaping). Fixed at **4 players**. Reuses the Rust game engine and the
-480-dim observation / 94-action encoding via `powergrid_py` and
+454-dim observation / 94-action encoding via `powergrid_py` and
 `powergrid_env.constants` — no duplicated game logic.
 
 Structured like [alpha-zero-general](https://github.com/suragnair/alpha-zero-general)

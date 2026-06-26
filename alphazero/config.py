@@ -18,6 +18,9 @@ class AZConfig:
     end_game_cities_target: int = 17
     end_game_cities_step: int = 2
     curriculum_every: int = 5
+    # Min win rate (vs eval bots) required to advance the curriculum one step.
+    # 0.0 disables win-gating and falls back to the original iter-based schedule.
+    curriculum_win_threshold: float = 0.0
 
     # --- MCTS -----------------------------------------------------------------
     num_sims: int = 50

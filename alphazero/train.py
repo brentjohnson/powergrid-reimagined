@@ -49,6 +49,13 @@ def main() -> None:
     parser.add_argument("--curriculum-every", type=int, default=5)
     parser.add_argument("--curriculum-step", type=int, default=2)
     parser.add_argument(
+        "--curriculum-win-threshold",
+        type=float,
+        default=0.0,
+        help="Min win rate against eval bots required to advance the curriculum. "
+        "0 uses the original iter-based schedule.",
+    )
+    parser.add_argument(
         "--vs-bot-fraction",
         type=float,
         default=0.0,
@@ -81,6 +88,7 @@ def main() -> None:
         end_game_cities_target=args.end_game_cities or 17,
         end_game_cities_step=args.curriculum_step,
         curriculum_every=args.curriculum_every,
+        curriculum_win_threshold=args.curriculum_win_threshold,
         vs_bot_fraction=args.vs_bot_fraction,
         vs_bot_difficulty=args.vs_bot_difficulty,
         seed=args.seed,
