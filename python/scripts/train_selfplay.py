@@ -87,7 +87,7 @@ def main():
                         help="Freeze the current policy and hand it to the training envs "
                              "as the opponent every N total timesteps.")
     parser.add_argument("--bot-mix", type=float, default=0.0,
-                        help="Per-episode probability of facing 'normal' heuristic bots "
+                        help="Per-episode probability of facing 'hard' heuristic bots "
                              "instead of the policy snapshot (grounding/diversity knob).")
     parser.add_argument("--save-freq", type=int, default=50_000,
                         help="Save an intermediate checkpoint every N vec-env steps. "

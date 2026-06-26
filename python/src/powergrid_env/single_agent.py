@@ -83,7 +83,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         self.observation_space = spaces.Box(0.0, 1.0, (OBS_SIZE,), dtype=np.float32)
         self.action_space = spaces.Discrete(N_ACTIONS)
 
-        # Frozen-opponent self-play: probability that an episode uses "normal"
+        # Frozen-opponent self-play: probability that an episode uses "hard"
         # heuristic bots instead of the policy snapshot (grounding/diversity).
         self.bot_mix = bot_mix
         # Snapshot bytes (PGRLPOL1) for "policy" opponents; applied at reset.
@@ -119,7 +119,7 @@ class PowerGridSingleAgentEnv(gym.Env):
             if self._opponent_policy_bytes is None or (
                 self.bot_mix > 0.0 and self._seed_rng.random() < self.bot_mix
             ):
-                self._episode_difficulty = "normal"
+                self._episode_difficulty = "hard"
             else:
                 self.game.load_opponent_policy(self._opponent_policy_bytes)
 
