@@ -73,6 +73,8 @@ def main():
     parser.add_argument("--end-game-cities", type=int, default=None,
                         help="Play to this fixed end-game city trigger instead of the "
                              "rulebook number. Use the value the model was trained at.")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress per-game output; show only the summary.")
     args = parser.parse_args()
 
     env = PowerGridSingleAgentEnv(
@@ -133,15 +135,16 @@ def main():
                     plant_wins[plant] += 1
                 if stats["rank"] == args.num_players:
                     plant_lasts[plant] += 1
-        outcome = "WIN " if won else ("stall" if not terminated else "loss")
-        # winner_id is None both for non-terminated games and for the
-        # degenerate invalid-action termination (game never reached a real
-        # GameOver), so rank is meaningless in either case.
-        rank = f"{stats['rank']}/{args.num_players}" if winner_id is not None else " - "
-        print(f"game {g + 1:3d}/{args.games}: {outcome}  rank={rank}  "
-              f"cities={env.learner_cities:2d}  powered={stats['powered']:2d}  "
-              f"money={stats['money']:3d}  plants={stats['plants']}  "
-              f"round={stats['round']:2d}  steps={steps}")
+        if not args.quiet:
+            outcome = "WIN " if won else ("stall" if not terminated else "loss")
+            # winner_id is None both for non-terminated games and for the
+            # degenerate invalid-action termination (game never reached a real
+            # GameOver), so rank is meaningless in either case.
+            rank = f"{stats['rank']}/{args.num_players}" if winner_id is not None else " - "
+            print(f"game {g + 1:3d}/{args.games}: {outcome}  rank={rank}  "
+                  f"cities={env.learner_cities:2d}  powered={stats['powered']:2d}  "
+                  f"money={stats['money']:3d}  plants={stats['plants']}  "
+                  f"round={stats['round']:2d}  steps={steps}")
 
     n = args.games
     ordinal = ["1st", "2nd", "3rd"] + [f"{i}th" for i in range(4, args.num_players + 1)]

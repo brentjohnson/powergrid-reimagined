@@ -85,6 +85,8 @@ def main():
                              "stochastic: greedy pass-everything play can stall forever.")
     parser.add_argument("--max-steps", type=int, default=5000,
                         help="Per-game step cap; a game hitting it is dropped from rankings.")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress per-game output; show only the summary.")
     args = parser.parse_args()
 
     model = MaskablePPO.load(args.model, device=args.device)
@@ -107,7 +109,8 @@ def main():
                           args.max_steps)
         if not game.is_terminal():
             stalls += 1
-            print(f"game {g + 1:3d}/{args.games}: stalled after {steps} steps, dropped")
+            if not args.quiet:
+                print(f"game {g + 1:3d}/{args.games}: stalled after {steps} steps, dropped")
             continue
 
         ranked_games += 1
@@ -120,8 +123,9 @@ def main():
             capacity[diff] += s["capacity"]
             owned[diff] += s["cities"]
             parts.append(f"{diff}={s['rank']}({s['powered']}p)")
-        print(f"game {g + 1:3d}/{args.games}: steps={steps:4d}  "
-              + "  ".join(sorted(parts)))
+        if not args.quiet:
+            print(f"game {g + 1:3d}/{args.games}: steps={steps:4d}  "
+                  + "  ".join(sorted(parts)))
 
     print()
     print(f"model:  {args.model} (expert seat)")
