@@ -1,7 +1,9 @@
 """Training callbacks shared by the training scripts."""
 
+import glob
 import json
 import os
+import re
 
 import numpy as np
 from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
@@ -100,6 +102,136 @@ class OpponentSnapshotCallback(BaseCallback):
 
     def _on_rollout_end(self) -> None:
         self.logger.record("selfplay/snapshot_timesteps", self._last_snapshot_at)
+
+
+class LeagueSnapshotCallback(BaseCallback):
+    """Population-based self-play: keep a league of past policy snapshots and
+    sample opponents from it (AlphaStar-style), instead of only the latest
+    snapshot — pure latest-snapshot self-play can converge to echo-chamber
+    equilibria (see TRAINING-SUGGESTION.md / TRAINING-NEXT-STEPS.md).
+
+    Every ``snapshot_every`` timesteps the current policy is serialized to
+    ``league_dir/snap_<timesteps>.bin`` (PGRLPOL1) and the envs' opponent pool
+    is rebuilt via ``env_method("set_opponent_pool", ...)``:
+
+      - the latest snapshot, weight ``mix[0]``
+      - up to ``past_k`` uniformly sampled *older* snapshots sharing ``mix[1]``
+      - heuristic ``bot_difficulty`` bots, weight ``mix[2]``
+
+    Snapshots persist on disk, so a resumed run (--resume-from) reloads its
+    league on training start and continues where it left off.
+    """
+
+    def __init__(self, train_env, *, snapshot_every: int, league_dir: str,
+                 past_k: int = 4, mix: tuple[float, float, float] = (0.5, 0.3, 0.2),
+                 bot_difficulty: str = "hard", seed: int | None = None,
+                 verbose: int = 0):
+        super().__init__(verbose)
+        if snapshot_every < 1:
+            raise ValueError("snapshot_every must be >= 1")
+        if past_k < 0:
+            raise ValueError("past_k must be >= 0")
+        if len(mix) != 3 or any(w < 0 for w in mix) or sum(mix) <= 0:
+            raise ValueError("mix must be three non-negative weights summing > 0")
+        self.train_env = train_env
+        self.snapshot_every = snapshot_every
+        self.league_dir = league_dir
+        self.past_k = past_k
+        self.mix = tuple(float(w) for w in mix)
+        self.bot_difficulty = bot_difficulty
+        self._rng = np.random.default_rng(seed)
+        self._last_snapshot_at = 0
+        self._snapshots: list[tuple[int, str]] = []  # (timesteps, path), sorted
+
+    def _scan_league(self) -> None:
+        self._snapshots = sorted(
+            (int(m.group(1)), p)
+            for p in glob.glob(os.path.join(self.league_dir, "snap_*.bin"))
+            if (m := re.search(r"snap_(\d+)\.bin$", p))
+        )
+
+    def _build_pool(self) -> list[tuple[str, bytes | str, float]]:
+        p_latest, p_past, p_bots = self.mix
+        pool: list[tuple[str, bytes | str, float]] = []
+        latest_step, latest_path = self._snapshots[-1]
+        with open(latest_path, "rb") as f:
+            pool.append(("policy", f.read(), p_latest))
+        past = self._snapshots[:-1]
+        if past and self.past_k > 0 and p_past > 0:
+            picks = self._rng.choice(len(past), size=min(self.past_k, len(past)),
+                                     replace=False)
+            for i in picks:
+                with open(past[int(i)][1], "rb") as f:
+                    pool.append(("policy", f.read(), p_past / len(picks)))
+        if p_bots > 0:
+            pool.append(("bots", self.bot_difficulty, p_bots))
+        return pool
+
+    def _push(self) -> None:
+        from .export import policy_state_dict_to_bytes
+
+        os.makedirs(self.league_dir, exist_ok=True)
+        data = policy_state_dict_to_bytes(self.model.policy.state_dict())
+        path = os.path.join(self.league_dir, f"snap_{self.model.num_timesteps}.bin")
+        with open(path, "wb") as f:
+            f.write(data)
+        self._scan_league()
+        self.train_env.env_method("set_opponent_pool", self._build_pool())
+        self._last_snapshot_at = self.model.num_timesteps
+        if self.verbose:
+            print(f"League: snapshot at {self._last_snapshot_at:,} timesteps "
+                  f"({len(self._snapshots)} in league)")
+
+    def _on_training_start(self) -> None:
+        self._push()
+
+    def _on_step(self) -> bool:
+        if self.model.num_timesteps - self._last_snapshot_at >= self.snapshot_every:
+            self._push()
+        return True
+
+    def _on_rollout_end(self) -> None:
+        self.logger.record("league/size", len(self._snapshots))
+        self.logger.record("selfplay/snapshot_timesteps", self._last_snapshot_at)
+
+
+class ShapingAnnealCallback(BaseCallback):
+    """Anneal the powered-cities shaping bonus away over ``anneal_steps``
+    timesteps (linear 1.0 → 0.0, then stays 0), per TRAINING-SUGGESTION.md:
+    shaped rewards can teach the policy to optimize the wrong thing, so they
+    should only bootstrap. Scale is derived from ``num_timesteps``, so
+    --resume-from lands on the right value automatically.
+    """
+
+    def __init__(self, train_env, *, anneal_steps: int, verbose: int = 0):
+        super().__init__(verbose)
+        if anneal_steps < 1:
+            raise ValueError("anneal_steps must be >= 1")
+        self.train_env = train_env
+        self.anneal_steps = anneal_steps
+        self._current: float | None = None
+
+    def _scale_for(self, num_timesteps: int) -> float:
+        return max(0.0, 1.0 - num_timesteps / self.anneal_steps)
+
+    def _apply(self) -> None:
+        # Round so the env_method broadcast only happens ~100 times total.
+        scale = round(self._scale_for(self.model.num_timesteps), 2)
+        if scale != self._current:
+            self.train_env.env_method("set_shaping_scale", scale)
+            self._current = scale
+
+    def _on_training_start(self) -> None:
+        self._apply()
+        print(f"Shaping anneal: scale={self._current} "
+              f"(reaches 0 at {self.anneal_steps:,} timesteps)")
+
+    def _on_step(self) -> bool:
+        self._apply()
+        return True
+
+    def _on_rollout_end(self) -> None:
+        self.logger.record("shaping/scale", self._current)
 
 
 class EndGameCurriculumCallback(BaseCallback):

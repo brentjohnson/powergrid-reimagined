@@ -22,10 +22,11 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from powergrid_env import PowerGridSingleAgentEnv
-from powergrid_env.callbacks import PersistentBestEvalCallback
+from powergrid_env.callbacks import PersistentBestEvalCallback, ShapingAnnealCallback
 
 
-def make_env(args, seed: int, reward_shaping: bool, max_episode_steps: int | None = None):
+def make_env(args, seed: int, reward_shaping: bool, max_episode_steps: int | None = None,
+             terminal_reward: str = "winloss"):
     def _init():
         env = PowerGridSingleAgentEnv(
             num_players=args.num_players,
@@ -35,6 +36,7 @@ def make_env(args, seed: int, reward_shaping: bool, max_episode_steps: int | Non
             reward_shaping=reward_shaping,
             shaping_mode=args.shaping_mode,
             end_game_cities=args.end_game_cities,
+            terminal_reward=terminal_reward,
         )
         if max_episode_steps:
             # A policy that always passes can stall a game forever; truncate
@@ -74,6 +76,17 @@ def main():
                              "learner's own powered count (clean cold-start teacher); 'relative' "
                              "rewards the lead over the best opponent (aligned with winning, can "
                              "go negative). Bootstrap with absolute, fine-tune with relative.")
+    parser.add_argument("--anneal-shaping-steps", type=int, default=0,
+                        help="Linearly anneal the shaping bonus to zero over this many "
+                             "timesteps (shaping should bootstrap, not steer the final "
+                             "policy). 0 = constant shaping (old behaviour). The scale "
+                             "is derived from num_timesteps, so it resumes correctly.")
+    parser.add_argument("--terminal-reward", choices=["winloss", "placement"],
+                        default="winloss",
+                        help="Terminal reward. 'winloss' = +1/-1. 'placement' = final "
+                             "rank mapped onto [-1, +1] (4p: +1/+1/3/-1/3/-1) — denser "
+                             "signal, values 2nd over last. Eval is always winloss, so "
+                             "eval/mean_reward stays comparable.")
     parser.add_argument("--end-game-cities", type=int, default=None,
                         help="Play every game (training AND eval) to this fixed end-game "
                              "city trigger instead of the rulebook number. Eval scores at "
@@ -100,7 +113,9 @@ def main():
 
     os.makedirs(args.run_dir, exist_ok=True)
 
-    env_fns = [make_env(args, args.seed + i, args.reward_shaping) for i in range(args.num_envs)]
+    env_fns = [make_env(args, args.seed + i, args.reward_shaping,
+                        terminal_reward=args.terminal_reward)
+               for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
     if args.resume_from:
@@ -130,6 +145,9 @@ def main():
         )
 
     callbacks = []
+    if args.reward_shaping and args.anneal_shaping_steps > 0:
+        callbacks.append(ShapingAnnealCallback(
+            vec_env, anneal_steps=args.anneal_shaping_steps))
     if args.save_freq > 0:
         callbacks.append(CheckpointCallback(
             save_freq=args.save_freq,

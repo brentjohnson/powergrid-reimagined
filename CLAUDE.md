@@ -43,6 +43,7 @@ pytest tests/                                    # run Python tests
 python scripts/train_vs_bots.py                  # MaskablePPO vs Rust bots
 python scripts/train_selfplay.py                 # self-play (vs frozen snapshots of own policy)
 python scripts/train_selfplay.py --curriculum-start 3   # end-game-cities curriculum (trigger 3 → rulebook, +2 per --curriculum-every steps)
+python scripts/orchestrate.py                    # forever-training orchestrator: train → eval → adapt loop; state + reasoning journal in runs/orch/ (see TRAINING.md §8)
 python scripts/evaluate.py --model runs/vs_bots/best_model  # win-rate vs bots
 python scripts/run_report.py runs/selfplay           # training-run status: checkpoints, eval history, health flags
 python scripts/play_game.py --all-bots --render  # watch a rollout
@@ -79,8 +80,10 @@ assets/
   policies/expert.bin      # RL policy weights for the Expert bot, embedded at compile time
   policies/expert.golden.json  # torch reference logits for the Rust↔torch parity test
 python/                    # PettingZoo RL environment (see docs/rl-environment.md)
-  src/powergrid_env/       # Python package: AECEnv, encoding, policies
-  scripts/                 # training and rollout scripts
+  src/powergrid_env/       # Python package: AECEnv, encoding, policies, stats,
+                           #   callbacks (league snapshots, shaping anneal, curriculum,
+                           #   persistent best-eval), run_metrics (TensorBoard access)
+  scripts/                 # training and rollout scripts + orchestrate.py (forever loop)
   tests/                   # Python tests (encoding, parity, reseeding, random play)
   TRAINING.md              # step-by-step training runbook (start/resume/monitor)
   pyproject.toml           # hatchling build; maturin builds the Rust extension separately

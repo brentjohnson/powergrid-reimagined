@@ -36,22 +36,33 @@ from powergrid_env import PowerGridSingleAgentEnv
 from powergrid_env.callbacks import (
     RULEBOOK_END_GAME_CITIES,
     EndGameCurriculumCallback,
+    LeagueSnapshotCallback,
     OpponentSnapshotCallback,
     PersistentBestEvalCallback,
+    ShapingAnnealCallback,
 )
 from powergrid_env.export import policy_state_dict_to_bytes
 
 
 def make_env(num_players: int, seed: int, reward_shaping: bool,
              shaping_mode: str = "absolute",
-             end_game_cities: int | None = None, bot_mix: float = 0.0):
+             end_game_cities: int | None = None, bot_mix: float = 0.0,
+             terminal_reward: str = "winloss"):
     def _init():
         return PowerGridSingleAgentEnv(
             num_players=num_players, bot_difficulty="policy", seed=seed,
             reward_shaping=reward_shaping, shaping_mode=shaping_mode,
             end_game_cities=end_game_cities, bot_mix=bot_mix,
+            terminal_reward=terminal_reward,
         )
     return _init
+
+
+def league_mix(value: str) -> tuple[float, float, float]:
+    parts = tuple(float(x) for x in value.split(","))
+    if len(parts) != 3 or any(w < 0 for w in parts) or sum(parts) <= 0:
+        raise ValueError(f"expected three non-negative weights, got {value!r}")
+    return parts
 
 
 def make_eval_env(num_players: int, seed: int, end_game_cities: int | None = None):
@@ -88,7 +99,34 @@ def main():
                              "as the opponent every N total timesteps.")
     parser.add_argument("--bot-mix", type=float, default=0.0,
                         help="Per-episode probability of facing 'hard' heuristic bots "
-                             "instead of the policy snapshot (grounding/diversity knob).")
+                             "instead of the policy snapshot (grounding/diversity knob). "
+                             "Only used with --no-league; the league mix subsumes it.")
+    parser.add_argument("--league", action=argparse.BooleanOptionalAction, default=True,
+                        help="Population-based opponents: sample each episode's opponent "
+                             "from a league of past snapshots + heuristic bots instead of "
+                             "only the latest snapshot (avoids the self-play echo "
+                             "chamber). Snapshots persist in <run-dir>/league/ and are "
+                             "reloaded on --resume-from. --no-league restores the old "
+                             "latest-snapshot-only behaviour.")
+    parser.add_argument("--league-past-k", type=int, default=4,
+                        help="How many past snapshots (besides the latest) are in the "
+                             "opponent pool at a time, resampled at every snapshot.")
+    parser.add_argument("--league-mix", type=league_mix, default=(0.5, 0.3, 0.2),
+                        metavar="LATEST,PAST,BOTS",
+                        help="Sampling weights for the opponent pool: latest snapshot, "
+                             "past snapshots (shared), heuristic hard bots. "
+                             "Default 0.5,0.3,0.2.")
+    parser.add_argument("--anneal-shaping-steps", type=int, default=0,
+                        help="Linearly anneal the shaping bonus to zero over this many "
+                             "timesteps (shaping should bootstrap, not steer the final "
+                             "policy). 0 = constant shaping (old behaviour). The scale "
+                             "is derived from num_timesteps, so it resumes correctly.")
+    parser.add_argument("--terminal-reward", choices=["winloss", "placement"],
+                        default="winloss",
+                        help="Terminal reward. 'winloss' = +1/-1. 'placement' = final "
+                             "rank mapped onto [-1, +1] (4p: +1/+1/3/-1/3/-1) — denser "
+                             "signal, values 2nd over last. Eval is always winloss, so "
+                             "eval/mean_reward stays comparable.")
     parser.add_argument("--save-freq", type=int, default=50_000,
                         help="Save an intermediate checkpoint every N vec-env steps. "
                              "0 disables.")
@@ -149,7 +187,8 @@ def main():
 
     env_fns = [make_env(args.num_players, args.seed + i, args.reward_shaping,
                         shaping_mode=args.shaping_mode,
-                        end_game_cities=args.end_game_cities, bot_mix=args.bot_mix)
+                        end_game_cities=args.end_game_cities, bot_mix=args.bot_mix,
+                        terminal_reward=args.terminal_reward)
                for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
@@ -191,8 +230,22 @@ def main():
         "set_opponent_policy", policy_state_dict_to_bytes(model.policy.state_dict())
     )
 
-    callbacks = [OpponentSnapshotCallback(vec_env, snapshot_every=args.snapshot_every,
-                                          verbose=1)]
+    if args.league:
+        callbacks = [LeagueSnapshotCallback(
+            vec_env,
+            snapshot_every=args.snapshot_every,
+            league_dir=os.path.join(args.run_dir, "league"),
+            past_k=args.league_past_k,
+            mix=args.league_mix,
+            seed=args.seed,
+            verbose=1,
+        )]
+    else:
+        callbacks = [OpponentSnapshotCallback(vec_env, snapshot_every=args.snapshot_every,
+                                              verbose=1)]
+    if args.reward_shaping and args.anneal_shaping_steps > 0:
+        callbacks.append(ShapingAnnealCallback(
+            vec_env, anneal_steps=args.anneal_shaping_steps))
     if args.save_freq > 0:
         callbacks.append(CheckpointCallback(
             save_freq=args.save_freq,

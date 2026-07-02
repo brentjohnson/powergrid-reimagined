@@ -71,8 +71,10 @@ Key arguments (defaults in parentheses):
 | `--eval-freq` (25 000) | Win-rate eval vs bots every N steps *per env*; `0` disables |
 | `--eval-episodes` (20) | Games played per eval pass |
 | `--reward-shaping` (on) | Per-round bonus ∝ cities powered, granted when the learner's powering resolves — analogous to income, so it values plants, resources, and cities in the game's own balance. Disable with `--no-reward-shaping` for pure win/loss reward |
+| `--anneal-shaping-steps` (0) | Linearly anneal the shaping bonus to zero over this many timesteps — shaping should bootstrap, not steer the final policy. 0 = constant shaping. Resume-safe (scale derives from the step counter) |
+| `--terminal-reward` (winloss) | `winloss` = +1/−1. `placement` = final rank mapped onto [−1, +1] (4p: +1 / +⅓ / −⅓ / −1) — denser signal that values 2nd place over last. Eval always scores winloss, so `eval/mean_reward` stays comparable |
 | `--end-game-cities` | Pin the end-game city trigger to a fixed value for training and eval (omit to use the rulebook number) |
-| `--ent-coef` (0.01) | PPO entropy bonus coefficient; re-applied on `--resume-from` to prevent policy collapse |
+| `--ent-coef` (0.03) | PPO entropy bonus coefficient; re-applied on `--resume-from` to prevent policy collapse |
 
 While running, SB3 prints a table every iteration. The numbers that matter:
 `rollout/ep_rew_mean` (should rise toward +1), `fps`, and after each eval pass
@@ -97,12 +99,17 @@ last state, which may be worse than the best intermediate policy.
 
 ## 3. Self-play training
 
-Frozen-opponent self-play: the learner plays one seat; the other seats are
-driven by a frozen snapshot of its own policy, run natively in Rust. Every
-`--snapshot-every` timesteps the current weights are frozen and handed to the
-envs (taking effect at each env's next reset), so the opposition improves
-with the learner. Use this after a vs-bots policy plateaus, or to train
-without bot bias.
+League (population-based) self-play: the learner plays one seat; the other
+seats are driven by an opponent sampled *per episode* from a league of frozen
+snapshots of its own policy (run natively in Rust) plus heuristic hard bots.
+Every `--snapshot-every` timesteps the current weights are frozen into
+`<run-dir>/league/snap_<steps>.bin` and the envs' pool is rebuilt: the latest
+snapshot, a few random older snapshots, and hard bots, mixed by
+`--league-mix`. Sampling opponents from history instead of only the latest
+snapshot avoids the self-play echo chamber (two near-identical policies
+reinforcing each other's habits). Snapshots persist on disk, so a resumed run
+reloads its league. `--no-league` restores plain frozen-opponent self-play
+(latest snapshot only, optionally mixed with bots via `--bot-mix`).
 
 ```bash
 .venv/bin/python scripts/train_selfplay.py \
@@ -128,8 +135,11 @@ Key self-play-only arguments (other flags match vs-bots — `--learner-seat` and
 
 | Flag | Meaning |
 |---|---|
-| `--snapshot-every` (100 000) | Freeze the current policy and update the envs' opponent every N total timesteps |
-| `--bot-mix` (0.0) | Per-episode probability of replacing the snapshot with normal heuristic bots — useful grounding against self-play degeneracies |
+| `--snapshot-every` (100 000) | Freeze the current policy into the league (and refresh the envs' pool) every N total timesteps |
+| `--league` (on) | Sample opponents from the snapshot league + hard bots; `--no-league` = latest snapshot only |
+| `--league-past-k` (4) | How many older snapshots are in the pool at a time (resampled at every snapshot) |
+| `--league-mix` (0.5,0.3,0.2) | Pool weights: latest snapshot, past snapshots (shared), heuristic hard bots |
+| `--bot-mix` (0.0) | `--no-league` only: per-episode probability of hard heuristic bots instead of the snapshot |
 | `--eval-episodes` (20) | Games per eval pass (eval is always vs normal bots, unshaped) |
 | `--end-game-cities` | Pin the end-game trigger (mutually exclusive with `--curriculum-start`) |
 
@@ -396,7 +406,82 @@ cargo test -p powergrid-bot-strategy                  # parity check
 
 ---
 
-## 8. Troubleshooting
+## 8. Orchestrated forever-training (orchestrate.py)
+
+For hands-off training, the orchestrator runs the train → evaluate → adapt
+loop indefinitely:
+
+```bash
+.venv/bin/python scripts/orchestrate.py                # run forever (Ctrl-C safe)
+.venv/bin/python scripts/orchestrate.py --once         # one segment+eval cycle
+```
+
+It manages a small population of runs ("lineages" — by default `a-league`,
+width 128, and `b-wide`, width 256 with a bots-heavier league mix), each
+advanced one *segment* (`--segment-steps`, default 15M) at a time as a
+`train_selfplay.py` subprocess. After each segment the newest model plays
+`--eval-games` (200) offline games vs normal bots, and the next segment's
+hyperparameters are chosen by the triage rules from
+[TRAINING-NEXT-STEPS.md](TRAINING-NEXT-STEPS.md):
+
+1. **Never won a game** → archive the run and restart the lineage with the
+   end-game-cities curriculum (`--curriculum-start 3`).
+2. **Entropy collapse** (< 0.2 nats) → step ent-coef up 0.03 → 0.1 → 0.15
+   (and back down once entropy recovers past 0.9).
+3. **Eval flat for 3 segments** → flip the league bots weight (raise it on a
+   snapshot-heavy mix, drop it on a bot-heavy mix).
+4. **Regression** (eval > 0.2 reward below the lineage best) → resume from
+   `best_model`; if still regressed, cross-pollinate from the best *other*
+   lineage's best_model.
+5. **Flat for 100M+ steps after 200M lived** → retire the lineage and spawn a
+   mutated replacement (flipped width, new seed, reversed mix).
+
+Everything lives under `--orch-dir` (default `runs/orch/`):
+
+```
+runs/orch/
+├── state.json          machine state — lineages, knobs, history, pids
+├── journal.md          every decision with its reasoning + eval results
+├── best/<lineage>/     copy of each lineage's record-setting best_model.zip
+└── <lineage>/          a normal training run dir (run_report.py works on it)
+    └── logs/           per-segment train/eval logs
+```
+
+Console output is deliberately quiet: one line per decision/result plus a
+live per-lineage progress bar. The reasoning record is `journal.md`.
+
+**Resumability:** kill it (Ctrl-C/SIGTERM) any time — training subprocesses
+keep running, state is saved. On restart it re-attaches to live subprocesses
+and otherwise resumes each lineage from its newest checkpoint. Old
+checkpoints and league snapshots are pruned automatically (recent + sparse
+history kept).
+
+CPU allocation is dynamic: each training subprocess gets
+`os.cpu_count() / active lineages` OMP threads. `--envs-per-lineage`
+(default 8) controls env parallelism per subprocess.
+
+### TRAINING-SUGGESTION.md status
+
+Where each suggestion from [TRAINING-SUGGESTION.md](../TRAINING-SUGGESTION.md)
+landed:
+
+- **Self-play PPO, shared net, masking, flat encoding, scripted bots** — long
+  since implemented (this document).
+- **League / population-based opponents** — `--league` (default on) and the
+  orchestrator's multi-lineage population + cross-pollination.
+- **Shaping annealed away** — `--anneal-shaping-steps`.
+- **Placement-based reward** — `--terminal-reward placement`.
+- **Factored / auto-regressive action heads** — already satisfied by the
+  action encoding: cities are built one action at a time under legality
+  masking, and auction bidding is a single +1/pass action (since 2026-06-24),
+  so there is no composite action left to factor.
+- **GNN map encoder** — consciously skipped: the in-game Expert bot's Rust
+  inference (`PGRLPOL1`) only runs a fixed two-hidden-layer MLP, and a policy
+  that cannot be exported into the game is not useful here.
+
+---
+
+## 9. Troubleshooting
 
 **`KeyError: 'gas'` (or similar) in encoding, or parity test failures** —
 the compiled extension is stale. Run `make develop`, then `make test`.

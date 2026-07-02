@@ -16,8 +16,7 @@ import os
 import re
 import sys
 
-import numpy as np
-from tensorboard.backend.event_processing import event_accumulator
+from powergrid_env.run_metrics import load_tb_series, tb_dirs
 
 # Tags shown in the training-health trend table: (tag, display name, transform).
 TREND_TAGS = [
@@ -123,17 +122,6 @@ def report_process(run_dir: str) -> None:
         print("not running")
 
 
-def newest_tb_dir(run_dir: str) -> str | None:
-    subdirs = [d for d in glob.glob(os.path.join(run_dir, "tb", "*")) if os.path.isdir(d)]
-    if not subdirs:
-        return None
-    subdirs.sort(key=os.path.getmtime)
-    if len(subdirs) > 1:
-        print(f"(multiple tb runs: {', '.join(os.path.basename(d) for d in subdirs)}; "
-              f"reporting the newest)")
-    return subdirs[-1]
-
-
 def trend_points(values: list) -> list:
     """First / 25% / 50% / 75% / last samples of a scalar series."""
     n = len(values)
@@ -144,14 +132,15 @@ def trend_points(values: list) -> list:
 def report_metrics(run_dir: str, last_n: int, all_tags: bool) -> dict:
     """Print metric tables; return the series needed by the health flags."""
     print("\n== Metrics ==")
-    tb_dir = newest_tb_dir(run_dir)
-    if tb_dir is None:
+    dirs = tb_dirs(run_dir)
+    if not dirs:
         print("no tb/ event files")
         return {}
-    ea = event_accumulator.EventAccumulator(tb_dir, size_guidance={"scalars": 0})
-    ea.Reload()
-    tags = set(ea.Tags()["scalars"])
-    series = {t: ea.Scalars(t) for t in tags}
+    if len(dirs) > 1:
+        print(f"(multiple tb runs: {', '.join(os.path.basename(d) for d in dirs)}; "
+              f"reporting the newest)")
+    series = load_tb_series(run_dir)
+    tags = set(series)
 
     evals = series.get("eval/mean_reward", [])
     if evals:
