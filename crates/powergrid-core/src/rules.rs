@@ -1189,7 +1189,14 @@ fn apply_power_result(
         player.resources = best_resources;
     }
 
-    let income = income_for(powered);
+    // In the final round (someone already built enough cities to trigger
+    // game end), players still power cities to settle the win condition but
+    // do not collect Bureaucracy income.
+    let income = if end_game_triggered(state) {
+        0
+    } else {
+        income_for(powered)
+    };
     let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
     player.last_cities_powered = powered;
     player.money += income;
@@ -1329,13 +1336,17 @@ fn end_of_round(state: &mut GameState) {
     state.log(format!("Round {} begins", state.round));
 }
 
-fn determine_winner(state: &GameState) -> Option<PlayerId> {
-    // Check if any player hit the end-game city threshold.
-    let triggered = state
+/// True once any player has built enough cities to trigger the final round.
+/// Cities are never un-built, so this is stable for the rest of the game.
+fn end_game_triggered(state: &GameState) -> bool {
+    state
         .players
         .iter()
-        .any(|p| state.player_city_count(p.id) >= state.end_game_cities as usize);
-    if !triggered {
+        .any(|p| state.player_city_count(p.id) >= state.end_game_cities as usize)
+}
+
+fn determine_winner(state: &GameState) -> Option<PlayerId> {
+    if !end_game_triggered(state) {
         return None;
     }
 
@@ -2658,6 +2669,73 @@ mod tests {
             player.last_cities_powered, 2,
             "cities powered should be capped at 2"
         );
+    }
+
+    /// Once someone has built enough cities to trigger the end of the game,
+    /// the final Bureaucracy phase still records cities powered (needed to
+    /// settle the win condition) but pays no income to anyone.
+    #[test]
+    fn test_final_bureaucracy_pays_no_income() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        // Force the end-game trigger to a reachable threshold and give p1
+        // enough cities to hit it.
+        state.end_game_cities = 2;
+        give_player_cities(&mut state, p1, &["a", "b"]);
+        give_player_cities(&mut state, p2, &["c"]);
+
+        let starting_money_p1 = state.player(p1).unwrap().money;
+        let starting_money_p2 = state.player(p2).unwrap().money;
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1, p2],
+        };
+
+        for (id, number) in [(p1, 5u8), (p2, 6u8)] {
+            let player = state.player_mut(id).unwrap();
+            player.plants = vec![PowerPlant {
+                number,
+                kind: PlantKind::Coal,
+                cost: 1,
+                cities: 1,
+            }];
+            player.resources = PlayerResources {
+                coal: 1,
+                oil: 0,
+                gas: 0,
+                uranium: 0,
+            };
+        }
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5],
+            },
+        )
+        .unwrap();
+        apply_action(
+            &mut state,
+            p2,
+            Action::PowerCities {
+                plant_numbers: vec![6],
+            },
+        )
+        .unwrap();
+
+        // Cities powered are still tracked (used to settle the win condition)...
+        assert_eq!(state.player(p1).unwrap().last_cities_powered, 1);
+        assert_eq!(state.player(p2).unwrap().last_cities_powered, 1);
+        // ...but no income was paid to either player.
+        assert_eq!(state.player(p1).unwrap().money, starting_money_p1);
+        assert_eq!(state.player(p2).unwrap().money, starting_money_p2);
+
+        // The round ends with the game over, decided by cities powered.
+        assert!(matches!(state.phase, Phase::GameOver { winner } if winner == p1));
     }
 
     /// Player explicitly skips a powerable plant to conserve its fuel.
