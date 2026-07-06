@@ -7,6 +7,8 @@ import os
 import time
 from collections import deque
 
+from torch.utils.tensorboard import SummaryWriter
+
 from . import arena
 from .config import AZConfig
 from .network import NNetWrapper
@@ -40,6 +42,9 @@ class Coach:
         if not os.path.exists(self.metrics_path):
             with open(self.metrics_path, "w", newline="") as f:
                 csv.DictWriter(f, fieldnames=METRICS_FIELDS).writeheader()
+        # TensorBoard event files live alongside metrics.csv in the run dir, so
+        # `tensorboard --logdir alphazero/runs` picks up every run as a series.
+        self.tb = SummaryWriter(log_dir=os.path.join(cfg.run_dir, "tb"))
 
     def run_iteration(self, it: int) -> dict:
         """Run one self-play -> train -> eval -> checkpoint iteration
@@ -131,6 +136,7 @@ class Coach:
             m = self.run_iteration(it)
             with open(self.metrics_path, "a", newline="") as f:
                 csv.DictWriter(f, fieldnames=METRICS_FIELDS).writerow(m)
+            self._log_tb(m)
             print(
                 f"[iter {m['iter']:4d}] end_game_cities={m['end_game_cities']!s:>4}  "
                 f"examples+={m['new_examples']:5d} (buf={m['buffer_size']}, "
@@ -139,3 +145,15 @@ class Coach:
                 f"win_rate={m['win_rate']:.1%} (best={m['best_win_rate']:.1%})  "
                 f"{m['elapsed_s']:.1f}s"
             )
+        self.tb.close()
+
+    def _log_tb(self, m: dict) -> None:
+        """Mirror the numeric metrics row to TensorBoard scalars, keyed by iter."""
+        it = m["iter"]
+        for field in METRICS_FIELDS:
+            if field == "iter":
+                continue
+            value = m[field]
+            if value is None:
+                continue
+            self.tb.add_scalar(field, float(value), it)

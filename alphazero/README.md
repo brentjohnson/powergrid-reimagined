@@ -24,30 +24,33 @@ torch via the `train` extras):
 ```bash
 cd python
 make develop   # builds the Rust extension + installs powergrid_env, if not already done
+cd ..
 ```
 
-All commands below are run from the **repo root**, using that venv's
-interpreter, as a module (the package isn't pip-installed):
+Then activate the venv so `python` resolves to that interpreter. Every command
+below is run from the **repo root** with the venv active, as a module (the
+package isn't pip-installed):
 
 ```bash
-python/.venv/bin/python -m alphazero.train --iters 1 --episodes 2 --sims 10 --end-game-cities 5
+. python/.venv/bin/activate
+python -m alphazero.train --iters 1 --episodes 2 --sims 10 --end-game-cities 5
 ```
 
 ## Training
 
 ```bash
 # Smoke test: tiny, fast, just exercises the full loop.
-python/.venv/bin/python -m alphazero.train --iters 1 --episodes 2 --sims 10 --end-game-cities 5
+python -m alphazero.train --iters 1 --episodes 2 --sims 10 --end-game-cities 5
 
 # Real run: curriculum from a short trigger up to the rulebook 17, ramping
 # every 5 iterations.
-python/.venv/bin/python -m alphazero.train \
+python -m alphazero.train \
     --iters 200 --episodes 25 --sims 50 \
     --curriculum-start 5 --curriculum-step 2 --curriculum-every 5 \
     --run-dir alphazero/runs/curriculum1
 
 # Resume from a checkpoint.
-python/.venv/bin/python -m alphazero.train --resume alphazero/runs/curriculum1/best.pt \
+python -m alphazero.train --resume alphazero/runs/curriculum1/best.pt \
     --run-dir alphazero/runs/curriculum1 ...
 ```
 
@@ -59,6 +62,21 @@ Rust heuristic bots (`python/scripts/evaluate.py`'s methodology), checkpoint to
 Checkpoints/metrics live under `alphazero/runs/` (gitignored — same convention
 as `python/runs/`).
 
+## Monitoring (TensorBoard)
+
+Every iteration's metrics (`win_rate`, `best_win_rate`, `policy_loss`,
+`value_loss`, `end_game_cities`, buffer/example counts, `elapsed_s`) are written
+both to `<run-dir>/metrics.csv` and to TensorBoard event files under
+`<run-dir>/tb/`. Point TensorBoard at the top-level `runs/` dir to see every run
+side by side:
+
+```bash
+tensorboard --logdir alphazero/runs
+```
+
+Then open http://localhost:6006. Each run appears as its own series (named by
+its run directory).
+
 ## Export to the Rust Expert bot
 
 The policy path (`PGNet.policy_state_dict()`) is laid out under the same key
@@ -66,7 +84,7 @@ names sb3's MaskablePPO uses, so it serializes to the existing PGRLPOL1 binary
 format with **no Rust changes**:
 
 ```bash
-python/.venv/bin/python -m alphazero.export \
+python -m alphazero.export \
     --checkpoint alphazero/runs/curriculum1/best.pt \
     --out assets/policies/expert.bin \
     --golden assets/policies/expert.golden.json
@@ -79,7 +97,7 @@ weights match. The value head is training-only and is never exported.
 ## Tests
 
 ```bash
-python/.venv/bin/python -m pytest alphazero/tests -v
+python -m pytest alphazero/tests -v
 ```
 
 ## Module map
