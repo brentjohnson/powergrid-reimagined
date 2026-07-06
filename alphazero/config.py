@@ -51,6 +51,12 @@ class AZConfig:
     eval_games: int = 20
     eval_bot_difficulty: str = "normal"
     run_dir: str = "alphazero/runs/default"
+    # How often (in iterations) to run the full benchmark suite (win rate vs
+    # each of easy/normal/hard + fixed-anchor Elo + strategic eval stats —
+    # see `arena.benchmark_suite`). Always runs on iter 1. Costs
+    # `eval_games * 3` extra games per run, so this doesn't run every
+    # iteration by default.
+    benchmark_every: int = 5
 
     # --- Anchor episodes --------------------------------------------------------
     # Fraction of each iteration's episodes played as MCTS-learner vs

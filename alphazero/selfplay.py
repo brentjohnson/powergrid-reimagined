@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import metrics
 from .config import AZConfig
 from .game import PowerGridGame, to_relative_vector
 from .mcts import MCTS
@@ -31,11 +32,13 @@ def curriculum_end_game_cities(cfg: AZConfig, iteration: int) -> int | None:
 
 def play_episode(
     nnet: NNetWrapper, cfg: AZConfig, seed: int, end_game_cities: int | None
-) -> tuple[list[Example], dict[str, float] | None]:
-    """Play one full self-play game. Returns `(examples, outcome)`. If the
-    game exceeds `cfg.max_moves` without finishing, the episode is aborted —
-    `examples` is empty and `outcome` is `None` — rather than mislabeling
-    unterminated training data."""
+) -> tuple[list[Example], dict[str, float] | None, dict | None]:
+    """Play one full self-play game. Returns `(examples, outcome, stats)`,
+    where `stats` is `metrics.game_stats` for the winner (describes the
+    quality of this self-play game: how efficiently it ended). If the game
+    exceeds `cfg.max_moves` without finishing, the episode is aborted —
+    `examples` is empty, `outcome` and `stats` are `None` — rather than
+    mislabeling unterminated training data."""
     game = PowerGridGame(
         seed=seed, num_players=cfg.num_players, end_game_cities=end_game_cities
     )
@@ -45,7 +48,7 @@ def play_episode(
     move_idx = 0
     while not game.is_terminal():
         if move_idx >= cfg.max_moves:
-            return [], None
+            return [], None, None
         temp = 1.0 if move_idx < cfg.temp_threshold else 0.0
         pi = mcts.get_action_probs(game, temp=temp, add_noise=True)
         history.append((game.observation(), game.action_mask(), pi, game.current_player()))
@@ -62,7 +65,8 @@ def play_episode(
         (obs, mask, pi, to_relative_vector(player_ids, to_move, outcome))
         for obs, mask, pi, to_move in history
     ]
-    return examples, outcome
+    stats = metrics.game_stats(game, game.winner())
+    return examples, outcome, stats
 
 
 def play_episode_vs_bots(
@@ -71,10 +75,12 @@ def play_episode_vs_bots(
     seed: int,
     end_game_cities: int | None,
     difficulty: str,
-) -> tuple[list[Example], dict[str, float] | None]:
+) -> tuple[list[Example], dict[str, float] | None, dict | None]:
     """Like `play_episode`, but only one seat (the learner) is driven by
     MCTS; the rest are driven by the Rust `difficulty` heuristic bot via
     `advance_bots`. Only the learner's turns are recorded as examples.
+    Returns `(examples, outcome, stats)` — `stats` is `metrics.game_stats`
+    for the winner, same as `play_episode`.
 
     Pure self-play can drift: the net only ever sees states its own (possibly
     still-weak) play reaches, which can diverge from the competent-opponent
@@ -88,12 +94,12 @@ def play_episode_vs_bots(
     history: list[tuple[np.ndarray, np.ndarray, np.ndarray, str]] = []
 
     if game.advance_bots(learner, difficulty):
-        return [], None
+        return [], None, None
 
     move_idx = 0
     while not game.is_terminal():
         if move_idx >= cfg.max_moves:
-            return [], None
+            return [], None, None
         temp = 1.0 if move_idx < cfg.temp_threshold else 0.0
         pi = mcts.get_action_probs(game, temp=temp, add_noise=True)
         history.append((game.observation(), game.action_mask(), pi, game.current_player()))
@@ -111,4 +117,5 @@ def play_episode_vs_bots(
         (obs, mask, pi, to_relative_vector(player_ids, to_move, outcome))
         for obs, mask, pi, to_move in history
     ]
-    return examples, outcome
+    stats = metrics.game_stats(game, game.winner())
+    return examples, outcome, stats

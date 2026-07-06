@@ -35,6 +35,14 @@ def main() -> None:
         "--eval-bot-difficulty", default="normal", choices=["easy", "normal", "hard"]
     )
     parser.add_argument(
+        "--benchmark-every",
+        type=int,
+        default=5,
+        help="Run the full benchmark suite (win rate vs easy/normal/hard + "
+        "fixed-anchor Elo + strategic eval stats) every N iterations "
+        "(always runs on iter 1). Costs eval_games*3 extra games per run.",
+    )
+    parser.add_argument(
         "--end-game-cities",
         type=int,
         default=None,
@@ -84,6 +92,7 @@ def main() -> None:
         episodes_per_iter=args.episodes,
         eval_games=args.eval_games,
         eval_bot_difficulty=args.eval_bot_difficulty,
+        benchmark_every=args.benchmark_every,
         end_game_cities_start=args.curriculum_start,
         end_game_cities_target=args.end_game_cities or 17,
         end_game_cities_step=args.curriculum_step,

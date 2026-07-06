@@ -12,6 +12,8 @@ cheats, only the search does.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import powergrid_py as pg
 from powergrid_env.constants import COLORS
@@ -81,6 +83,14 @@ class PowerGridGame:
         winner = self.winner()
         assert winner is not None, "outcome() requires a terminal game"
         return {pid: (1.0 if pid == winner else -1.0) for pid in self._player_ids}
+
+    def state(self, viewer: str | None = None) -> dict:
+        """The full `GameStateView` as a dict (money, plants, resources,
+        city_owners, round/step, market, ...) — see `state.rs::GameStateView`.
+        Opponent money is zeroed unless `viewer` is that player, EXCEPT once
+        the game is over, when every player's real money is included. Used by
+        `metrics.py` to compute strategic stats from a terminal game."""
+        return json.loads(self._game.state_json(viewer))
 
     # -- heuristic-bot driving (eval / fallback) -------------------------------
     def advance_bots(self, learner: str, difficulty: str) -> bool:
