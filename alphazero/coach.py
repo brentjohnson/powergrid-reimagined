@@ -1,18 +1,34 @@
-"""AlphaZero training loop: self-play -> train -> eval -> checkpoint, AZG-style."""
+"""AlphaZero training loop: self-play -> train -> eval -> checkpoint, AZG-style.
+
+Self-play episodes are farmed out to a `multiprocessing.Pool` of
+`cfg.num_workers` workers (or run in-process when `num_workers <= 1`). The
+replay buffer is a *window* of the most recent `cfg.buffer_iters` iterations'
+examples (one block per iteration); each iteration trains a fixed budget of
+`cfg.train_batches` minibatches sampled uniformly from that window, so training
+stays roughly on-policy instead of churning on stale targets.
+
+Run bookkeeping (`last_iter`, `best_win_rate`, `current_egc`) is persisted to
+`<run-dir>/coach_state.json` after every iteration so a resumed run continues
+its iteration numbering and can't clobber a better `best.pt` with a fresh 0%.
+"""
 
 from __future__ import annotations
 
 import csv
+import glob
+import json
 import os
+import random
 import time
 from collections import deque
+from multiprocessing import get_context
 
 from torch.utils.tensorboard import SummaryWriter
 
-from . import arena
+from . import arena, selfplay
 from .config import AZConfig
 from .network import NNetWrapper
-from .selfplay import Example, play_episode, play_episode_vs_bots
+from .selfplay import Example, play_episode, play_episode_vs_bots, play_episode_vs_net
 
 METRICS_FIELDS = [
     "iter",
@@ -73,56 +89,182 @@ TB_TAGS = {
     "value_loss": "loss/value",
 }
 
+STATE_FILE = "coach_state.json"
+
 
 class Coach:
-    def __init__(self, cfg: AZConfig):
+    def __init__(self, cfg: AZConfig, resume_path: str | None = None):
         self.cfg = cfg
-        self.nnet = NNetWrapper(cfg)
-        self.buffer: deque[Example] = deque(maxlen=cfg.buffer_size)
-        self.best_win_rate = -1.0
-        # Curriculum state: current end_game_cities trigger (None = no curriculum).
-        self.current_egc: int | None = cfg.end_game_cities_start
         os.makedirs(cfg.run_dir, exist_ok=True)
         self.metrics_path = os.path.join(cfg.run_dir, "metrics.csv")
-        if not os.path.exists(self.metrics_path):
+        self.state_path = os.path.join(cfg.run_dir, STATE_FILE)
+        # One deque block per iteration; the window keeps `buffer_iters` of them.
+        self.buffer: deque[list[Example]] = deque(maxlen=cfg.buffer_iters)
+
+        # Resume/continuation bookkeeping is driven by coach_state.json in the
+        # run dir (independent of `resume_path`, which only controls *weight*
+        # initialization and may point at a checkpoint in a different dir — e.g.
+        # a behavior-cloning warm start).
+        prev = self._load_state()
+        if prev is not None:
+            continuation = True
+            self.start_iter = prev["last_iter"] + 1
+            self.best_win_rate = prev["best_win_rate"]
+            self.current_egc = prev["current_egc"]
+        else:
+            self._guard_nonempty_run_dir()
+            continuation = False
+            self.start_iter = 1
+            self.best_win_rate = -1.0
+            self.current_egc = cfg.end_game_cities_start
+
+        # Build the network: explicit resume path wins; otherwise a continuation
+        # loads the run's latest checkpoint; otherwise a fresh net.
+        if resume_path:
+            self.nnet = NNetWrapper.load(resume_path, device=cfg.device, cfg=cfg)
+        elif continuation:
+            latest = os.path.join(cfg.run_dir, f"iter_{prev['last_iter']:04d}.pt")
+            if not os.path.exists(latest):
+                latest = os.path.join(cfg.run_dir, "best.pt")
+            self.nnet = NNetWrapper.load(latest, device=cfg.device, cfg=cfg)
+        else:
+            self.nnet = NNetWrapper(cfg)
+
+        if not continuation and not os.path.exists(self.metrics_path):
             with open(self.metrics_path, "w", newline="") as f:
                 csv.DictWriter(f, fieldnames=METRICS_FIELDS).writeheader()
         # TensorBoard event files live alongside metrics.csv in the run dir, so
         # `tensorboard --logdir alphazero/runs` picks up every run as a series.
         self.tb = SummaryWriter(log_dir=os.path.join(cfg.run_dir, "tb"))
 
+    # -- resume / run-dir hygiene ------------------------------------------------
+
+    def _load_state(self) -> dict | None:
+        if not os.path.exists(self.state_path):
+            return None
+        with open(self.state_path) as f:
+            return json.load(f)
+
+    def _save_state(self, last_iter: int) -> None:
+        with open(self.state_path, "w") as f:
+            json.dump(
+                {
+                    "last_iter": last_iter,
+                    "best_win_rate": self.best_win_rate,
+                    "current_egc": self.current_egc,
+                },
+                f,
+            )
+
+    def _guard_nonempty_run_dir(self) -> None:
+        """A fresh run (no coach_state.json) must not scribble over a previous
+        run's checkpoints/metrics — the exact accident that interleaved the old
+        `runs/curriculum` segments. Refuse and point the user elsewhere."""
+        clutter = glob.glob(os.path.join(self.cfg.run_dir, "iter_*.pt"))
+        if clutter or os.path.exists(self.metrics_path):
+            raise SystemExit(
+                f"Run dir {self.cfg.run_dir!r} already contains checkpoints/metrics "
+                f"but no {STATE_FILE} to continue from. Pick a new --run-dir, or "
+                f"delete the directory to start over. (To continue a run started "
+                f"with this version, just point --run-dir at it and it resumes.)"
+            )
+
+    # -- episode dispatch --------------------------------------------------------
+
+    def _league_checkpoints(self) -> list[str]:
+        """Past checkpoints of this run usable as league opponents: the most
+        recent ~20 `iter_*.pt` plus `best.pt`. Empty on a fresh run (league
+        episodes then fall back to pure self-play)."""
+        paths = sorted(glob.glob(os.path.join(self.cfg.run_dir, "iter_*.pt")))[-20:]
+        best = os.path.join(self.cfg.run_dir, "best.pt")
+        if os.path.exists(best):
+            paths.append(best)
+        return paths
+
+    def _build_tasks(self, it: int, egc: int | None) -> list[tuple]:
+        """One (seed, egc, mode, opp) task per episode this iteration, mixing
+        vs-bot anchor episodes, past-checkpoint league episodes, and pure
+        self-play per `cfg.vs_bot_fraction` / `cfg.vs_past_fraction`."""
+        n = self.cfg.episodes_per_iter
+        n_vs_bot = round(n * self.cfg.vs_bot_fraction)
+        n_vs_past = round(n * self.cfg.vs_past_fraction)
+        n_vs_bot = min(n_vs_bot, n)
+        n_vs_past = min(n_vs_past, n - n_vs_bot)
+
+        league = self._league_checkpoints()
+        rng = random.Random(self.cfg.seed + it)
+        tasks: list[tuple] = []
+        for ep in range(n):
+            seed = self.cfg.seed + it * 10_000 + ep
+            if ep < n_vs_bot:
+                tasks.append((seed, egc, "vs_bots", self.cfg.vs_bot_difficulty))
+            elif ep < n_vs_bot + n_vs_past and league:
+                tasks.append((seed, egc, "vs_net", rng.choice(league)))
+            else:
+                tasks.append((seed, egc, "selfplay", None))
+        return tasks
+
+    def _run_episode_inproc(self, task: tuple, opp_cache: dict) -> tuple:
+        import numpy as np
+
+        seed, egc, mode, opp = task
+        np.random.seed(seed & 0xFFFFFFFF)
+        if mode == "vs_bots":
+            return play_episode_vs_bots(self.nnet, self.cfg, seed, egc, opp)
+        if mode == "vs_net":
+            opp_nnet = opp_cache.get(opp)
+            if opp_nnet is None:
+                opp_nnet = NNetWrapper.load(opp, device=self.cfg.device)
+                opp_nnet.net.eval()
+                opp_cache[opp] = opp_nnet
+            return play_episode_vs_net(self.nnet, opp_nnet, self.cfg, seed, egc)
+        return play_episode(self.nnet, self.cfg, seed, egc)
+
+    def _run_episodes(self, tasks: list[tuple]) -> list[tuple]:
+        if self.cfg.num_workers <= 1:
+            opp_cache: dict = {}
+            return [self._run_episode_inproc(t, opp_cache) for t in tasks]
+        # Snapshot the current learner weights (CPU) once; the pool initializer
+        # hands them to each worker, which rebuilds the net locally.
+        state_dict = {k: v.cpu() for k, v in self.nnet.net.state_dict().items()}
+        ctx = get_context("spawn")
+        with ctx.Pool(
+            processes=self.cfg.num_workers,
+            initializer=selfplay._worker_init,
+            initargs=(self.cfg, state_dict),
+        ) as pool:
+            return pool.map(selfplay._worker_run, tasks)
+
+    # -- one iteration -----------------------------------------------------------
+
     def run_iteration(self, it: int) -> dict:
         """Run one self-play -> train -> eval -> checkpoint iteration
-        (1-indexed `it`). Returns a metrics dict for logging."""
+        (global iteration number `it`). Returns a metrics dict for logging."""
         t0 = time.time()
         egc = self.current_egc
 
-        n_vs_bot = round(self.cfg.episodes_per_iter * self.cfg.vs_bot_fraction)
+        results = self._run_episodes(self._build_tasks(it, egc))
 
-        new_examples = 0
+        block: list[Example] = []
         aborted = 0
         sp_stat_totals: dict[str, float] = {}
         sp_stat_count = 0
-        for ep in range(self.cfg.episodes_per_iter):
-            seed = self.cfg.seed + it * 10_000 + ep
-            if ep < n_vs_bot:
-                examples, outcome, stats = play_episode_vs_bots(
-                    self.nnet, self.cfg, seed, egc, self.cfg.vs_bot_difficulty
-                )
-            else:
-                examples, outcome, stats = play_episode(self.nnet, self.cfg, seed, egc)
+        for examples, outcome, stats in results:
             if outcome is None:
                 aborted += 1
                 continue
-            self.buffer.extend(examples)
-            new_examples += len(examples)
-            for key, value in stats.items():
-                sp_stat_totals[key] = sp_stat_totals.get(key, 0.0) + value
-            sp_stat_count += 1
+            block.extend(examples)
+            if stats is not None:
+                for key, value in stats.items():
+                    sp_stat_totals[key] = sp_stat_totals.get(key, 0.0) + value
+                sp_stat_count += 1
+        if block:
+            self.buffer.append(block)
 
+        flat = [ex for blk in self.buffer for ex in blk]
         losses = (
-            self.nnet.train(list(self.buffer))
-            if self.buffer
+            self.nnet.train(flat, num_batches=self.cfg.train_batches)
+            if flat
             else {"policy_loss": 0.0, "value_loss": 0.0}
         )
 
@@ -133,7 +275,7 @@ class Coach:
             difficulty=self.cfg.eval_bot_difficulty,
             seed_base=self.cfg.seed + it * 99_991,
             end_game_cities=egc,
-            num_sims=self.cfg.num_sims,
+            num_sims=self.cfg.eval_num_sims,
         )
 
         self._maybe_advance_curriculum(win_rate, it)
@@ -144,6 +286,7 @@ class Coach:
         if is_best:
             self.best_win_rate = win_rate
             self.nnet.save(os.path.join(self.cfg.run_dir, "best.pt"))
+        self._save_state(it)
 
         # Benchmark suite (per-difficulty win rate + fixed-anchor Elo +
         # strategic eval stats) is expensive — n_games * len(difficulties)
@@ -156,7 +299,7 @@ class Coach:
                 self.cfg,
                 n_games=self.cfg.eval_games,
                 seed_base=self.cfg.seed + it * 7_777_777,
-                num_sims=self.cfg.num_sims,
+                num_sims=self.cfg.eval_num_sims,
                 end_game_cities=egc,
             )
 
@@ -171,9 +314,9 @@ class Coach:
         return {
             "iter": it,
             "end_game_cities": egc,
-            "new_examples": new_examples,
+            "new_examples": len(block),
             "aborted_episodes": aborted,
-            "buffer_size": len(self.buffer),
+            "buffer_size": len(flat),
             "policy_loss": losses["policy_loss"],
             "value_loss": losses["value_loss"],
             "win_rate": win_rate,
@@ -220,7 +363,8 @@ class Coach:
             print(f"  curriculum: end_game_cities {prev} → {self.current_egc}")
 
     def run(self) -> None:
-        for it in range(1, self.cfg.num_iters + 1):
+        end_iter = self.start_iter + self.cfg.num_iters
+        for it in range(self.start_iter, end_iter):
             m = self.run_iteration(it)
             with open(self.metrics_path, "a", newline="") as f:
                 csv.DictWriter(f, fieldnames=METRICS_FIELDS).writerow(m)

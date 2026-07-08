@@ -95,42 +95,68 @@ class NNetWrapper:
             value = value[0].cpu().numpy()
         return probs, value
 
+    def _train_batch(
+        self,
+        examples: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+        batch: np.ndarray,
+    ) -> tuple[float, float]:
+        """One optimizer step over the examples indexed by `batch`. Returns
+        (policy_loss, value_loss) as floats."""
+        obs = torch.from_numpy(np.stack([examples[i][0] for i in batch])).float()
+        mask = torch.from_numpy(np.stack([examples[i][1] for i in batch])).float()
+        target_pi = torch.from_numpy(np.stack([examples[i][2] for i in batch])).float()
+        target_v = torch.from_numpy(np.stack([examples[i][3] for i in batch])).float()
+        obs, mask = obs.to(self.device), mask.to(self.device)
+        target_pi, target_v = target_pi.to(self.device), target_v.to(self.device)
+
+        logits, value = self.net(obs)
+        log_probs = masked_log_softmax(logits, mask)
+        pi_loss = -(target_pi * log_probs).sum(dim=1).mean()
+        v_loss = F.mse_loss(value, target_v)
+        loss = pi_loss + v_loss
+
+        self.opt.zero_grad()
+        loss.backward()
+        self.opt.step()
+        return pi_loss.item(), v_loss.item()
+
     def train(
-        self, examples: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]
+        self,
+        examples: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]],
+        num_batches: int | None = None,
     ) -> dict[str, float]:
-        """`examples`: list of (obs, mask, target_pi, target_value)."""
+        """`examples`: list of (obs, mask, target_pi, target_value).
+
+        Two modes:
+        - `num_batches=None` (default): epoch-style — `cfg.train_epochs` full
+          shuffled passes over `examples`. Used by `pretrain.py` over its
+          fixed behavior-cloning dataset.
+        - `num_batches=K`: a fixed budget of K minibatches, each sampled
+          uniformly at random (with replacement) from `examples`. Used by the
+          coach's windowed replay so each iteration does a bounded, roughly
+          on-policy amount of training regardless of buffer size.
+        """
         self.net.train()
-        opt = self.opt
         n = len(examples)
-        idx = np.arange(n)
+        if n == 0:
+            return {"policy_loss": 0.0, "value_loss": 0.0}
         pi_losses: list[float] = []
         v_losses: list[float] = []
-        for _epoch in range(self.cfg.train_epochs):
-            np.random.shuffle(idx)
-            for start in range(0, n, self.cfg.batch_size):
-                batch = idx[start : start + self.cfg.batch_size]
-                obs = torch.from_numpy(np.stack([examples[i][0] for i in batch])).float()
-                mask = torch.from_numpy(np.stack([examples[i][1] for i in batch])).float()
-                target_pi = torch.from_numpy(
-                    np.stack([examples[i][2] for i in batch])
-                ).float()
-                target_v = torch.from_numpy(
-                    np.stack([examples[i][3] for i in batch])
-                ).float()
-                obs, mask = obs.to(self.device), mask.to(self.device)
-                target_pi, target_v = target_pi.to(self.device), target_v.to(self.device)
-
-                logits, value = self.net(obs)
-                log_probs = masked_log_softmax(logits, mask)
-                pi_loss = -(target_pi * log_probs).sum(dim=1).mean()
-                v_loss = F.mse_loss(value, target_v)
-                loss = pi_loss + v_loss
-
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                pi_losses.append(pi_loss.item())
-                v_losses.append(v_loss.item())
+        bs = self.cfg.batch_size
+        if num_batches is None:
+            idx = np.arange(n)
+            for _epoch in range(self.cfg.train_epochs):
+                np.random.shuffle(idx)
+                for start in range(0, n, bs):
+                    pl, vl = self._train_batch(examples, idx[start : start + bs])
+                    pi_losses.append(pl)
+                    v_losses.append(vl)
+        else:
+            for _ in range(num_batches):
+                batch = np.random.randint(0, n, size=min(bs, n))
+                pl, vl = self._train_batch(examples, batch)
+                pi_losses.append(pl)
+                v_losses.append(vl)
         return {
             "policy_loss": float(np.mean(pi_losses)) if pi_losses else 0.0,
             "value_loss": float(np.mean(v_losses)) if v_losses else 0.0,
@@ -172,4 +198,10 @@ class NNetWrapper:
         wrapper.net.load_state_dict(ckpt["model_state"])
         if "optimizer_state" in ckpt:
             wrapper.opt.load_state_dict(ckpt["optimizer_state"])
+            # load_state_dict restores the *saved* lr into every param group,
+            # silently overriding cfg.lr — which would defeat a low-lr
+            # finetune resume (the whole point of passing cfg here). Force the
+            # requested lr back on.
+            for group in wrapper.opt.param_groups:
+                group["lr"] = cfg.lr
         return wrapper

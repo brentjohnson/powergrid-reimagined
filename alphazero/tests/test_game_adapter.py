@@ -2,6 +2,7 @@
 fork isolation, and terminal outcome correctness."""
 
 import numpy as np
+import pytest
 
 from alphazero.game import PowerGridGame, to_absolute_dict, to_relative_vector
 
@@ -36,7 +37,7 @@ def test_relative_vector_round_trip():
         assert to_absolute_dict(player_ids, to_move, rel) == absolute
 
 
-def test_outcome_has_single_winner():
+def test_outcome_is_rank_based():
     # A tiny end_game_cities trigger keeps this test fast; the Rust heuristic
     # bot has anti-stall guarantees (see CLAUDE.md / heuristic_termination
     # test), so driving every seat with it is a safe way to reach a real
@@ -49,8 +50,8 @@ def test_outcome_has_single_winner():
 
     assert game.is_terminal(), "game should finish quickly with end_game_cities=4"
     outcome = game.outcome()
-    winners = [pid for pid, v in outcome.items() if v > 0]
-    losers = [pid for pid, v in outcome.items() if v < 0]
-    assert len(winners) == 1
-    assert len(losers) == len(game.player_ids()) - 1
-    assert game.winner() == winners[0]
+    # 4 players → values are a permutation of [+1, +1/3, -1/3, -1], one per seat.
+    assert sorted(outcome.values()) == pytest.approx([-1.0, -1.0 / 3, 1.0 / 3, 1.0])
+    # The engine winner is the +1 (top-ranked) seat.
+    assert outcome[game.winner()] == 1.0
+    assert max(outcome, key=outcome.get) == game.winner()

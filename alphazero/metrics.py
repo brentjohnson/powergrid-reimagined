@@ -11,7 +11,19 @@ from __future__ import annotations
 
 import math
 
-from .game import PowerGridGame
+# `finish_positions`/`_city_count` moved to game.py (outcome() needs them for
+# rank-based value targets); re-exported here so `metrics.finish_positions`
+# keeps working for callers and tests.
+from .game import PowerGridGame, _city_count, finish_positions
+
+__all__ = [
+    "plant_efficiency",
+    "finish_positions",
+    "game_stats",
+    "agent_elo",
+    "BENCHMARK_DIFFICULTIES",
+    "BOT_ELO_ANCHORS",
+]
 
 # Fixed Elo anchors for the heuristic bot difficulties used by
 # `arena.benchmark_suite`. These are arbitrary but fixed reference points —
@@ -19,10 +31,6 @@ from .game import PowerGridGame
 # `agent_elo` curve is comparable iteration to iteration.
 BENCHMARK_DIFFICULTIES = ("easy", "normal", "hard")
 BOT_ELO_ANCHORS = {"easy": 800.0, "normal": 1000.0, "hard": 1200.0}
-
-
-def _city_count(state: dict, player_id: str) -> int:
-    return sum(1 for owners in state["city_owners"].values() if player_id in owners)
 
 
 def plant_efficiency(plants: list[dict]) -> float:
@@ -33,23 +41,6 @@ def plant_efficiency(plants: list[dict]) -> float:
         return 0.0
     ratios = [p["cities"] / p["cost"] if p["cost"] > 0 else float(p["cities"]) for p in plants]
     return sum(ratios) / len(ratios)
-
-
-def finish_positions(state: dict) -> dict[str, int]:
-    """Rank every player 1 (winner) .. N, replicating the engine's own
-    tiebreak key from `rules.rs::determine_winner`: most cities actually
-    powered, then most money, then most cities in the network."""
-    players = state["players"]
-    ranked = sorted(
-        players,
-        key=lambda p: (
-            p["last_cities_powered"],
-            p["money"],
-            _city_count(state, p["id"]),
-        ),
-        reverse=True,
-    )
-    return {p["id"]: rank + 1 for rank, p in enumerate(ranked)}
 
 
 def game_stats(game: PowerGridGame, seat_id: str) -> dict:

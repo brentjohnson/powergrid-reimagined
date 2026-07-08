@@ -79,10 +79,24 @@ class PowerGridGame:
         return self._game.winner()
 
     def outcome(self) -> dict[str, float]:
-        """+1 for the winner, -1 for everyone else. Only valid when terminal."""
-        winner = self.winner()
-        assert winner is not None, "outcome() requires a terminal game"
-        return {pid: (1.0 if pid == winner else -1.0) for pid in self._player_ids}
+        """Perspective-neutral terminal value for each seat, keyed by player
+        id: linearly spaced by finish position from +1 (1st) to -1 (last).
+        For 4 players that is [+1, +1/3, -1/3, -1] by rank.
+
+        Rank-based rather than winner-take-all so the value head gets a
+        gradient distinguishing 2nd from 4th — with ±1 winner-take-all the
+        target is -1 for three of four seats every game, and the head just
+        learns the -0.5 base rate. Ranking uses the engine's own tiebreak
+        (`finish_positions`: cities powered, then money, then cities owned).
+        Only valid when terminal."""
+        assert self.is_terminal(), "outcome() requires a terminal game"
+        positions = finish_positions(self.state())
+        n = len(self._player_ids)
+        if n == 1:
+            return {self._player_ids[0]: 1.0}
+        return {
+            pid: 1.0 - 2.0 * (positions[pid] - 1) / (n - 1) for pid in self._player_ids
+        }
 
     def state(self, viewer: str | None = None) -> dict:
         """The full `GameStateView` as a dict (money, plants, resources,
@@ -167,3 +181,34 @@ def to_absolute_dict(
 ) -> dict[str, float]:
     order = relative_order(player_ids, to_move)
     return {pid: float(v) for pid, v in zip(order, relative)}
+
+
+# ---------------------------------------------------------------------------
+# Finish-position ranking
+#
+# Lives here (rather than in metrics.py) because `outcome()` needs it to build
+# rank-based value targets, and metrics.py already imports PowerGridGame from
+# this module — putting it here avoids a circular import. `metrics.py`
+# re-exports both names, so `metrics.finish_positions` still works.
+# ---------------------------------------------------------------------------
+
+
+def _city_count(state: dict, player_id: str) -> int:
+    return sum(1 for owners in state["city_owners"].values() if player_id in owners)
+
+
+def finish_positions(state: dict) -> dict[str, int]:
+    """Rank every player 1 (winner) .. N, replicating the engine's own
+    tiebreak key from `rules.rs::determine_winner`: most cities actually
+    powered, then most money, then most cities in the network."""
+    players = state["players"]
+    ranked = sorted(
+        players,
+        key=lambda p: (
+            p["last_cities_powered"],
+            p["money"],
+            _city_count(state, p["id"]),
+        ),
+        reverse=True,
+    )
+    return {p["id"]: rank + 1 for rank, p in enumerate(ranked)}

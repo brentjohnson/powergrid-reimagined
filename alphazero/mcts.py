@@ -62,6 +62,14 @@ class MCTS:
             # this, but return a degenerate (all-zero) distribution rather
             # than dividing by zero below.
             return np.zeros(N_ACTIONS, dtype=np.float32)
+        if len(root.children) == 1:
+            # Forced move: only one legal action, so search can't change the
+            # decision. Skip the sims and return the one-hot. (Callers treat
+            # forced moves as non-informative and don't record them as
+            # training examples — see selfplay.py.)
+            probs = np.zeros(N_ACTIONS, dtype=np.float32)
+            probs[next(iter(root.children))] = 1.0
+            return probs
         if add_noise:
             self._add_dirichlet_noise(root)
 
@@ -142,10 +150,18 @@ class MCTS:
 
     def _select_action(self, node: Node) -> int:
         sqrt_n = math.sqrt(max(1, node.N))
+        # First-play-urgency baseline for unvisited children: the parent's own
+        # mean value minus `fpu_reduction`, so an untried action is treated as
+        # "slightly worse than what we've seen here" rather than 0 (which, with
+        # typically-negative values, made every untried action look best and
+        # flattened the visit distribution). Child Q is already from this
+        # node's mover's perspective, so node.q() is the right baseline.
+        fpu = node.q() - self.cfg.fpu_reduction
         best_score, best_a = -float("inf"), next(iter(node.children))
         for a, child in node.children.items():
+            q = child.q() if child.N > 0 else fpu
             u = self.cfg.cpuct * child.prior * sqrt_n / (1 + child.N)
-            score = child.q() + u
+            score = q + u
             if score > best_score:
                 best_score, best_a = score, a
         return best_a
