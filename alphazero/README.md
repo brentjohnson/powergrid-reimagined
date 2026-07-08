@@ -38,40 +38,54 @@ python -m alphazero.train --iters 1 --episodes 2 --sims 10 --end-game-cities 5
 
 ## Training
 
-The recommended pipeline is two phases: behavior-clone the hard heuristic bot
-for a warm start, then AlphaZero-finetune on top. Everything runs at the
-**rulebook** end-game trigger (17 cities for 4p) — the short-game curriculum
-was measured to be *counterproductive* (bots are harder to beat in short games,
-and self-play there never learns competitive tempo), so it's off by default.
+The **recommended** pipeline is two phases: behavior-clone the hard heuristic
+bot for a warm start (`pretrain.py`), then close the cloning gap with **DAgger**
+(`dagger.py`). Everything runs at the **rulebook** end-game trigger (17 cities
+for 4p) — the short-game curriculum was measured *counterproductive* (bots are
+harder to beat in short games, and self-play there never learns competitive
+tempo), so it's off by default.
+
+> **Why DAgger, not AlphaZero, for Phase 2 (2026-07-08).** The AZ self-play
+> finetune (`train.py`, below) was measured to *regress* a good behavior clone —
+> 10.7% → 2.0% vs normal, apples-to-apples — and a pure expert-anchored variant
+> (`--vs-bot-fraction 1.0`, no self-play) regressed too. Root cause: as a ~90%
+> underdog vs the bots, the value head sees nearly every position as losing, so
+> MCTS visit-count targets carry little move-quality signal and, with Dirichlet
+> noise, flatten the clone's sharp correct-move policy. Search *does* help in
+> eval and the value head *is* calibrated — but the training targets are the
+> problem. DAgger sidesteps this entirely: sharp one-hot expert labels, no value
+> head or search in the decision loop. It holds the clone and drifts up instead
+> of collapsing. AZ is worth revisiting only from an already-bot-competent start
+> (see the AlphaZero section at the end).
 
 ```bash
-# Smoke test: tiny, fast, just exercises the full loop (2 workers, both
-# opponent mixes on).
-python -m alphazero.train --iters 2 --episodes 4 --sims 10 --eval-games 4 \
-    --workers 2 --vs-bot-fraction 0.25 --vs-past-fraction 0.25 \
-    --run-dir alphazero/runs/smoke
-
 # --- Phase 1: behavior-clone the hard bot (cheap: minutes) -------------------
 # DIAGNOSTIC GATE: expect win-vs-normal well above 0% (the hard bot itself
 # wins ~33% as seat 0). If the clone is ~0%, STOP — that points at a
-# capacity/observation problem to fix before spending AZ compute.
+# capacity/observation problem. (More epochs past ~30 does NOT help — the ~8-11%
+# clone ceiling is behavior-cloning compounding error, which DAgger fixes.)
 python -m alphazero.pretrain --games 600 --epochs 30 --eval-games 100 \
-    --run-dir alphazero/runs/clone2
+    --run-dir alphazero/runs/clone1
 
-# --- Phase 2: AlphaZero finetune from the clone -----------------------------
-# Rulebook, 200 sims, anchor (vs hard bot) + league (vs past checkpoints)
-# episodes, low finetune LR, parallel workers. ~5-10 min/iter with 8 workers.
-python -m alphazero.train --iters 100 --episodes 16 --sims 200 --workers 8 \
-    --vs-bot-fraction 0.3 --vs-bot-difficulty hard --vs-past-fraction 0.2 \
-    --lr 1e-4 --eval-games 100 \
-    --resume alphazero/runs/clone2/cloned.pt \
-    --run-dir alphazero/runs/az-ft1
-
-# Resume/continue az-ft1 later (runs 50 MORE iterations, continuing numbering):
-python -m alphazero.train --iters 50 --episodes 16 --sims 200 --workers 8 \
-    --vs-bot-fraction 0.3 --vs-past-fraction 0.2 --lr 1e-4 --eval-games 100 \
-    --resume alphazero/runs/az-ft1/best.pt --run-dir alphazero/runs/az-ft1
+# --- Phase 2: DAgger / expert iteration from the clone -----------------------
+# The net drives the learner seat (vs 3 hard bots); every learner state is
+# labeled with the hard bot's move; retrain on the aggregate; repeat. ~7s/iter
+# locally. Use a large --eval-games: at ~10% win rate, 50 games is ±9% noise.
+python -m alphazero.dagger --resume alphazero/runs/clone1/cloned.pt \
+    --iters 60 --games-per-iter 60 --train-batches 1500 --lr 1e-4 \
+    --eval-games 200 --run-dir alphazero/runs/dagger1
+# Writes dagger.pt (best vs normal). Export it with `alphazero.export` exactly
+# like an AZ checkpoint (the policy-head layout is identical).
 ```
+
+Each DAgger iteration: generate `--games-per-iter` net-vs-bots rollouts,
+labeling each learner state with the `--difficulty` bot's move; aggregate into a
+capped replay buffer (`--buffer-cap`); train `--train-batches` minibatches;
+evaluate net-only greedy win rate vs easy/normal/hard; save `dagger.pt` on a new
+best-vs-normal. **DAgger has no `coach_state.json` resume** — each invocation
+starts a fresh aggregate (warm-start the *weights* with `--resume`).
+
+### AlphaZero loop (`train.py`) — kept, but not the recommended path
 
 Each iteration: self-play `--episodes` games with MCTS (`--sims` sims/move),
 farmed across `--workers` processes; a mix of pure self-play, vs-hard-bot
@@ -81,6 +95,13 @@ replay **window** of the last `--buffer-iters` iterations, evaluate win rate vs
 `--eval-bot-difficulty` bots (net-only greedy — the exported artifact — unless
 `--eval-num-sims > 0`), checkpoint to `--run-dir/iter_NNNN.pt`, and update
 `best.pt` on a new best.
+
+```bash
+# Smoke test only — see the regression warning above before using this at scale.
+python -m alphazero.train --iters 2 --episodes 4 --sims 10 --eval-games 4 \
+    --workers 2 --vs-bot-fraction 0.25 --vs-past-fraction 0.25 \
+    --run-dir alphazero/runs/smoke
+```
 
 `--iters` is the number of iterations to run *this invocation*. Run
 bookkeeping (`last_iter`, `best_win_rate`, curriculum state) is saved to
@@ -158,6 +179,14 @@ python -m pytest alphazero/tests -v
   Windowed replay (`buffer_iters`), fixed per-iteration training budget
   (`train_batches`), parallel self-play (`num_workers`), league opponents, and
   `coach_state.json`-based resume.
+- `dagger.py` — **DAgger / expert iteration** (the recommended Phase 2):
+  `generate_dagger_examples` (net drives the learner seat vs hard bots, each
+  learner state labeled with the bot's move via `bot_first_action_id`) plus a
+  `main()` aggregate-train-eval loop. Fixes behavior-cloning compounding error
+  without the value-head/search targets that made AZ regress the clone.
+- `pretrain.py` — behavior-clone the hard bot (Phase 1 warm start).
+- `imitation.py` — teacher-distribution cloning data (hard-vs-hard games);
+  `dagger.py` reuses its build/buy action decomposition.
 - `arena.py` — win-rate evaluation: net vs. Rust heuristic bots, or net vs. net.
 - `train.py` — CLI entry point.
 - `export.py` — checkpoint -> PGRLPOL1 binary for the Rust Expert bot.
