@@ -78,6 +78,34 @@ python -m alphazero.dagger --resume alphazero/runs/clone1/cloned.pt \
 # like an AZ checkpoint (the policy-head layout is identical).
 ```
 
+#### Capacity test — width-256 pipeline (2026-07-08)
+
+The width-128 pipeline plateaued at **~15% vs normal** (apples-to-apples, seat 0
+vs 3 normal bots) against the hard bot's **~37%**, with policy loss flattening —
+consistent with the net lacking the capacity to fit the teacher's policy. To
+test that hypothesis, rerun the same two phases at **width 256** into fresh run
+dirs. Both `pretrain.py` and `dagger.py` accept `--net-width`; the DAgger resume
+inherits the width from the clone checkpoint, so `--net-width` there is just
+belt-and-suspenders. A width change is a from-scratch retrain, but the PGRLPOL1
+export stays two equal-width layers, so it remains Rust-loadable — only the
+embedded hidden width differs (see the `project-policy-net-width` note).
+
+```bash
+# Phase 1 at width 256 (behavior clone)
+python -m alphazero.pretrain --games 600 --epochs 30 --eval-games 200 \
+    --net-width 256 --run-dir alphazero/runs/clone256
+
+# Phase 2 at width 256 (DAgger), warm-started from the 256 clone
+python -m alphazero.dagger --resume alphazero/runs/clone256/cloned.pt \
+    --net-width 256 --iters 60 --games-per-iter 60 --train-batches 1500 \
+    --lr 1e-4 --eval-games 200 --run-dir alphazero/runs/dagger256
+```
+
+Read: if width-256 clears the ~15% plateau, capacity was the bottleneck and
+it's worth pushing wider (512) or training longer. If it plateaus at the same
+~15%, the ceiling is elsewhere — most likely the observation missing features
+the hard bot's heuristic actually uses, which no amount of capacity can recover.
+
 Each DAgger iteration: generate `--games-per-iter` net-vs-bots rollouts,
 labeling each learner state with the `--difficulty` bot's move; aggregate into a
 capped replay buffer (`--buffer-cap`); train `--train-batches` minibatches;
