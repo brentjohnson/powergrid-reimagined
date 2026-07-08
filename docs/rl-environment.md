@@ -109,7 +109,7 @@ for agent in env.agent_iter():
 - `render_mode` — `"ansi"` or `"human"` for text rendering
 
 **Spaces:**
-- `observation_space` → `Box(0.0, 1.0, (507,), float32)` — flat normalised feature vector
+- `observation_space` → `Box(0.0, 1.0, (582,), float32)` — flat normalised feature vector
 - `action_space` → `Discrete(94)` — see action encoding table below
 
 **Rewards:** sparse — `+1.0` to winner, `-1.0` to all others at game end; `0.0` every other step.
@@ -136,7 +136,7 @@ Each integer maps to one game action. The mask in `info["action_mask"]` is `1` o
 
 ---
 
-## Observation encoding (dim = 507)
+## Observation encoding (dim = 582)
 
 All values are normalised and clamped to `[0, 1]`. Segments in order:
 
@@ -162,8 +162,9 @@ All values are normalised and clamped to `[0, 1]`. Segments in order:
 | Phase scratch | 8 | Phase-specific features (bid amount, bidder index, remaining queue length, etc.) |
 | Connection cost to city | 49 | `route_cost / 30` per city — cheapest Dijkstra cost to connect each city to the actor's network (`Map::connection_costs_from`); `0` for cities already owned and for an empty network |
 | Opponent fuel demand | 4 | coal/27, oil/20, gas/24, uranium/12 — total per-round fuel demand summed across every opponent's plants (hybrids split cost across gas/oil) |
+| Opponent plants | 75 | 5 opponents × 3 plant slots × (number/60, kind/6, cost/5, cities/8, capacity/10) — each opponent's rack encoded like *Self plants*. Surfaces opponents' highest plant number (the turn-order tiebreaker, and the sole determinant of order in round 1) and the per-plant kind/cost/cities the bot's denial/fuel models read |
 
-The last two segments were added 2026-07-08 (obs 454 → 507): the heuristic bot leans on both — connection/routing cost drives its build decisions, and opponent fuel demand drives its resource-market contention model — but the net previously couldn't see either (the map graph is not in `GameStateView`, and the opponent summary omitted plant fuel types). See `crates/powergrid-bot-strategy/src/encoding.rs` for the rationale.
+The last three segments were added 2026-07-08 (obs 454 → 507 → 582) to close a capacity-independent information ceiling: the heuristic bot leans on all three — connection/routing cost drives its build decisions, opponent fuel demand drives its resource-market contention model, and opponent plant numbers/kinds/costs drive turn-order and denial/fuel reasoning — but the net previously couldn't see any of them (the map graph is not in `GameStateView`, and the opponent summary was a coarse count/capacity rollup with no per-plant detail). See `crates/powergrid-bot-strategy/src/encoding.rs` for the rationale.
 
 The layout is defined twice and kept in sync by parity tests (`tests/test_native_bridge.py`): natively in `crates/powergrid-bot-strategy/src/encoding.rs` (`build_observation`, wrapped by `powergrid-py`) and in Python (`encoding.py::encode_observation`, which loads `assets/maps/usa.toml` and replicates the routing Dijkstra). The same applies to `CITY_IDS` and the action layout in `constants.py`. **If the default map or the layout changes, both sides must be regenerated and old checkpoints become incompatible.**
 

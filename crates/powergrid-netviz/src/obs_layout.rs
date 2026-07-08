@@ -129,6 +129,19 @@ pub fn sections() -> Vec<ObsSection> {
             len: 4,
             label: |i| RESOURCE_NAMES[i].to_string(),
         },
+        ObsSection {
+            name: "Opponent plants",
+            start: 454 + N_CITIES + 4,
+            len: 5 * 3 * 5,
+            label: |i| {
+                format!(
+                    "opp {}: slot {}: {}",
+                    i / 15,
+                    (i % 15) / 5,
+                    PLANT_FEATS[i % 5]
+                )
+            },
+        },
     ]
 }
 

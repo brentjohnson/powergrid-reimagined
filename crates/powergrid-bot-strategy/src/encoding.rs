@@ -89,7 +89,7 @@ pub const N_REGIONS: usize = REGION_NAMES.len();
 // opponent summary + opponent cities + city slot counts + active regions +
 // actual market + future market + market meta + resource market +
 // phase/step/round/end-game/turn-order scalars + phase scratch +
-// per-city connection cost + opponent per-resource fuel demand.
+// per-city connection cost + opponent per-resource fuel demand + opponent plants.
 pub const OBS_SIZE: usize = 1
     + 4
     + 15
@@ -105,7 +105,8 @@ pub const OBS_SIZE: usize = 1
     + 5
     + 8
     + N_CITIES // 19. connection cost from the actor's network to each city
-    + 4; // 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
+    + 4 // 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
+    + 5 * 3 * 5; // 21. opponent plants (5 opp × 3 slots × 5 feats)
 
 // Action base indices.
 pub const PASS_AUCTION_IDX: usize = 0;
@@ -708,6 +709,29 @@ pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
         obs[idx + ri] = demand / denom;
     }
     idx += 4;
+
+    // 21. Opponent plants (5 × 3 × 5 = 75): each opponent's rack encoded exactly
+    // like section 3 (self plants) — number, kind, cost, cities, capacity.
+    // Surfaces opponents' highest plant number (the turn-order tiebreaker, and
+    // the sole determinant of order in round 1) and the per-plant kind/cost/
+    // cities the bot's denial and fuel models read. Opponents are the same
+    // players in the same order as section 5.
+    for (i, opp) in opponents.iter().take(5).enumerate() {
+        for (j, plant) in opp.plants.iter().take(3).enumerate() {
+            let base = idx + (i * 3 + j) * 5;
+            let cap = if matches!(plant.kind, PlantKind::Wind) {
+                0.0
+            } else {
+                plant.cost as f32 * 2.0
+            };
+            obs[base] = plant.number as f32 / 60.0;
+            obs[base + 1] = plant_kind_id(plant.kind) / 6.0;
+            obs[base + 2] = plant.cost as f32 / 5.0;
+            obs[base + 3] = plant.cities as f32 / 8.0;
+            obs[base + 4] = cap / 10.0;
+        }
+    }
+    idx += 5 * 3 * 5;
 
     debug_assert_eq!(idx, OBS_SIZE, "observation size mismatch");
     // Clamp into the Box bounds: a few features (e.g. player stockpiles, late

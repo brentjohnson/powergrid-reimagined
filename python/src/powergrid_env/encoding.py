@@ -505,6 +505,18 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
     obs[idx:idx+4] = [demand["coal"]/27, demand["oil"]/20, demand["gas"]/24, demand["uranium"]/12]
     idx += 4
 
+    # 21. Opponent plants (5 × 3 × 5 = 75): mirror section 3 for each opponent.
+    for i, opp in enumerate(opponents[:5]):
+        for j, plant in enumerate((opp.get("plants") or [])[:3]):
+            base = idx + (i * 3 + j) * 5
+            obs[base]   = plant["number"] / 60
+            obs[base+1] = KIND_IDS.get(plant["kind"], 0) / 6
+            obs[base+2] = plant["cost"] / 5
+            obs[base+3] = plant["cities"] / 8
+            cap = plant["cost"] * 2 if plant["kind"] not in ("wind",) else 0
+            obs[base+4] = cap / 10
+    idx += 5 * 3 * 5
+
     assert idx == OBS_SIZE, f"Observation size mismatch: expected {OBS_SIZE}, got {idx}"
     # Clamp into the Box bounds: a few features (e.g. player stockpiles, late
     # rounds) can exceed their nominal denominator in extreme games.

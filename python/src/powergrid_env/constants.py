@@ -78,10 +78,11 @@ N_ACTIONS            = POWER_FUEL_BASE + 9
 # self cities + opponent summary + opponent cities + city slot counts +
 # active regions + actual market + future market + market meta +
 # resource market + phase/step/round/end-game/turn-order scalars + scratch +
-# per-city connection cost + opponent per-resource fuel demand.
+# per-city connection cost + opponent per-resource fuel demand + opponent plants.
 OBS_SIZE = (
     1 + 4 + 15 + MAX_CITIES + 20 + 5 * MAX_CITIES + MAX_CITIES + N_REGIONS
     + 24 + 20 + 3 + 4 + 5 + 8
     + MAX_CITIES  # 19. connection cost from the actor's network to each city
     + 4           # 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
+    + 5 * 3 * 5   # 21. opponent plants (5 opp × 3 slots × 5 feats)
 )
