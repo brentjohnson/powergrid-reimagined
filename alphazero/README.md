@@ -145,8 +145,13 @@ names sb3's MaskablePPO uses, so it serializes to the existing PGRLPOL1 binary
 format with **no Rust changes**:
 
 ```bash
+# Point at a run dir — auto-picks the canonical best checkpoint
+# (dagger.pt / best.pt / cloned.pt / latest iter_*.pt, in that order):
+python -m alphazero.export --run-dir alphazero/runs/dagger1
+
+# ...or name a checkpoint explicitly:
 python -m alphazero.export \
-    --checkpoint alphazero/runs/curriculum1/best.pt \
+    --checkpoint alphazero/runs/dagger1/dagger.pt \
     --out assets/policies/expert.bin \
     --golden assets/policies/expert.golden.json
 ```
