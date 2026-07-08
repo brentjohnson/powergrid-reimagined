@@ -109,7 +109,7 @@ for agent in env.agent_iter():
 - `render_mode` — `"ansi"` or `"human"` for text rendering
 
 **Spaces:**
-- `observation_space` → `Box(0.0, 1.0, (454,), float32)` — flat normalised feature vector
+- `observation_space` → `Box(0.0, 1.0, (507,), float32)` — flat normalised feature vector
 - `action_space` → `Discrete(94)` — see action encoding table below
 
 **Rewards:** sparse — `+1.0` to winner, `-1.0` to all others at game end; `0.0` every other step.
@@ -136,7 +136,7 @@ Each integer maps to one game action. The mask in `info["action_mask"]` is `1` o
 
 ---
 
-## Observation encoding (dim = 454)
+## Observation encoding (dim = 507)
 
 All values are normalised and clamped to `[0, 1]`. Segments in order:
 
@@ -160,12 +160,16 @@ All values are normalised and clamped to `[0, 1]`. Segments in order:
 | End-game threshold | 1 | end\_game\_cities/25 |
 | Turn-order position | 1 | actor's index in player\_order / (n\_players − 1) |
 | Phase scratch | 8 | Phase-specific features (bid amount, bidder index, remaining queue length, etc.) |
+| Connection cost to city | 49 | `route_cost / 30` per city — cheapest Dijkstra cost to connect each city to the actor's network (`Map::connection_costs_from`); `0` for cities already owned and for an empty network |
+| Opponent fuel demand | 4 | coal/27, oil/20, gas/24, uranium/12 — total per-round fuel demand summed across every opponent's plants (hybrids split cost across gas/oil) |
 
-The layout is defined twice and kept in sync by parity tests (`tests/test_native_bridge.py`): natively in `crates/powergrid-py/src/lib.rs` (`build_observation`) and in Python (`encoding.py::encode_observation`). The same applies to `CITY_IDS` and the action layout in `constants.py`. **If the default map or the layout changes, both sides must be regenerated and old checkpoints become incompatible.**
+The last two segments were added 2026-07-08 (obs 454 → 507): the heuristic bot leans on both — connection/routing cost drives its build decisions, and opponent fuel demand drives its resource-market contention model — but the net previously couldn't see either (the map graph is not in `GameStateView`, and the opponent summary omitted plant fuel types). See `crates/powergrid-bot-strategy/src/encoding.rs` for the rationale.
+
+The layout is defined twice and kept in sync by parity tests (`tests/test_native_bridge.py`): natively in `crates/powergrid-bot-strategy/src/encoding.rs` (`build_observation`, wrapped by `powergrid-py`) and in Python (`encoding.py::encode_observation`, which loads `assets/maps/usa.toml` and replicates the routing Dijkstra). The same applies to `CITY_IDS` and the action layout in `constants.py`. **If the default map or the layout changes, both sides must be regenerated and old checkpoints become incompatible.**
 
 **City ownership source:** all city-ownership segments are derived from `city_owners` (`city_id → [player_id, ...]`); players carry no redundant city list.
 
-**Hidden information:** opponent money, the deck's card faces, and the RNG seed are never exposed. The deck *size* (`deck_remaining`) is public, as in the physical game.
+**Hidden information:** opponent money, the deck's card faces, and the RNG seed are never exposed. The deck *size* (`deck_remaining`) is public, as in the physical game. Opponent *plants* are public (the fuel-demand segment is derived from them), matching the physical game where a rival's power plants sit face-up.
 
 ---
 

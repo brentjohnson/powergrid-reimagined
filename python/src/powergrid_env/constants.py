@@ -77,8 +77,11 @@ N_ACTIONS            = POWER_FUEL_BASE + 9
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +
 # active regions + actual market + future market + market meta +
-# resource market + phase/step/round/end-game/turn-order scalars + scratch.
+# resource market + phase/step/round/end-game/turn-order scalars + scratch +
+# per-city connection cost + opponent per-resource fuel demand.
 OBS_SIZE = (
     1 + 4 + 15 + MAX_CITIES + 20 + 5 * MAX_CITIES + MAX_CITIES + N_REGIONS
     + 24 + 20 + 3 + 4 + 5 + 8
+    + MAX_CITIES  # 19. connection cost from the actor's network to each city
+    + 4           # 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
 )

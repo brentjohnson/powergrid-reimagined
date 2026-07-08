@@ -18,7 +18,11 @@ Action space layout (N_ACTIONS = 94, USA map with 49 cities):
 Base indices are derived in constants.py; this table is illustrative.
 """
 
+import heapq
 import json
+import tomllib
+from pathlib import Path
+
 import numpy as np
 from .constants import (
     N_ACTIONS, OBS_SIZE, CITY_IDS, CITY_INDEX, REGION_NAMES,
@@ -28,6 +32,67 @@ from .constants import (
     BUILD_CITY_BASE, BUY_RESOURCE_BASE, POWER_CITIES_BASE,
     DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
 )
+
+# ---------------------------------------------------------------------------
+# Default-map graph, for the per-city connection-cost observation feature.
+#
+# The observation is compiled against the default USA map (the map graph is
+# NOT in the wire-safe GameStateView), so we load it once from the same asset
+# Rust embeds and mirror `Map::from_data` (bidirectional edges) +
+# `Map::connection_costs_from` (multi-source Dijkstra). The native parity test
+# `test_native_bridge.test_observation_matches_python` guards against drift.
+# ---------------------------------------------------------------------------
+
+_USA_TOML = Path(__file__).resolve().parents[3] / "assets" / "maps" / "usa.toml"
+_ADJ: dict[str, list[tuple[str, int]]] | None = None
+
+
+def _adjacency() -> dict[str, list[tuple[str, int]]]:
+    global _ADJ
+    if _ADJ is None:
+        data = tomllib.loads(_USA_TOML.read_text())
+        adj: dict[str, list[tuple[str, int]]] = {c["id"]: [] for c in data["cities"]}
+        for conn in data.get("connections", []):
+            adj.setdefault(conn["from"], []).append((conn["to"], conn["cost"]))
+            adj.setdefault(conn["to"], []).append((conn["from"], conn["cost"]))
+        _ADJ = adj
+    return _ADJ
+
+
+def _connection_costs_from(owned: list[str]) -> dict[str, int]:
+    """Cheapest connection cost from `owned` to every city (multi-source
+    Dijkstra), mirroring Rust `Map::connection_costs_from`. Empty owned set →
+    every city 0 (the first city is free of routing); owned cities → 0."""
+    adj = _adjacency()
+    if not owned:
+        return {city: 0 for city in adj}
+    dist: dict[str, int] = {}
+    heap: list[tuple[int, str]] = []
+    for start in owned:
+        dist[start] = 0
+        heapq.heappush(heap, (0, start))
+    while heap:
+        cost, node = heapq.heappop(heap)
+        if dist.get(node, 1 << 30) < cost:
+            continue
+        for neighbor, edge_cost in adj.get(node, []):
+            nc = cost + edge_cost
+            if nc < dist.get(neighbor, 1 << 30):
+                dist[neighbor] = nc
+                heapq.heappush(heap, (nc, neighbor))
+    return dist
+
+
+def _plant_demand(plant: dict) -> dict[str, float]:
+    """Per-round fuel demand a plant places on each resource — mirrors Rust
+    `per_round_demand`. Hybrids (`gas_or_oil`) split their cost across gas/oil."""
+    kind = plant["kind"]
+    cost = float(plant["cost"])
+    if kind == "gas_or_oil":
+        return {"gas": cost / 2.0, "oil": cost / 2.0}
+    if kind in ("coal", "oil", "gas", "uranium"):
+        return {kind: cost}
+    return {}  # wind
 
 
 def mask_from_info(move_info: dict, state: dict, actor_id: str) -> np.ndarray:
@@ -423,6 +488,22 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
             ps[0] = phase["power_cities_fuel"]["hybrid_cost"] / 20
     obs[idx:idx+8] = ps
     idx += 8
+
+    # 19. Connection cost from the actor's network to each city (MAX_CITIES).
+    owned = cities_by_player.get(actor_id, [])
+    costs = _connection_costs_from(owned)
+    for city_id, ci in CITY_INDEX.items():
+        obs[idx + ci] = costs.get(city_id, 30) / 30.0
+    idx += MAX_CITIES
+
+    # 20. Opponent per-resource fuel demand (4)
+    demand = {"coal": 0.0, "oil": 0.0, "gas": 0.0, "uranium": 0.0}
+    for opp in opponents:
+        for p in opp.get("plants", []):
+            for res, d in _plant_demand(p).items():
+                demand[res] += d
+    obs[idx:idx+4] = [demand["coal"]/27, demand["oil"]/20, demand["gas"]/24, demand["uranium"]/12]
+    idx += 4
 
     assert idx == OBS_SIZE, f"Observation size mismatch: expected {OBS_SIZE}, got {idx}"
     # Clamp into the Box bounds: a few features (e.g. player stockpiles, late

@@ -88,9 +88,24 @@ pub const N_REGIONS: usize = REGION_NAMES.len();
 // Observation layout: money + resources + self plants + self cities +
 // opponent summary + opponent cities + city slot counts + active regions +
 // actual market + future market + market meta + resource market +
-// phase/step/round/end-game/turn-order scalars + phase scratch.
-pub const OBS_SIZE: usize =
-    1 + 4 + 15 + N_CITIES + 20 + 5 * N_CITIES + N_CITIES + N_REGIONS + 24 + 20 + 3 + 4 + 5 + 8;
+// phase/step/round/end-game/turn-order scalars + phase scratch +
+// per-city connection cost + opponent per-resource fuel demand.
+pub const OBS_SIZE: usize = 1
+    + 4
+    + 15
+    + N_CITIES
+    + 20
+    + 5 * N_CITIES
+    + N_CITIES
+    + N_REGIONS
+    + 24
+    + 20
+    + 3
+    + 4
+    + 5
+    + 8
+    + N_CITIES // 19. connection cost from the actor's network to each city
+    + 4; // 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
 
 // Action base indices.
 pub const PASS_AUCTION_IDX: usize = 0;
@@ -423,6 +438,26 @@ fn phase_id_f32(phase: &Phase) -> f32 {
     }
 }
 
+/// Per-round fuel demand a plant places on `resource`. Mirrors
+/// `features::per_round_demand` (kept local so the encoding layer doesn't depend
+/// on the strategy layer). Hybrids split their firing cost across gas and oil.
+fn per_round_demand(plant: &PowerPlant, resource: Resource) -> f32 {
+    let cost = plant.cost as f32;
+    match plant.kind {
+        PlantKind::GasOrOil => match resource {
+            Resource::Gas | Resource::Oil => cost / 2.0,
+            _ => 0.0,
+        },
+        _ => {
+            if plant.kind.resources().contains(&resource) {
+                cost
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
 /// Port of `encoding.py::encode_observation` — builds obs vector directly from GameState.
 pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     let mut obs = vec![0.0f32; OBS_SIZE];
@@ -632,6 +667,47 @@ pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
         _ => {}
     }
     idx += 8;
+
+    // 19. Connection cost from the actor's network to each city (N_CITIES).
+    // The Dijkstra routing cost `decide_build_cities` sorts candidates on — the
+    // primary driver of build decisions and the one input no other obs section
+    // exposes (the map graph is otherwise invisible to the net). 0 for cities
+    // the actor already owns and, by convention, an empty network.
+    let my_cities = state.player_cities(actor_id);
+    let costs = state.map.connection_costs_from(&my_cities);
+    for (ci, &city_id) in CITY_IDS.iter().enumerate() {
+        let cost = costs.get(city_id).copied().unwrap_or(30);
+        obs[idx + ci] = cost as f32 / 30.0;
+    }
+    idx += N_CITIES;
+
+    // 20. Opponent per-resource fuel demand (4): total per-round fuel the
+    // opponents' racks draw on each resource — the market-contention signal the
+    // bot's fuel model uses (expected firing cost, feasibility, denial) but that
+    // section 5 (opponent summary) omits.
+    for (ri, resource) in [
+        Resource::Coal,
+        Resource::Oil,
+        Resource::Gas,
+        Resource::Uranium,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let demand: f32 = opponents
+            .iter()
+            .flat_map(|opp| opp.plants.iter())
+            .map(|p| per_round_demand(p, resource))
+            .sum();
+        let denom = match resource {
+            Resource::Coal => 27.0,
+            Resource::Oil => 20.0,
+            Resource::Gas => 24.0,
+            Resource::Uranium => 12.0,
+        };
+        obs[idx + ri] = demand / denom;
+    }
+    idx += 4;
 
     debug_assert_eq!(idx, OBS_SIZE, "observation size mismatch");
     // Clamp into the Box bounds: a few features (e.g. player stockpiles, late

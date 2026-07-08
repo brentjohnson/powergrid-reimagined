@@ -194,6 +194,47 @@ impl Map {
         Some(ShortestPath { cost, edges })
     }
 
+    /// Cheapest connection cost from a player's owned set to *every* city in
+    /// one Dijkstra pass (unlike `connection_cost_to`, which early-exits at a
+    /// single target and would re-run the search per city). Owned cities map to
+    /// `0`; an empty owned set maps every city to `0` (the first city is free of
+    /// routing). Unreachable cities are simply absent from the returned map.
+    /// Used by the RL observation encoder, which needs all cities at once.
+    pub fn connection_costs_from(&self, owned_cities: &[String]) -> HashMap<String, u32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let mut dist: HashMap<String, u32> = HashMap::new();
+        if owned_cities.is_empty() {
+            for id in self.cities.keys() {
+                dist.insert(id.clone(), 0);
+            }
+            return dist;
+        }
+
+        let mut heap: BinaryHeap<Reverse<(u32, String)>> = BinaryHeap::new();
+        for start in owned_cities {
+            dist.insert(start.clone(), 0);
+            heap.push(Reverse((0u32, start.clone())));
+        }
+        while let Some(Reverse((cost, node))) = heap.pop() {
+            if dist.get(&node).copied().unwrap_or(u32::MAX) < cost {
+                continue;
+            }
+            if let Some(neighbors) = self.edges.get(&node) {
+                for (neighbor, edge_cost) in neighbors {
+                    let next_cost = cost + edge_cost;
+                    let entry = dist.entry(neighbor.clone()).or_insert(u32::MAX);
+                    if next_cost < *entry {
+                        *entry = next_cost;
+                        heap.push(Reverse((next_cost, neighbor.clone())));
+                    }
+                }
+            }
+        }
+        dist
+    }
+
     /// Cheapest network connection cost from any city a player owns to `target`.
     /// Uses Dijkstra's algorithm.
     pub fn connection_cost_to(&self, owned_cities: &[String], target: &str) -> Option<u32> {

@@ -1,8 +1,8 @@
-//! Human-readable layout of the 454-dim observation vector.
+//! Human-readable layout of the observation vector.
 //!
 //! Mirrors the numbered sections in
 //! `powergrid_bot_strategy::encoding::build_observation`. Used to render the
-//! input editor as grouped, labeled sliders rather than 454 bare numbers.
+//! input editor as grouped, labeled sliders rather than bare numbers.
 
 use powergrid_bot_strategy::encoding::{CITY_IDS, N_CITIES, REGION_NAMES};
 
@@ -30,7 +30,7 @@ const PHASE_SCALARS: [&str; 5] = [
 ];
 
 /// All sections, in observation-vector order. Section ranges are contiguous
-/// and cover the full `OBS_SIZE` (454) — see the `sections_cover_obs_size` test.
+/// and cover the full `OBS_SIZE` — see the `sections_cover_obs_size` test.
 pub fn sections() -> Vec<ObsSection> {
     vec![
         ObsSection {
@@ -116,6 +116,18 @@ pub fn sections() -> Vec<ObsSection> {
             start: 446,
             len: 8,
             label: |i| format!("scratch[{i}] (meaning depends on phase)"),
+        },
+        ObsSection {
+            name: "Connection cost to city",
+            start: 454,
+            len: N_CITIES,
+            label: |i| CITY_IDS[i].to_string(),
+        },
+        ObsSection {
+            name: "Opponent fuel demand",
+            start: 454 + N_CITIES,
+            len: 4,
+            label: |i| RESOURCE_NAMES[i].to_string(),
         },
     ]
 }
