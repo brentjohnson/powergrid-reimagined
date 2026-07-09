@@ -221,5 +221,9 @@ python -m pytest alphazero/tests -v
 - `imitation.py` — teacher-distribution cloning data (hard-vs-hard games);
   `dagger.py` reuses its build/buy action decomposition.
 - `arena.py` — win-rate evaluation: net vs. Rust heuristic bots, or net vs. net.
+- `eval_search.py` — CLI to sweep a checkpoint's win rate across MCTS sim counts
+  (`0` = net-only greedy vs `>0` = greedy search), parallelized across games and
+  paired on identical seeds. Use it to measure the inference-time-search lift:
+  `python -m alphazero.eval_search --checkpoint <ckpt> --sims 0,200,400,800 --difficulty normal,hard`.
 - `train.py` — CLI entry point.
 - `export.py` — checkpoint -> PGRLPOL1 binary for the Rust Expert bot.
