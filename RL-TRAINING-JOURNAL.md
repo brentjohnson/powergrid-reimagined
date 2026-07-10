@@ -1,0 +1,334 @@
+# RL Training Journal
+
+A consolidated history of the effort to train a neural network that plays Power Grid well
+enough to beat humans, what actually happened at each stage, the lessons that survived,
+and (at the end) three high-level proposals for where to go next.
+
+Written 2026-07-10, reconstructed from run records, project memory, and git history.
+
+---
+
+## 1. Goal and constraints
+
+- **Goal:** an AI that beats humans. The in-game "Expert" bot is the deployment target.
+- **Deployment constraint (hard):** whatever we train must run inside the Rust Expert bot.
+  Today that means the PGRLPOL1 format — a fixed two-equal-width-hidden-layer MLP
+  (`OBS → H → tanh → H → tanh → N_ACTIONS`) with hand-rolled forward pass in
+  `powergrid-bot-strategy/src/policy.rs`. Anything else (GNN, autoregressive heads, extra
+  layers) *cannot run in the game at all* without new Rust inference code.
+- **The yardstick:** seat 0 vs 3 `normal` heuristic bots, 4 players, USA map, rulebook
+  trigger (17 cities). Equal-strength baseline is 25%. The `hard` heuristic bot scores
+  **~34.5%** on this benchmark (with jitter=0 paired measurement) — it is, to date, the
+  strongest agent in the project.
+
+## 2. Timeline
+
+### Phase 0 — Infrastructure (through early June 2026)
+
+Built the PyO3 bridge (`powergrid-py`), the PettingZoo/Gymnasium env, the shared Rust/Python
+observation-action encoding, fused native step methods (opponents driven inside Rust), and
+the export path: sb3 MaskablePPO checkpoint → `export_policy.py` → `expert.bin` → native
+Rust inference with a golden-logits parity test. Early work targeted the Germany map
+(obs 404 / 136 actions); switched to the USA map (obs 454 / 143 actions) on 2026-06-10.
+
+This plumbing has been repeatedly validated (parity tests, golden logits, fair-seat eval
+checks) and has essentially never been the problem.
+
+### Phase 1 — PPO (MaskablePPO), June 2026
+
+**vs-bots training (≤2026-06-10).** 50M steps vs heuristic bots: `eval/mean_reward` pinned
+at −1.0. The win signal was unreachable from random play; the critic learned "I always
+lose" (explained_variance ~0.96), entropy collapsed, policy converged to loss-minimizing
+play. Win rate ~0%.
+
+**Curriculum (2026-06-11).** Added `set_end_game_cities` so games can be made short
+(trigger 3 → ~80-move games) and grown toward the rulebook 17. Also made the heuristic
+bots guarantee game termination (anti-stall overbuild + urgency-scaled auction thresholds).
+
+**Self-play reward bug (diagnosed 2026-06-12).** The original single-stream self-play env
+gave the terminal ±1 to the actor of the move that landed on `GameOver` — which, because
+bureaucracy runs leader-first, is always the *trailing* player. The winner ~never saw +1.
+Also, single-stream GAE mixes all seats' transitions, making per-seat credit assignment
+impossible. Fix: frozen-opponent self-play (learner-centric env; opponents run a frozen
+snapshot of the policy natively in Rust; `--bot-mix` grounds some episodes vs heuristic
+bots). All earlier self-play checkpoints were junk.
+
+**Curriculum grind (2026-06-12 → 06-18).** Chained runs 3 → 12 cities, hundreds of
+millions of steps. Findings:
+- At trigger 12: ~3.5% win vs normal bots. Pure self-play continuation *regressed*;
+  `--bot-mix 0.5` grounding broke the plateau and roughly doubled it to ~6.5%.
+- `eval/mean_reward` (even at 100 episodes) could not resolve real 3.5%→6.5% gains;
+  `best_model.zip` repeatedly picked lucky eval batches. Only 1000-game offline
+  `evaluate.py` sweeps were trustworthy. At rulebook 17, the best checkpoint won **0.7%**.
+
+**Width + shaping experiments (2026-06-19 → 06-21).** Net width made configurable
+(64 → 128 default). A 128-wide curriculum run peaked at 21% at trigger 3, then declined
+to 0% as the curriculum advanced — entropy collapse (fixed by raising ent_coef) plus a
+misaligned absolute powered-cities shaping proxy. Switching to *relative* shaping
+(own − best opponent) fixed alignment but destroyed the bootstrap: the agent settled into
+a passive money-hoarding optimum, finishing dead last ~100%. Lesson: absolute shaping is
+the better cold-start *teacher*, relative is only right for an already-competent agent.
+
+### Phase 2 — AlphaZero, late June 2026
+
+**Run 1 (2026-06-22).** 200 iterations, 50 sims, curriculum 5→17: **0% vs even easy bots
+at every checkpoint.** Diagnostics showed the eval harness was fair, the net wasn't
+degenerate — it had learned coherent *self-play* that simply didn't transfer to playing
+competent opponents. Root causes: closed-world self-play distribution shift, and 50 sims
+over ~20–40 legal actions in a 100–300-move game is far too weak a policy-improvement
+operator.
+
+### The bug that invalidated everything (2026-06-23/24)
+
+**Buy-resource encoding bug.** Every buy-resource action id decoded to a *batch* purchase
+of one unit, and the batch handler unconditionally ended the player's buy turn. Any policy
+confined to the action encoding — PPO, AZ, behavior clones — could buy **at most one fuel
+unit per round**, while heuristic opponents bought full batches. A player who can't fuel
+plants can't power cities and always loses. This single bug explains the ~0% win rates
+across *every* algorithm to that point. A behavior clone with 73% per-step agreement with
+its teacher had still won 0% — because of this.
+
+Fixed additively (buy ids now map to non-turn-ending single-unit `BuyResources`).
+Consequences:
+- **All pre-fix training was deleted.** Every negative result before 2026-06-24 is
+  uninformative about algorithm choice.
+- The auction bid space was collapsed from 50 raise sizes to +1/pass (N_ACTIONS 143 → 94),
+  killing a learned jump-bidding artifact at the encoding level.
+- The first post-fix PPO run immediately hit **30% vs normal bots** — by far the best PPO
+  result ever, confirming the bug (not the algorithm) had been the binding constraint.
+  (That checkpoint became stale the same day when the bid collapse changed the action
+  space; the embedded `expert.bin` has been rejected at load ever since, so the in-game
+  Expert bot currently plays the hard heuristic.)
+
+### Phase 2b — Post-fix PPO and the orchestrator (late June → July)
+
+Long chained self-play runs (600M+ steps through `runs/selfplay`, various shaping modes,
+plus the `orchestrate.py` forever-loop). No run produced a policy that beats the hard
+heuristic; the durable ranking stayed "heuristic on top."
+
+### Phase 2c — AlphaZero overhaul, BC, DAgger (2026-07-08)
+
+The AZ loop was rebuilt: windowed replay, fixed per-iteration training budget, FPU
+reduction + 200 sims, rank-based outcomes (+1…−1 by finish position), parallel self-play
+workers, league opponents, proper resume. Also *measured* that the curriculum was
+counterproductive: short games are **harder** vs bots (hard bot wins only ~18% at trigger
+3–5 vs ~33% at 17), so the win-gate could never advance. Curriculum retired.
+
+Pipeline results (all width 128–256, 4p, rulebook trigger):
+- **Behavior cloning the hard bot:** plateaus at ~8–11% vs normal. More epochs don't help
+  — it's the BC compounding-error ceiling, not under-training.
+- **AZ finetune from the clone:** *regressed* 10.7% → 2.0% (apples-to-apples). Even a
+  pure expert-anchored finetune (no self-play episodes at all) regressed. Diagnosis: as a
+  ~90% underdog, the value head sees ~all positions as losing, so MCTS visit-count targets
+  carry no move-quality signal and (with Dirichlet noise) actively flatten the clone's
+  sharp policy.
+- **DAgger** (net rolls out vs hard bots, every learner state labeled with the hard bot's
+  move): does not collapse; 60 iterations lifted the clone to ~15% vs normal / ~10% vs
+  hard. First stable learning-based improvement post-reset.
+
+**Observation enrichment (2026-07-08).** Audit found the obs was blind to three inputs the
+teacher uses: per-city connection costs (the Dijkstra term driving builds), opponent fuel
+demand, and per-opponent plant detail (turn-order tiebreaker + denial/fuel model). Obs grew
+454 → 507 → 582. Then two clean rule-outs:
+- **Capacity:** width 256 fits the teacher much better (policy loss 0.287 → 0.168) but wins
+  *identically* to width 128. Not capacity.
+- **Observation:** clone/DAgger on the full 582 obs score *identically* to the 454 runs
+  (clone ~9%, DAgger ~15%). Not observability either.
+
+Conclusion: the plateau is **structural compounding error**. The net agrees with the
+teacher on 81.5% of moves on its own rollouts; the 1-in-5 disagreements compound over
+~600 decisions per game. Inference-time search recovers some of it — with careful
+measurement, dagger582 is ~23% net-only and ~26–27% with MCTS-800 — **still below the
+~34.5% teacher.** Imitation + search recovers imitation loss but cannot exceed the teacher.
+
+### Phase 2d — Final self-play test (2026-07-10)
+
+Hypothesis: AZ self-play failed before because it started from an underdog; from a
+competent base it should bootstrap. Ran `az582-ft1`: AZ finetune from the best DAgger net,
+low noise, 50% self-play / 25% hard-anchor / 25% league, 60 iterations. **Failed.** Best
+win rate hit at iteration 18 and never beaten; five independent metrics (bench win rate,
+finish position, final cities, end money) all drifted *worse* while policy loss fell —
+confidently fitting self-play targets that don't transfer.
+
+**Self-play is now 0-for-4 in this project** (PPO single-stream, PPO frozen-opponent
+at scale, AZ from scratch, AZ from a competent base). Verdict recorded: stop re-testing
+self-play bootstrapping in the current formulation.
+
+### Phase 3 — Track (A): strengthen the heuristic (2026-07-09/10)
+
+If nothing learned beats the teacher, raise the teacher. Audit found four gaps; three were
+implemented and measured — and the measurement itself produced the most important lesson:
+
+- **Broken methodology discovered:** `evaluate_lineup.py --seed` fixes the deck but bot
+  RNG (bid jitter) reseeds per game via random UUIDs → ±5pp noise *at the same seed*. The
+  early "endgame grab = +6pp" result was pure noise. True paired A/B requires `jitter=0`
+  plus a fixed seed and ≥600 games.
+- Clean paired results: baseline **32.7%**. Fuel stockpiling (#1): **+1.8pp, kept** →
+  ~34.5%. Endgame winning-grab (#3): **−2.4pp, reverted** (its optimistic opponent bound
+  made it fire only on fragile money tiebreaks). Turn-order penalty (#2): **−2.8pp,
+  reverted**.
+
+## 3. Current strength ladder (2026-07-10)
+
+| Agent | Win rate seat-0 vs 3 normal |
+|---|---|
+| hard heuristic (with stockpiling) | **~34.5%** |
+| dagger582 + MCTS-800 (Python-side search) | ~26% |
+| dagger582 net-only (deployable as expert.bin) | ~23% |
+| BC clone of hard bot | ~9% |
+| AZ-finetuned nets | ~10–20%, regressing |
+| equal-player baseline | 25% |
+
+The in-game Expert bot currently falls back to the hard heuristic (embedded policy stale
+since the action-space change), which is — honestly — the correct choice today.
+
+## 4. Lessons that survived everything
+
+1. **Check the action interface before the algorithm.** One encoding bug (1 fuel/turn)
+   silently capped *every* algorithm at ~0% for weeks. Uninformative negatives are worse
+   than no experiments.
+2. **Self-play does not bootstrap here** (0-for-4), regardless of base competence. The
+   trained policy gets confidently good at a closed world that doesn't transfer.
+3. **Imitation has a hard ceiling below the teacher** — ~60–70% of teacher strength —
+   caused by compounding error over ~600 primitive decisions per game, not by capacity or
+   observability (both cleanly ruled out).
+4. **Evaluation noise has repeatedly manufactured false conclusions.** Small-N evals,
+   `best_model.zip`, unpaired A/Bs, and jittered bots each produced results that later
+   inverted. Only large-N, paired, jitter-0 measurement is trustworthy.
+5. **The sparse relative win signal is brutal.** Every shaping proxy either taught the
+   wrong thing (absolute → mid-pack complacency, hoarding) or was too weak to bootstrap
+   (relative). The curriculum designed to soften it turned out to make the game *harder*.
+6. **Long-horizon primitive-action credit assignment is the recurring villain.** ~600
+   decisions, one win/loss bit, four seats. PPO, AZ, and BC all broke against this same
+   wall in different ways.
+
+---
+
+## 5. Where to go from here — top three ideas
+
+The pattern across every failure is the same: **the learning problem as formulated —
+~600 primitive decisions per game, one relative win/loss bit, four seats — is the enemy**,
+not the algorithm and not the network. All three proposals restructure the problem instead
+of tuning within it. They are complementary and sequenced cheapest-first; #1 and #2 in
+particular are designed to feed each other.
+
+### Idea 1 — Directly optimize the heuristic's parameters with evolutionary search (CMA-ES / population-based)
+
+**The observation:** the strongest agent we have is the hard heuristic, and its ~30
+`BotProfile` weights are *hand-tuned guesses*. Nobody has ever searched that space. The
+one clean strengthening win (#1, +1.8pp) came from a hand-designed change measured with
+the new paired harness — but hand-designing one change at a time through a ±0.5pp-noise
+harness is slow, and interactions between weights are invisible to it.
+
+**The proposal:** treat the full weight vector (auction weights, buy weights, build
+weights, urgency scalars — everything in `default.toml`) as a genome and run CMA-ES or a
+small population-based search. Fitness = paired, jitter-0, fixed-seed win rate over a
+few hundred games — exactly the harness we just built and validated. Rust games are fast
+and embarrassingly parallel; a 40-member population evaluated at 600 games each is very
+tractable. Two stages: first vs the fixed normal-bot lineup (fitness is well-defined),
+then round-robin within the population (co-evolution) so the result doesn't overfit to
+normal-bot quirks.
+
+**Why this fits the failure history:** it has *none* of the diseases that killed the other
+approaches — no credit assignment (fitness is whole-game win rate), no distribution shift
+(it plays the real game the whole time), no deployment gap (the artifact **is** the
+Expert bot — no export, no Rust port, ships immediately). And it raises the imitation
+ceiling for everything else: DAgger tops out at ~60–70% of *whatever the teacher is*.
+
+**Honest limits:** it can only find the best agent expressible in the current heuristic's
+functional form. It won't invent new strategy concepts — that's what Ideas 2 and 3 are
+for. Expected payoff is a few points, maybe more if the hand-tuning left interactions on
+the table; cost is low and the infrastructure mostly exists.
+
+### Idea 2 — Rebuild the action space around macro-plans (options), scored by the network
+
+*(This adopts and sharpens the options/macro-actions suggestion.)*
+
+**The observation:** the decisive diagnosis of the imitation plateau was compounding error
+over ~600 primitive decisions. The same horizon is what starved PPO's credit assignment
+and what made 200-sim MCTS anemic. Meanwhile the game's *strategic* content is maybe 40–80
+real decisions: which plant to want and how high to go, which fuel posture to take, which
+expansion to commit to, when to race the trigger.
+
+**The proposal:** the policy never picks a city, a fuel unit, or a bid increment again.
+Each phase, a deterministic planner enumerates a small set of complete, legal macro-plans,
+and the network scores/chooses among them:
+
+- *Build:* cheapest single city / max-affordable expansion / cheapest k-city expansion /
+  expand into cheapest-future region / block opponent's cheapest slot / build nothing.
+- *Buy:* fuel exactly this round's firing / stockpile n rounds / starve a contested
+  resource / buy nothing.
+- *Auction:* value each market plant with a max-bid (the heuristic's `evaluate_plant`
+  already computes exactly this); the "policy" nominates a plant+ceiling or passes, and
+  scripted bidding executes to the ceiling.
+
+Critically, **the planners already exist** — they are the decomposed hard heuristic
+(`decide_build_cities`, `decide_buy_resources`, `evaluate_plant`, the Dijkstra routing).
+This isn't new game AI, it's re-exposing existing code as an action menu. The heuristic
+itself becomes one particular fixed chooser over this menu, which gives a perfect
+diagnostic: a policy that merely *matches* the heuristic's choices reproduces ~34.5%
+exactly (no compounding-error tax, because each choice executes a complete correct plan),
+and every learned improvement is strictly additive on top.
+
+**Why this fits the failure history:** episode length drops ~600 → ~50 macro-decisions
+(a >10× improvement in credit assignment for *any* algorithm — PPO's sparse-reward
+problem, MCTS's depth problem, and BC's compounding error all shrink together). Action
+space drops 94 → ~15 semantically meaningful choices. A one-step wrong choice costs one
+plan, not a cascade of ruined micro-moves. It's the single change most likely to make the
+*previously failed* algorithms start working, and it's the only proposal that could let a
+learned policy genuinely exceed the teacher at deployable (no-search) speed.
+
+**Cost and constraints:** this is the big rebuild — new encoding (new obs is fine, new
+small N_ACTIONS), plan-generator extraction in Rust, mirrored in Python, all current
+checkpoints invalidated (they're below the heuristic anyway; nothing of value is lost).
+The network stays a PGRLPOL1-compatible MLP, and the plan executors are Rust code the
+Expert bot calls — so it **can** run in-game, but the Expert bot gains a plan-execution
+layer. Start training with DAgger over macro-plans (proven stable), then — only from that
+competent base — the macro-level game tree is finally shallow enough that search/AZ gets
+a real chance.
+
+### Idea 3 — Stop trying to train a superhuman *policy*; build a superhuman *engine* (play-time search + a supervised value net)
+
+**The observation:** every strong game AI in games like this is *search plus evaluation*,
+not a bare policy. Our one unambiguous positive learning result is that inference-time
+MCTS improves the net (~23% → ~26%). And the piece search actually needs — a good **value
+function** — is trainable by plain supervised regression, which sidesteps every
+instability we've hit: generate millions of positions from fast Rust heuristic-vs-heuristic
+games (with profile diversity from Idea 1's population), label each with the actual
+finish-rank outcome, and fit `obs → rank-value`. No self-play loop, no moving targets, no
+underdog collapse — it's just supervised learning on a stationary dataset, and unlike the
+policy-imitation ceiling, a value net has no compounding-error problem (it's consulted,
+not rolled out).
+
+**The proposal:** port determinized/information-set MCTS to Rust inside the Expert bot:
+sample plausible hidden states (deck order, opponent money) rather than peeking — the
+Python MCTS's true-state forking is an info advantage that can't fairly ship against
+humans — and search over macro-plans (Idea 2) so the tree is shallow. Use the supervised
+value net for leaf evaluation and the best available policy (DAgger net or the heuristic
+itself) as the prior. Thinking time is a strength dial: even 200ms of Rust search per
+move is thousands of simulations.
+
+**Why this fits the failure history:** it reuses only components with *positive* evidence
+(heuristic rollouts, imitation priors, search-as-improvement-operator, supervised
+learning) and none with negative evidence (no self-play training loop, no
+sparse-reward RL). It also changes what "beating humans" requires: the net no longer has
+to be superhuman greedy — it only has to be a decent prior and evaluator, and search
+supplies the superhuman part at play time. This is the Stockfish/KataGo-at-inference
+framing rather than the train-a-god-policy framing.
+
+**Cost and constraints:** the value net is a new small MLP head — trivially runnable in
+Rust with a PGRLPOL1-style format extension (explicitly: today's Expert bot has *no*
+search; this is a real Rust engineering project, the largest of the three). Determinization
+costs some strength vs the cheating searcher, but `Game::copy()` is already cheap and the
+hidden information in Power Grid is mild (deck order; opponent money is trackable).
+
+### Recommended sequencing
+
+1. **Now:** Idea 1 (evolutionary search over `BotProfile`) — cheapest, zero new concepts,
+   ships directly as the Expert bot, and raises the teacher every other idea depends on.
+2. **Next:** Idea 2 (macro-action rebuild) — the structural fix for the diagnosed root
+   cause; re-run DAgger (proven) on the new action space and expect it to *match* the
+   teacher instead of plateauing at 60% of it.
+3. **Then:** Idea 3 (Rust IS-MCTS + supervised value net) over the macro-action space —
+   converts whatever policy/value quality exists into maximum playing strength, and is
+   the most plausible route to actually-beats-humans.

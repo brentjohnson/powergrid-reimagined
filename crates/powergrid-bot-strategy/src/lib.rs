@@ -6,4 +6,4 @@ pub mod profile;
 pub mod strategy;
 
 pub use bot::Bot;
-pub use profile::{default_registry, BotProfile, ProfileRegistry};
+pub use profile::{default_registry, embedded_registry, BotProfile, ProfileRegistry};

@@ -1,15 +1,16 @@
 use powergrid_core::types::BotDifficulty;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
-// Embedded at compile time; override via BOT_PROFILES_FILE env var at startup
-// (not yet wired — added for future runtime customisation).
+// Embedded at compile time; overridden at runtime by pointing the
+// BOT_PROFILES_FILE env var at an alternative TOML (read once, at first use).
 const DEFAULT_PROFILES_TOML: &str = include_str!("../../../assets/bots/default.toml");
 
 // ---------------------------------------------------------------------------
 // Weight structs
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuctionWeights {
     /// Elektro reserved per resource-consuming plant for fuel (see `auction_reserve`),
     /// plus a flat allowance kept aside for ~2 city builds.
@@ -56,7 +57,7 @@ pub struct AuctionWeights {
     pub replacement_waste_weight: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuyWeights {
     /// Fuel reserve multiplier: spend this many ×plant.cost on fuel per plant.
     pub fuel_reserve_multiplier: f32,
@@ -73,13 +74,13 @@ fn default_stockpile_rounds() -> f32 {
     1.0
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildWeights {
     /// Bonus for cities that opponents already occupy (0.0 = ignore, >0 = block earlier).
     pub block_weight: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BureaucracyWeights {
     /// 1.0 = always prefer oil for hybrid plants (conserves coal).
     /// 0.0 = always prefer coal for hybrids.
@@ -90,7 +91,7 @@ pub struct BureaucracyWeights {
 // Profile and registry
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotProfile {
     pub display_name: String,
     /// Boltzmann temperature: 0.0 = pure argmax; higher = more random sampling.
@@ -105,7 +106,7 @@ pub struct BotProfile {
     pub bureaucracy: BureaucracyWeights,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileRegistry {
     pub easy: BotProfile,
     pub normal: BotProfile,
@@ -126,8 +127,65 @@ impl ProfileRegistry {
     }
 }
 
-pub fn default_registry() -> ProfileRegistry {
+/// Parse the compiled-in `assets/bots/default.toml`, ignoring any
+/// `BOT_PROFILES_FILE` override. Use this when you specifically want the
+/// pristine shipped profiles — e.g. the evolutionary search reads `hard` as its
+/// init mean and `normal` as the fixed opponent yardstick, and must not have
+/// those perturbed by whatever champion file the env var points at.
+///
+/// Panics on malformed embedded data (a compile-time asset, so this is a
+/// build/programmer error, not runtime input).
+pub fn embedded_registry() -> ProfileRegistry {
     toml::from_str(DEFAULT_PROFILES_TOML).expect("invalid default bot profiles TOML")
+}
+
+/// The process-wide bot profile registry.
+///
+/// Resolved once, at first use, and cached for the lifetime of the process:
+/// if `BOT_PROFILES_FILE` names a readable, valid TOML file it wins; otherwise
+/// the compiled-in `assets/bots/default.toml` is used. Caching also removes the
+/// per-decision `toml::from_str` cost the bridge used to pay on every bot move.
+///
+/// Because the override is read only once, set `BOT_PROFILES_FILE` before the
+/// first bot decision (i.e. at process start). This is how an evolved champion
+/// profile is deployed to the lobby, client, and Python eval without recompiling.
+pub fn default_registry() -> &'static ProfileRegistry {
+    static REGISTRY: OnceLock<ProfileRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| resolve_registry(std::env::var_os("BOT_PROFILES_FILE")))
+}
+
+/// Pure resolution of the registry from an optional override path: read+parse
+/// the file if given and valid, otherwise fall back to the embedded defaults
+/// (logging why). Factored out of [`default_registry`] so the override logic is
+/// testable without touching the process-global `OnceLock` or env vars.
+fn resolve_registry(override_path: Option<std::ffi::OsString>) -> ProfileRegistry {
+    let Some(path) = override_path else {
+        return embedded_registry();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => match toml::from_str(&contents) {
+            Ok(registry) => {
+                tracing::info!("loaded bot profiles from {:?}", path);
+                registry
+            }
+            Err(e) => {
+                tracing::error!(
+                    "BOT_PROFILES_FILE {:?} is not valid profile TOML ({e}); \
+                     falling back to embedded defaults",
+                    path
+                );
+                embedded_registry()
+            }
+        },
+        Err(e) => {
+            tracing::error!(
+                "could not read BOT_PROFILES_FILE {:?} ({e}); \
+                 falling back to embedded defaults",
+                path
+            );
+            embedded_registry()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +198,7 @@ mod tests {
 
     #[test]
     fn default_profiles_parse_correctly() {
-        let registry = default_registry();
+        let registry = embedded_registry();
         assert_eq!(registry.easy.display_name, "Easy");
         assert_eq!(registry.normal.display_name, "Normal");
         assert_eq!(registry.hard.display_name, "Hard");
@@ -148,8 +206,38 @@ mod tests {
     }
 
     #[test]
+    fn resolve_registry_none_uses_embedded() {
+        let reg = resolve_registry(None);
+        assert_eq!(reg.hard.display_name, "Hard");
+    }
+
+    #[test]
+    fn resolve_registry_reads_override_file() {
+        // Round-trip the embedded registry with one distinctive edit, then
+        // confirm the override path is read and parsed (not the embedded copy).
+        let mut reg = embedded_registry();
+        reg.hard.auction.city_reserve = 12345.0;
+        let toml = toml::to_string(&reg).unwrap();
+        let path =
+            std::env::temp_dir().join(format!("pg_profiles_override_{}.toml", std::process::id()));
+        std::fs::write(&path, toml).unwrap();
+
+        let loaded = resolve_registry(Some(path.clone().into_os_string()));
+        assert_eq!(loaded.hard.auction.city_reserve, 12345.0);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn resolve_registry_bad_path_falls_back() {
+        let reg = resolve_registry(Some("/nonexistent/does/not/exist.toml".into()));
+        // Falls back to embedded rather than panicking.
+        assert_eq!(reg.hard.display_name, "Hard");
+        assert_eq!(reg.hard.auction.city_reserve, 30.0);
+    }
+
+    #[test]
     fn normal_profile_auction_weights() {
-        let registry = default_registry();
+        let registry = embedded_registry();
         let w = &registry.normal.auction;
         assert_eq!(w.city_reserve, 30.0);
         assert_eq!(w.safety_buffer, 5.0);
@@ -166,7 +254,7 @@ mod tests {
 
     #[test]
     fn hard_profile_has_nonzero_opponent_features() {
-        let registry = default_registry();
+        let registry = embedded_registry();
         let w = &registry.hard.auction;
         assert!(w.denial_weight > 0.0, "hard should value denying opponents");
         assert!(w.endgame_weight > 0.0, "hard should value endgame capacity");
@@ -176,7 +264,7 @@ mod tests {
 
     #[test]
     fn easy_and_normal_profiles_are_opponent_blind() {
-        let registry = default_registry();
+        let registry = embedded_registry();
         // Denial requires reasoning about every opponent's board state — reserved
         // for the hard tier. Easy/normal must keep it disabled.
         assert_eq!(registry.easy.auction.denial_weight, 0.0);
@@ -185,7 +273,7 @@ mod tests {
 
     #[test]
     fn weight_tiers_escalate_with_difficulty() {
-        let registry = default_registry();
+        let registry = embedded_registry();
         let (easy, normal, hard) = (
             &registry.easy.auction,
             &registry.normal.auction,

@@ -61,7 +61,7 @@ If adding or removing crates, update the stubs in the Dockerfile.
 
 ## Architecture
 
-Eight-crate Cargo workspace:
+Nine-crate Cargo workspace:
 
 ```
 crates/
@@ -73,6 +73,7 @@ crates/
   powergrid-py/            # PyO3 extension module for the Python RL environment
   powergrid-maptool/       # egui desktop tool for creating/editing map TOML files
   powergrid-netviz/        # egui desktop tool for inspecting the RL Expert policy network
+  powergrid-evolve/        # offline CMA-ES tuner for the heuristic BotProfile weights (training tool)
 assets/
   maps/usa.toml            # default map asset (49 cities), embedded at compile time via powergrid-core
   maps/germany.toml        # alternate map (42 cities), usable via MAP_FILE
@@ -110,7 +111,7 @@ All game state and rules. The key entry point is `rules::apply_action(state, pla
   - `hints.rs` — `HintPayload`
   - `mod.rs` — re-exports + `PROTOCOL_VERSION` constant
 - `map.rs` — `Map` (runtime graph) + `MapData` (TOML-deserializable). Dijkstra routing in `Map::connection_cost_to`.
-- `rules.rs` — `apply_action` dispatcher + one `handle_*` function per phase. Also `build_plant_deck()`.
+- `rules.rs` — `apply_action` dispatcher + one `handle_*` function per phase. Also `build_plant_deck()` and `finish_ranks(state) -> Vec<(PlayerId, position)>` (full 1-based final standings by the official tiebreak — powered, then money, then cities; position 1 == `determine_winner`'s winner, ties resolved identically. Used by `powergrid-evolve` fitness and, later, RL value targets / search leaf eval).
 
 **Phase flow:** `Lobby → Auction → BuyResources → BuildCities → Bureaucracy → [next round or GameOver]`
 
@@ -128,7 +129,7 @@ Shared game session abstraction used by both lobby and client.
 Pure strategy + AI lib. No I/O, no tokio. Depended on by session, lobby, and client.
 
 - `bot.rs` — `Bot { id, name, color, profile, rng, policy }`: stateful bot with a seeded `SmallRng`. `decide(&mut self, state) -> Option<Action>` is the primary call site. Holds the RNG across calls so sampling is stable within a game. When `policy` is set (Expert difficulty, via `with_policy`), `decide` plays the RL policy and only falls back to the heuristic if it's unusable.
-- `profile.rs` — `BotProfile` (per-difficulty weight struct), `ProfileRegistry` (named profile map: easy/normal/hard/expert), `default_registry()`. Profiles are embedded from `assets/bots/default.toml` at compile time; a runtime override path is reserved via `BOT_PROFILES_FILE`. The `expert` profile (a hard clone) is only the fallback/valuation profile — Expert play is driven by the RL policy.
+- `profile.rs` — `BotProfile` (per-difficulty weight struct; `Serialize + Deserialize`), `ProfileRegistry` (named profile map: easy/normal/hard/expert), `default_registry()`, `embedded_registry()`. Profiles are embedded from `assets/bots/default.toml` at compile time. `default_registry()` returns a process-cached `&'static ProfileRegistry`, resolved once at first use: if `BOT_PROFILES_FILE` names a valid TOML it wins, else the embedded defaults (bad path/TOML logs and falls back). Caching also removes the per-decision `toml::from_str` the PyO3 bridge used to pay. `embedded_registry()` always returns the pristine compiled-in profiles, ignoring the env var (used by `powergrid-evolve` for its init mean / opponent yardstick). The `expert` profile (a hard clone) is only the fallback/valuation profile — Expert play is driven by the RL policy.
 - `features.rs` — feature extraction helpers (plant value scoring, resource cost estimation) shared by the auction and buy-resources decision functions.
 - `strategy.rs` — `decide(state, me) -> Option<Action>` (stateless, used by the Python bridge) and `decide_with_bot(state, bot) -> Option<Action>` (profile-weighted + softmax sampling). One `decide_`* helper per phase. Anti-stall guarantees (the game only ends when someone builds `end_game_cities`): `decide_build_cities` overbuilds — spends *surplus* cash (above fuel + city reserves) on cities beyond powering headroom, capped at `end_game_cities` — and the auction thresholds (`min_open_score`, `upgrade_margin`) are scaled by `late_game_urgency` so bots keep buying plants as the game closes (regression test: `tests/heuristic_termination.rs`). Also `decide_rl(state, bot) -> RlDecision`: the Expert path — strict `current_actor_id` turn gate, obs/mask encoding, MLP forward, stochastic masked-softmax sampling (never argmax: greedy play can stall).
 - `encoding.rs` — the RL observation/action encoding (moved here from powergrid-py so the Expert bot can use it): `CITY_IDS`/`REGION_NAMES`/`OBS_SIZE` (582)/`N_ACTIONS` (94) constants, `build_observation`, `build_action_mask`, `action_id_to_action`, `compute_legal_move_info`, `current_actor_id`, `map_matches_default`. Compiled against the **default (USA) map**; mirrors `python/src/powergrid_env/constants.py` (parity tests in `python/tests/test_native_bridge.py` catch drift). **2026-07-08:** obs grew 454→507→582 with three features the heuristic bot relies on but the net couldn't see — per-city connection cost from the actor's network (`Map::connection_costs_from`, the Dijkstra routing that drives build decisions), opponent per-resource fuel demand (market contention), and per-opponent plant detail (5 opp × 3 plants × number/kind/cost/cities/cap — the highest number is the turn-order tiebreaker; kinds/costs feed denial/fuel reasoning). Any change to the obs layout invalidates all trained checkpoints. Auction bidding (`PLACE_BID_BASE`, `N_BID_ACTIONS = 1`) is English-auction style — the only representable raise is +1 over the standing bid; `PassAuction` covers dropping out. (Previously 50 actions encoded raise offsets +1..+50; collapsed to 1 because self-play with that range learned to jump-bid by large, non-strategic amounts instead of the human "+1 at a time" convention — see `project_training_reset` memory.)
@@ -209,6 +210,14 @@ egui desktop tool for interactively inspecting the RL Expert policy network (`po
 - Relies on `MlpPolicy::forward_trace` (returns every pre/post-tanh intermediate) and the `l1`/`l2`/`out` weight accessors added to `policy.rs` for this tool.
 - In active-game mode, `sync_from_game` captures the real observation as `baseline_obs` whenever it's the inspected seat's turn. The "Show Δ from real observation" checkbox (network panel, enabled once a baseline exists) recolors input cells, hidden/output nodes, and edges by the *change* relative to that baseline — i.e. the impact of hand-edited sliders on the forward pass — instead of absolute values.
 - `game.rs` — `GameDriver`/`GameConfig`: drives a real local game (pure-sync, mirroring `powergrid-py`'s `Game::start`/`drive_bots` — no tokio/`Session`) with one inspected seat (the host) plus heuristic bot opponents of a configurable difficulty, player count, seed, and optional end-game-cities override. The left panel's "New game" button starts it; once it's the inspected seat's turn, its real observation and action mask load into the sliders and into the output panel's legality/legal-softmax columns. Sliders stay editable afterward for hand-tweaking. "Apply policy move" samples a masked action from the policy's logits over the *current* (possibly hand-tweaked) observation and plays it; "Apply selected action" plays whichever output-list action is selected, if legal. Either advances the game (bots play their turns) and reloads the next real observation/mask.
+
+### powergrid-evolve
+
+Offline **CMA-ES tuner** for the heuristic bot's `BotProfile` weights — Phase 1 of the "beat humans" plan (see `RL-TRAINING-JOURNAL.md`). A training tool (binary), not shipped in the server/client image (stubbed in the Dockerfile). It plays thousands of headless heuristic games per generation and optimizes the 14 strategy weights to maximize the candidate seat's finish position. Full runbook in `crates/powergrid-evolve/README.md`.
+
+- Fitness is **paired**: all candidates in a generation share one seed block (common random numbers), seat-rotated to remove position bias, with all bots' noise silenced (`temperature = 0`, `jitter = 0`) so a fixed seed replays bit-identically. Gen-0 mean = the shipped `hard` profile, so it reproduces the known ~33% baseline and anchors the run.
+- `genome.rs` (14-weight ⇄ normalized-vector map, `x = 0` is `hard`), `games.rs` (headless deterministic game via `Bot::decide` → `finish_ranks`, parallel over threads), `cmaes.rs` (self-contained `(μ/μ_w, λ)`-CMA-ES with a hand-rolled Jacobi eigensolver — no `nalgebra`/BLAS), `main.rs` (CLI, generation loop, outputs). Outputs to `--out-dir`: `history.csv`, `best.toml` (a full `ProfileRegistry`, deployable via `BOT_PROFILES_FILE`), resumable `checkpoint.json`.
+- **Determinism dependency:** truly-paired eval requires the engine to be deterministic given a seed at `jitter = 0`. This surfaced (and fixed) a latent nondeterminism — `strategy.rs::decide_build_cities` sorted candidate cities by cost with no tiebreak, so equal-cost cities resolved by `Map::cities` HashMap iteration order (randomized per instance). The sort now has a city-id tiebreak. Any new heuristic decision that iterates a `HashMap` and picks by a non-total order must add a similar deterministic tiebreak.
 
 ### powergrid-py
 

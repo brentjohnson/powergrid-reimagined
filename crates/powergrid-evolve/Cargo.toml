@@ -1,0 +1,20 @@
+[package]
+name = "powergrid-evolve"
+version = "0.1.0"
+edition = "2021"
+
+# Offline evolutionary tuner for the heuristic bot's BotProfile weights.
+# Not part of the shipped server/client — a training tool run on the training
+# machine. See crates/powergrid-evolve/README.md.
+
+[[bin]]
+name = "powergrid-evolve"
+path = "src/main.rs"
+
+[dependencies]
+powergrid-core = { path = "../powergrid-core" }
+powergrid-bot-strategy = { path = "../powergrid-bot-strategy" }
+rand = { version = "0.8", features = ["small_rng"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"

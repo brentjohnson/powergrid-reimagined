@@ -1345,23 +1345,45 @@ fn end_game_triggered(state: &GameState) -> bool {
         .any(|p| state.player_city_count(p.id) >= state.end_game_cities as usize)
 }
 
+/// Full final standings, best player first, as `(player_id, position)` with
+/// `position` 1-based (1 = winner). Ordered by the official tiebreak: most
+/// cities actually powered, then most money, then most cities in network.
+///
+/// Valid to call at any time (it just ranks the current standings), but only
+/// meaningful once the game is over. Position 1 always equals
+/// [`determine_winner`]'s winner, including the tie convention (on an exact
+/// three-key tie the player appearing *last* in `state.players` ranks higher,
+/// matching the previous `max_by_key` behavior). Used by RL value-target
+/// generation and search leaf evaluation, which need the whole ordering rather
+/// than just the winner.
+pub fn finish_ranks(state: &GameState) -> Vec<(PlayerId, usize)> {
+    let key = |p: &crate::types::Player| {
+        (
+            p.last_cities_powered,
+            p.money,
+            state.player_city_count(p.id),
+        )
+    };
+    let mut order: Vec<usize> = (0..state.players.len()).collect();
+    // Descending by key; on ties the later original index wins (mirrors the
+    // `max_by_key` "last maximal element" rule the winner check used).
+    order.sort_by(|&a, &b| {
+        key(&state.players[b])
+            .cmp(&key(&state.players[a]))
+            .then(b.cmp(&a))
+    });
+    order
+        .into_iter()
+        .enumerate()
+        .map(|(rank, idx)| (state.players[idx].id, rank + 1))
+        .collect()
+}
+
 fn determine_winner(state: &GameState) -> Option<PlayerId> {
     if !end_game_triggered(state) {
         return None;
     }
-
-    // Winner: most cities actually powered; tie: most money; tie: most cities in network.
-    state
-        .players
-        .iter()
-        .max_by_key(|p| {
-            (
-                p.last_cities_powered,
-                p.money,
-                state.player_city_count(p.id),
-            )
-        })
-        .map(|p| p.id)
+    finish_ranks(state).first().map(|(id, _)| *id)
 }
 
 fn recalculate_player_order(state: &mut GameState) {
@@ -1715,6 +1737,35 @@ mod tests {
     use super::*;
     use crate::map::{CityData, ConnectionData, Map, MapData};
     use crate::state::give_player_cities;
+
+    #[test]
+    fn finish_ranks_orders_by_powered_then_money_then_cities() {
+        let (mut state, a, b, c) = three_player_game();
+
+        // b powers the most cities → 1st regardless of money.
+        // a and c tie on powered(1); a has more money → a 2nd, c 3rd.
+        state.player_mut(a).unwrap().last_cities_powered = 1;
+        state.player_mut(a).unwrap().money = 50;
+        state.player_mut(b).unwrap().last_cities_powered = 3;
+        state.player_mut(b).unwrap().money = 10;
+        state.player_mut(c).unwrap().last_cities_powered = 1;
+        state.player_mut(c).unwrap().money = 20;
+
+        let ranks = finish_ranks(&state);
+        let pos = |id: PlayerId| ranks.iter().find(|(p, _)| *p == id).unwrap().1;
+        assert_eq!(pos(b), 1);
+        assert_eq!(pos(a), 2);
+        assert_eq!(pos(c), 3);
+        // Positions are a permutation of 1..=n.
+        let mut positions: Vec<usize> = ranks.iter().map(|(_, r)| *r).collect();
+        positions.sort_unstable();
+        assert_eq!(positions, vec![1, 2, 3]);
+        // Rank 1 must agree with the winner check once the end game is triggered.
+        assert_eq!(
+            determine_winner(&state).is_none(),
+            !end_game_triggered(&state)
+        );
+    }
 
     fn test_map() -> Map {
         Map::from_data(MapData {

@@ -652,13 +652,19 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
         })
         .collect();
 
-    // Sort by (cost - contest_bonus) ascending — cheapest and most contested first.
-    candidates.sort_by(|(_, cost_a, bonus_a), (_, cost_b, bonus_b)| {
+    // Sort by (cost - contest_bonus) ascending — cheapest and most contested
+    // first — with a city-id tiebreak so the order is total and deterministic.
+    // Without the tiebreak, equal-cost cities resolve by `map.cities` HashMap
+    // iteration order, which Rust randomizes per map instance; that made
+    // otherwise-identical games diverge and put a noise floor under paired bot
+    // evaluation (see RL-TRAINING-JOURNAL.md / powergrid-evolve).
+    candidates.sort_by(|(id_a, cost_a, bonus_a), (id_b, cost_b, bonus_b)| {
         let adjusted_a = *cost_a as f32 - bonus_a;
         let adjusted_b = *cost_b as f32 - bonus_b;
         adjusted_a
             .partial_cmp(&adjusted_b)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| id_a.cmp(id_b))
     });
 
     // Spend freely up to capacity headroom: cities we can actually power.

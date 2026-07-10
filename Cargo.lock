@@ -3001,6 +3001,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "powergrid-evolve"
+version = "0.1.0"
+dependencies = [
+ "powergrid-bot-strategy",
+ "powergrid-core",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "powergrid-lobby"
 version = "0.1.0"
 dependencies = [

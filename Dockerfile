@@ -21,6 +21,8 @@ COPY crates/powergrid-maptool/Cargo.toml crates/powergrid-maptool/Cargo.toml
 RUN mkdir -p crates/powergrid-maptool/src && echo 'fn main(){}' > crates/powergrid-maptool/src/main.rs
 COPY crates/powergrid-netviz/Cargo.toml crates/powergrid-netviz/Cargo.toml
 RUN mkdir -p crates/powergrid-netviz/src && echo 'fn main(){}' > crates/powergrid-netviz/src/main.rs
+COPY crates/powergrid-evolve/Cargo.toml crates/powergrid-evolve/Cargo.toml
+RUN mkdir -p crates/powergrid-evolve/src && echo 'fn main(){}' > crates/powergrid-evolve/src/main.rs
 
 RUN cargo build --release -p powergrid-lobby
 
