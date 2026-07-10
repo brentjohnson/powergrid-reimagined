@@ -31,6 +31,7 @@ replacement_waste_weight  = 0.25   # mild penalty for discarding a plant that st
 
 [easy.buy]
 fuel_reserve_multiplier = 4.0
+stockpile_rounds = 1.0          # reactive — buy only the coming firing, no stockpiling
 
 [easy.build]
 block_weight = 0.0
@@ -62,6 +63,7 @@ replacement_waste_weight  = 0.5    # penalty for discarding a plant that still h
 
 [normal.buy]
 fuel_reserve_multiplier = 4.0   # spend 4× plant cost on fuel reserves
+stockpile_rounds = 1.0          # reactive — buy only the coming firing, no stockpiling
 
 [normal.build]
 block_weight = 0.0
@@ -94,6 +96,7 @@ replacement_waste_weight  = 0.75   # strongest discard penalty of the tiers (kep
 
 [hard.buy]
 fuel_reserve_multiplier = 4.0
+stockpile_rounds = 2.0          # hoard cheap/scarce fuel up to ~2 rounds (full storage) when it's below its forward price
 
 [hard.build]
 block_weight = 2.0   # bonus for cities that opponents are already building in
@@ -125,6 +128,7 @@ replacement_waste_weight  = 0.75
 
 [expert.buy]
 fuel_reserve_multiplier = 4.0
+stockpile_rounds = 2.0          # copy of [hard]
 
 [expert.build]
 block_weight = 2.0

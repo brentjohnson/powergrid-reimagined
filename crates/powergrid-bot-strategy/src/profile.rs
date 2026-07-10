@@ -60,6 +60,17 @@ pub struct AuctionWeights {
 pub struct BuyWeights {
     /// Fuel reserve multiplier: spend this many ×plant.cost on fuel per plant.
     pub fuel_reserve_multiplier: f32,
+    /// Target rounds of fuel to hold in storage when the fuel is currently
+    /// cheaper than its forward-expected price (the buy-resources stockpile
+    /// pass). `1.0` (the default) disables stockpiling — the bot only buys the
+    /// coming firing's worth. Higher tiers pre-buy cheap/scarce fuel up to this
+    /// many rounds, capped by real storage.
+    #[serde(default = "default_stockpile_rounds")]
+    pub stockpile_rounds: f32,
+}
+
+fn default_stockpile_rounds() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Deserialize)]

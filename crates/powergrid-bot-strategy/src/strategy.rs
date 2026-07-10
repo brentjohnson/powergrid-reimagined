@@ -13,8 +13,8 @@ use crate::{
     bot::Bot,
     encoding,
     features::{
-        auction_reserve, capacity_bump, city_contest_bonus, evaluate_plant, fuel_reserve,
-        late_game_urgency, plant_score, should_skip_auction,
+        auction_reserve, capacity_bump, city_contest_bonus, evaluate_plant, expected_unit_price,
+        fuel_reserve, late_game_urgency, plant_score, player_resource_demand, should_skip_auction,
     },
     policy,
     profile::default_registry,
@@ -427,6 +427,25 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
         );
     }
 
+    // Pass 3: stockpile cheap fuel ahead of future dearness. The essential
+    // passes above cover only the coming firing; this spends *surplus* cash
+    // (above a city-build reserve) to pre-buy fuel that is currently cheaper
+    // than its forward-expected price, up to `stockpile_rounds` of storage.
+    let stockpile_rounds = bot.profile.buy.stockpile_rounds;
+    if stockpile_rounds > 1.0 {
+        let reserve =
+            bot.profile.auction.city_reserve as u32 + bot.profile.auction.safety_buffer as u32;
+        stockpile_cheap_fuel(
+            state,
+            &mut sim_player,
+            &mut sim_market,
+            &mut budget,
+            &mut purchases,
+            reserve,
+            stockpile_rounds,
+        );
+    }
+
     if purchases.is_empty() {
         info!("Buy resources: nothing to buy, done");
     } else {
@@ -542,6 +561,62 @@ fn try_buy(
                 resource, remaining, budget
             );
             break;
+        }
+    }
+}
+
+/// Pre-buy fuel that is currently cheaper than its forward-expected price, up to
+/// `stockpile_rounds` rounds of storage, spending only cash above `reserve`.
+/// Captures the human tactic of hoarding cheap/scarce fuel — the valuation model
+/// already forward-prices this dearness (`expected_firing_cost`); the buy logic
+/// just wasn't acting on it. Buys one unit at a time so the rising marginal price
+/// naturally halts the stockpile once the fuel is no longer a bargain, and
+/// `can_add_resource` caps it at the rack's real storage limit.
+#[allow(clippy::too_many_arguments)]
+fn stockpile_cheap_fuel(
+    state: &GameState,
+    player: &mut Player,
+    market: &mut ResourceMarket,
+    budget: &mut u32,
+    purchases: &mut Vec<(Resource, u8)>,
+    reserve: u32,
+    stockpile_rounds: f32,
+) {
+    for resource in [
+        Resource::Coal,
+        Resource::Oil,
+        Resource::Gas,
+        Resource::Uranium,
+    ] {
+        let demand = player_resource_demand(player, resource);
+        if demand <= 0.0 {
+            continue;
+        }
+        let expected = expected_unit_price(resource, state);
+        let cap_units = (demand * stockpile_rounds).round() as u8;
+        while player.resources.get(resource) < cap_units {
+            if *budget <= reserve
+                || market.available(resource) == 0
+                || !player.can_add_resource(resource, 1)
+            {
+                break;
+            }
+            let Some(unit_cost) = market.price(resource, 1) else {
+                break;
+            };
+            // Only pre-buy while this next unit is at/below its forward price and
+            // paying for it still leaves the city-build reserve intact.
+            if unit_cost as f32 > expected || budget.saturating_sub(unit_cost) < reserve {
+                break;
+            }
+            debug!(
+                "Stockpiling 1 {:?} at {} (forward price {:.1})",
+                resource, unit_cost, expected
+            );
+            purchases.push((resource, 1));
+            market.take(resource, 1);
+            player.resources.add(resource, 1);
+            *budget -= unit_cost;
         }
     }
 }
@@ -802,6 +877,19 @@ mod tests {
             profile,
             42,
         )
+    }
+
+    fn hard_bot_for(player: &Player) -> Bot {
+        let registry = default_registry();
+        let mut bot = Bot::new(
+            PlayerId::nil(),
+            "test".into(),
+            PlayerColor::Red,
+            registry.hard.clone(),
+            42,
+        );
+        bot.id = player.id;
+        bot
     }
 
     /// Build a minimal 4-player GameState and insert `player` as its first player.
@@ -1331,6 +1419,89 @@ mod tests {
             "expected combined gas+oil purchase >= 5 (2 pure + 3 hybrid), got {}",
             gasoil_bought
         );
+    }
+
+    /// A hard bot (`stockpile_rounds = 2.0`) facing coal-hungry opponents should
+    /// pre-buy coal *beyond* the single firing its own plant needs, because the
+    /// contested market makes coal's forward price exceed its current price —
+    /// exactly when hoarding cheap fuel pays off. Capped at the rack's real
+    /// storage (2 × cost = 6 for a cost-3 coal plant).
+    #[test]
+    fn hard_bot_stockpiles_cheap_contested_fuel() {
+        let mut player = bot_with_money(200);
+        player.plants.push(coal_plant(20, 3, 5)); // burns 3 coal/round
+        let mut state = state_with_player(&player);
+        // Three coal-hungry opponents drain the market → forward coal price far
+        // above the (currently cheap) table price.
+        for n in 0..3u8 {
+            let mut opp = bot_with_money(100);
+            opp.plants.push(coal_plant(30 + n, 8, 4));
+            state.players.push(opp);
+        }
+        let mut bot = hard_bot_for(&player);
+
+        let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
+        let Action::BuyResourceBatch { purchases } = action else {
+            panic!("expected BuyResourceBatch");
+        };
+        let coal = bought(&purchases, Resource::Coal);
+        assert!(
+            coal > 3,
+            "hard bot should stockpile past its 3-coal firing when coal is cheap now \
+             but dear later, got {coal}"
+        );
+        assert!(
+            coal <= 6,
+            "stockpile must respect the 2×cost=6 storage cap, got {coal}"
+        );
+    }
+
+    /// The stockpile pass spends only cash *above* the city-build reserve
+    /// (city_reserve + safety_buffer = 35 for the hard profile). With just
+    /// enough money for the firing and nothing to spare, it buys no extra fuel.
+    #[test]
+    fn stockpile_respects_city_build_reserve() {
+        let mut player = bot_with_money(38);
+        player.plants.push(coal_plant(20, 3, 5));
+        let mut state = state_with_player(&player);
+        for n in 0..3u8 {
+            let mut opp = bot_with_money(100);
+            opp.plants.push(coal_plant(30 + n, 8, 4));
+            state.players.push(opp);
+        }
+        let mut bot = hard_bot_for(&player);
+
+        let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
+        let Action::BuyResourceBatch { purchases } = action else {
+            panic!("expected BuyResourceBatch");
+        };
+        let coal = bought(&purchases, Resource::Coal);
+        assert_eq!(
+            coal, 3,
+            "with no surplus above the build reserve, buy only the firing (got {coal})"
+        );
+    }
+
+    /// The normal profile keeps `stockpile_rounds = 1.0` (the eval yardstick must
+    /// not change): even in the same contested market it buys only the firing.
+    #[test]
+    fn normal_bot_does_not_stockpile() {
+        let mut player = bot_with_money(200);
+        player.plants.push(coal_plant(20, 3, 5));
+        let mut state = state_with_player(&player);
+        for n in 0..3u8 {
+            let mut opp = bot_with_money(100);
+            opp.plants.push(coal_plant(30 + n, 8, 4));
+            state.players.push(opp);
+        }
+        let mut bot = bot_for(&player); // normal profile
+
+        let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
+        let Action::BuyResourceBatch { purchases } = action else {
+            panic!("expected BuyResourceBatch");
+        };
+        let coal = bought(&purchases, Resource::Coal);
+        assert_eq!(coal, 3, "normal bot must not stockpile (got {coal})");
     }
 
     #[test]

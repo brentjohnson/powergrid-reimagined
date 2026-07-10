@@ -226,6 +226,52 @@ pub fn expected_firing_cost(plant: &PowerPlant, state: &GameState) -> f32 {
     total / rounds as f32
 }
 
+/// Total units of `resource` that `player`'s current rack burns per round
+/// (hybrids split their cost across gas and oil, matching `per_round_demand`).
+/// Used to size the fuel stockpile target in `decide_buy_resources`.
+pub fn player_resource_demand(player: &Player, resource: Resource) -> f32 {
+    player
+        .plants
+        .iter()
+        .map(|p| per_round_demand(p, resource))
+        .sum()
+}
+
+/// Forward-average price of a *single* unit of `resource`, walking the market
+/// through the remaining rounds exactly as `expected_firing_cost` does (each
+/// round: read the next-unit price, then drain by total per-round demand across
+/// every player's rack and replenish). This is the reference the buy-resources
+/// stockpile pass compares the *current* unit price against: fuel is only worth
+/// pre-buying while it's cheaper now than its forward average. Rounds where the
+/// market is empty price at 9 (the max per-unit table price), matching
+/// `estimate_firing_cost`'s overrun rate.
+pub fn expected_unit_price(resource: Resource, state: &GameState) -> f32 {
+    let rounds = (remaining_rounds(state).round() as usize).max(1);
+    let (coal_r, oil_r, gas_r, uranium_r) = replenishment_amounts(state.step, state.players.len());
+    let replen = match resource {
+        Resource::Coal => coal_r,
+        Resource::Oil => oil_r,
+        Resource::Gas => gas_r,
+        Resource::Uranium => uranium_r,
+    };
+    let demand: f32 = state
+        .players
+        .iter()
+        .flat_map(|p| p.plants.iter())
+        .map(|owned| per_round_demand(owned, resource))
+        .sum();
+
+    let mut market = state.resources.clone();
+    let mut total = 0.0f32;
+    for _ in 0..rounds {
+        total += market.price(resource, 1).unwrap_or(9) as f32;
+        let drain = (demand.round() as u8).min(market.available(resource));
+        market.take(resource, drain);
+        market.replenish(resource, replen);
+    }
+    total / rounds as f32
+}
+
 // ---------------------------------------------------------------------------
 // Capacity helpers
 // ---------------------------------------------------------------------------
