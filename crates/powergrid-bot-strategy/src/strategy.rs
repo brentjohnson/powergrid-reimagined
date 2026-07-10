@@ -625,6 +625,91 @@ fn stockpile_cheap_fuel(
 // Build cities phase
 // ---------------------------------------------------------------------------
 
+/// Endgame winning-grab: if `player` can reach the end-game city trigger this
+/// turn and would win the resulting power-off, return the cheapest build that
+/// gets there; otherwise `None`.
+///
+/// The engine ends the game at end-of-round once any player *owns*
+/// `end_game_cities`, and the winner is decided by `(cities_powered, money,
+/// cities_owned)` (see `rules::determine_winner`). This projects that final
+/// ranking: our own powered count is the real fuel-limited
+/// `optimal_firing_subset` (capped at the trigger), while each opponent is given
+/// an *optimistic* upper bound — full plant capacity, fully fueled, capped at
+/// the trigger — so the grab only fires when we win even against their best
+/// case. That conservatism means false positives (grabbing into a loss) can't
+/// happen; we may occasionally pass up a winnable grab, which is the safe way to
+/// err. Returns `None` when the end is already triggered (the game is ending
+/// regardless, so the normal maximize-position logic should run instead).
+fn try_endgame_grab(
+    state: &GameState,
+    player: &Player,
+    owned_cities: &[String],
+    candidates: &[(String, u32, f32)],
+) -> Option<Action> {
+    let egc = state.end_game_cities as usize;
+    let owned = owned_cities.len();
+    if owned >= egc {
+        return None; // we're already at the trigger — not a grab
+    }
+    // If anyone already owns the trigger, the game ends this round no matter
+    // what we do; leave it to the normal logic to maximize powered cities.
+    if state
+        .players
+        .iter()
+        .any(|p| state.player_city_count(p.id) >= egc)
+    {
+        return None;
+    }
+
+    let need = egc - owned;
+
+    // Cheapest `need` distinct cities to reach the trigger, costed against a
+    // network that grows as we add them (candidates are already cost-sorted).
+    let mut sim: Vec<String> = owned_cities.to_vec();
+    let mut picked: Vec<String> = Vec::new();
+    let mut cost = 0u32;
+    for (city_id, _, _) in candidates {
+        if picked.len() == need {
+            break;
+        }
+        let route = state.map.connection_cost_to(&sim, city_id)?;
+        let city = state.map.cities.get(city_id.as_str())?;
+        let slot = connection_cost(city.owners.len());
+        cost += route + slot;
+        picked.push(city_id.clone());
+        sim.push(city_id.clone());
+    }
+    if picked.len() < need || cost > player.money {
+        return None; // can't reach the trigger this turn (unreachable or unaffordable)
+    }
+
+    // Project the final power-off. Ours is fuel-limited and capped at the
+    // trigger (we'll own exactly `egc` cities); opponents get an optimistic
+    // fully-fueled capacity bound, also capped at the trigger.
+    let (_, me_powered, _) = player.optimal_firing_subset(egc as u8);
+    let me_money_after = player.money - cost;
+    let wins = state.players.iter().filter(|o| o.id != player.id).all(|o| {
+        let opp_cap: u8 = o.plants.iter().map(|p| p.cities).sum();
+        let opp_powered_ub = opp_cap.min(egc as u8);
+        // Tiebreak owned is `egc` for both, so it drops out; compare
+        // (powered, money) exactly as `determine_winner` would.
+        (me_powered, me_money_after) > (opp_powered_ub, o.money)
+    });
+    if !wins {
+        return None;
+    }
+
+    info!(
+        "Endgame grab: building {} cities to reach the {}-city trigger and win \
+         the power-off ({} powered, {} left)",
+        picked.len(),
+        egc,
+        me_powered,
+        me_money_after,
+    );
+    Some(Action::BuildCities { city_ids: picked })
+}
+
 fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
     let player = state.player(bot.id)?;
     let block_weight = bot.profile.build.block_weight;
@@ -660,6 +745,17 @@ fn decide_build_cities(state: &GameState, bot: &mut Bot) -> Option<Action> {
             .partial_cmp(&adjusted_b)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+
+    // Endgame winning-grab (hard/expert): if the game isn't over yet and we can
+    // reach the end-game trigger this turn *and* would win the resulting
+    // power-off, end the game on top — spending past the reserve the anti-stall
+    // overbuild below would otherwise protect. Purely additive: it only ever
+    // returns an extra build, never suppresses one, so termination still holds.
+    if bot.profile.build.endgame_grab {
+        if let Some(action) = try_endgame_grab(state, player, &owned_cities, &candidates) {
+            return Some(action);
+        }
+    }
 
     // Spend freely up to capacity headroom: cities we can actually power.
     // Beyond that, cities earn no income — but they still count toward the
@@ -1502,6 +1598,75 @@ mod tests {
         };
         let coal = bought(&purchases, Resource::Coal);
         assert_eq!(coal, 3, "normal bot must not stockpile (got {coal})");
+    }
+
+    /// The grab fires when reaching the trigger this turn wins the power-off:
+    /// it returns the cheapest build to the trigger even though the opponents
+    /// (here powerless) can't match the bot's powered count.
+    #[test]
+    fn endgame_grab_builds_to_trigger_when_winning() {
+        let mut player = bot_with_money(100);
+        player.plants.push(wind_plant(5, 2)); // powers 2 cities, no fuel
+        let mut state = state_with_player(&player);
+        state.end_game_cities = 2;
+        for _ in 0..3 {
+            state.players.push(bot_with_money(10)); // powerless opponents
+        }
+
+        let owned = vec!["seattle".to_string()];
+        let candidates = vec![("vancouver".to_string(), 0u32, 0.0f32)];
+        match try_endgame_grab(&state, &state.players[0], &owned, &candidates) {
+            Some(Action::BuildCities { city_ids }) => {
+                assert_eq!(city_ids, vec!["vancouver".to_string()]);
+            }
+            other => panic!("expected an endgame grab, got {other:?}"),
+        }
+    }
+
+    /// The grab declines when it would end the game in a loss — here an opponent
+    /// powers just as many cities and holds more money, winning the tiebreak.
+    #[test]
+    fn endgame_grab_declines_when_it_would_lose() {
+        let mut player = bot_with_money(30);
+        player.plants.push(wind_plant(5, 2));
+        let mut state = state_with_player(&player);
+        state.end_game_cities = 2;
+        let mut opp = bot_with_money(500); // matches powered, richer → wins tiebreak
+        opp.plants.push(wind_plant(6, 2));
+        state.players.push(opp);
+        state.players.push(bot_with_money(10));
+        state.players.push(bot_with_money(10));
+
+        let owned = vec!["seattle".to_string()];
+        let candidates = vec![("vancouver".to_string(), 0u32, 0.0f32)];
+        assert!(
+            try_endgame_grab(&state, &state.players[0], &owned, &candidates).is_none(),
+            "must not grab into a tiebreak loss"
+        );
+    }
+
+    /// Once someone already owns the trigger the game is ending regardless, so
+    /// the grab bows out and lets the normal maximize-position logic run.
+    #[test]
+    fn endgame_grab_declines_when_already_triggered() {
+        let mut player = bot_with_money(100);
+        player.plants.push(wind_plant(5, 3));
+        let mut state = state_with_player(&player);
+        state.end_game_cities = 2;
+        let opp = bot_with_money(10);
+        let opp_id = opp.id;
+        state.players.push(opp);
+        // Opponent already owns 2 cities in the map → end-game is triggered.
+        for city in ["portland", "vancouver"] {
+            state.map.cities.get_mut(city).unwrap().owners.push(opp_id);
+        }
+
+        let owned = vec!["seattle".to_string()];
+        let candidates = vec![("boise".to_string(), 0u32, 0.0f32)];
+        assert!(
+            try_endgame_grab(&state, &state.players[0], &owned, &candidates).is_none(),
+            "must not grab when the game is already ending"
+        );
     }
 
     #[test]

@@ -77,6 +77,13 @@ fn default_stockpile_rounds() -> f32 {
 pub struct BuildWeights {
     /// Bonus for cities that opponents already occupy (0.0 = ignore, >0 = block earlier).
     pub block_weight: f32,
+    /// Enable the endgame winning-grab: when the game isn't over and the bot can
+    /// reach the end-game city trigger this turn *and* would win the resulting
+    /// power-off, spend past the usual overbuild reserve to build to the trigger
+    /// and end the game on top. `false` (the default) leaves the reserve-limited
+    /// overbuild behavior unchanged. Purely additive — never blocks termination.
+    #[serde(default)]
+    pub endgame_grab: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

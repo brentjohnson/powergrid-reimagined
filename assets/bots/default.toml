@@ -100,6 +100,7 @@ stockpile_rounds = 2.0          # hoard cheap/scarce fuel up to ~2 rounds (full 
 
 [hard.build]
 block_weight = 2.0   # bonus for cities that opponents are already building in
+endgame_grab = true  # spend past the reserve to reach the end-game trigger when it wins the power-off
 
 [hard.bureaucracy]
 oil_preference = 1.0
@@ -132,6 +133,7 @@ stockpile_rounds = 2.0          # copy of [hard]
 
 [expert.build]
 block_weight = 2.0
+endgame_grab = true  # copy of [hard]
 
 [expert.bureaucracy]
 oil_preference = 1.0
