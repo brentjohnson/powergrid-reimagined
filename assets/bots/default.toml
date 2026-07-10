@@ -81,28 +81,34 @@ temperature  = 0.0   # pure argmax
 jitter       = 0.15  # less bid noise — tighter, harder to read
 max_jitter   = 2
 
+# 2026-07-10: weights below were found by powergrid-evolve (CMA-ES, 200 gens vs
+# normal bots, paired jitter=0). On held-out seeds this beats the old hand-tuned
+# hard by ~+19-28pp (vs 3 normal 30.8%→50.2%, vs 3 hard 25.0%→53.4%), winning by
+# building/powering MORE cities and ending sooner — auction discipline, not
+# hoarding. The theme: reserve cash for cities+fuel (high reserves), only bid on
+# clearly-worth-it plants (high thresholds), keep plants fed (high fuel reserve),
+# and skip opponent-interference features (denial/block off). See RL-TRAINING-JOURNAL.md.
 [hard.auction]
-city_reserve        = 30.0
-safety_buffer       = 5.0
-upgrade_margin      = 25.0   # highest bar — only replaces rack plants for a real Elektro gain
-min_open_score      = 25.0   # only opens auctions on plants worth real Elektro
-buildable_lookahead = 1      # very tight ceiling: only 1 city ahead of owned (plans minimal future capacity)
-# Non-zero weights activate opponent/endgame awareness:
-endgame_weight            = 20.0   # strongly rewards capacity that closes the gap to end_game_cities
-denial_weight             = 0.35   # bids up plants that would meaningfully help the strongest opponent
-operating_cost_weight     = 1.0    # net out forward fuel spend (demand+replenishment aware) — fuel type matters
-fuel_risk_weight          = 3.0    # strong Elektro penalty for thirsty plants on scarce/contested fuel
-replacement_waste_weight  = 0.75   # strongest discard penalty of the tiers (kept small — see [easy.auction])
+city_reserve        = 100.0  # reserve lots of cash for cities/fuel — don't overpay at auction
+safety_buffer       = 40.0
+upgrade_margin      = 60.0   # only replace a rack plant for a large Elektro gain
+min_open_score      = 60.0   # only open auctions on clearly valuable plants (avoid bidding wars)
+buildable_lookahead = 2
+endgame_weight            = 22.8138  # strongly rewards capacity that closes the gap to end_game_cities
+denial_weight             = 0.0      # opponent-denial not worth it vs these bots
+operating_cost_weight     = 0.6511   # net out forward fuel spend (demand+replenishment aware)
+fuel_risk_weight          = 7.9886   # heavy penalty for thirsty plants on scarce/contested fuel
+replacement_waste_weight  = 0.0
 
 [hard.buy]
-fuel_reserve_multiplier = 4.0
-stockpile_rounds = 2.0          # hoard cheap/scarce fuel up to ~2 rounds (full storage) when it's below its forward price
+fuel_reserve_multiplier = 10.0  # keep plants well fed so powered-city count is maximized
+stockpile_rounds = 1.0          # no pre-buy stockpiling (buy only the coming firing)
 
 [hard.build]
-block_weight = 2.0   # bonus for cities that opponents are already building in
+block_weight = 0.0   # don't chase contested cities — just race your own board
 
 [hard.bureaucracy]
-oil_preference = 1.0
+oil_preference = 0.0  # prefer gas for hybrids (conserve oil)
 
 # Expert is driven by the RL policy (assets/policies/expert.bin), not these
 # weights. This profile is the fallback used when the policy is unavailable
@@ -115,23 +121,23 @@ jitter       = 0.15
 max_jitter   = 2
 
 [expert.auction]
-city_reserve        = 30.0
-safety_buffer       = 5.0
-upgrade_margin      = 25.0
-min_open_score      = 25.0
-buildable_lookahead = 1
-endgame_weight            = 20.0
-denial_weight             = 0.35
-operating_cost_weight     = 1.0
-fuel_risk_weight          = 3.0
-replacement_waste_weight  = 0.75
+city_reserve        = 100.0
+safety_buffer       = 40.0
+upgrade_margin      = 60.0
+min_open_score      = 60.0
+buildable_lookahead = 2
+endgame_weight            = 22.8138
+denial_weight             = 0.0
+operating_cost_weight     = 0.6511
+fuel_risk_weight          = 7.9886
+replacement_waste_weight  = 0.0
 
 [expert.buy]
-fuel_reserve_multiplier = 4.0
-stockpile_rounds = 2.0          # hoard cheap/scarce fuel up to ~2 rounds (full storage) when it's below its forward price
+fuel_reserve_multiplier = 10.0
+stockpile_rounds = 1.0
 
 [expert.build]
-block_weight = 2.0
+block_weight = 0.0
 
 [expert.bureaucracy]
-oil_preference = 1.0
+oil_preference = 0.0

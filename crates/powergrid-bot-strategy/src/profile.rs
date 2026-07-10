@@ -232,7 +232,8 @@ mod tests {
         let reg = resolve_registry(Some("/nonexistent/does/not/exist.toml".into()));
         // Falls back to embedded rather than panicking.
         assert_eq!(reg.hard.display_name, "Hard");
-        assert_eq!(reg.hard.auction.city_reserve, 30.0);
+        // The embedded hard is the powergrid-evolve champion (city_reserve=100).
+        assert_eq!(reg.hard.auction.city_reserve, 100.0);
     }
 
     #[test]
@@ -253,44 +254,62 @@ mod tests {
     }
 
     #[test]
-    fn hard_profile_has_nonzero_opponent_features() {
+    fn hard_profile_is_evolved_and_disciplined() {
+        // The `hard`/`expert` weights are machine-tuned by powergrid-evolve, not
+        // hand-designed, so we don't assert the old hand-designed ladder here
+        // (evolution turned OFF denial/block/replacement-waste as not worth it,
+        // which is a legitimate finding — see RL-TRAINING-JOURNAL.md). Assert the
+        // champion's defining traits instead: heavy cash/fuel discipline and a
+        // high bar to bid on plants.
         let registry = embedded_registry();
-        let w = &registry.hard.auction;
-        assert!(w.denial_weight > 0.0, "hard should value denying opponents");
-        assert!(w.endgame_weight > 0.0, "hard should value endgame capacity");
-        assert!(w.fuel_risk_weight > 0.0, "hard should price fuel risk");
-        assert!(registry.hard.build.block_weight > 0.0);
+        let hard = &registry.hard;
+        assert!(
+            hard.auction.city_reserve >= registry.normal.auction.city_reserve,
+            "evolved hard reserves at least as much cash for cities as normal"
+        );
+        assert!(
+            hard.auction.min_open_score >= registry.normal.auction.min_open_score,
+            "evolved hard has at least as high a bar to open auctions as normal"
+        );
+        assert!(
+            hard.auction.fuel_risk_weight > 0.0,
+            "evolved hard still prices fuel risk"
+        );
+        assert!(
+            hard.buy.fuel_reserve_multiplier >= registry.normal.buy.fuel_reserve_multiplier,
+            "evolved hard keeps plants at least as well fed as normal"
+        );
+        // expert mirrors hard (RL-policy fallback / valuation profile).
+        assert_eq!(
+            hard.auction.city_reserve,
+            registry.expert.auction.city_reserve
+        );
+        assert_eq!(hard.build.block_weight, registry.expert.build.block_weight);
     }
 
     #[test]
     fn easy_and_normal_profiles_are_opponent_blind() {
         let registry = embedded_registry();
-        // Denial requires reasoning about every opponent's board state — reserved
-        // for the hard tier. Easy/normal must keep it disabled.
+        // Denial requires reasoning about every opponent's board state; the
+        // easy/normal yardstick tiers keep it disabled. (The evolved hard also
+        // sets it to 0 — search found it not worth the Elektro vs these bots.)
         assert_eq!(registry.easy.auction.denial_weight, 0.0);
         assert_eq!(registry.normal.auction.denial_weight, 0.0);
     }
 
     #[test]
-    fn weight_tiers_escalate_with_difficulty() {
+    fn easy_normal_yardstick_tiers_escalate() {
+        // These two tiers are the fixed hand-designed evaluation yardstick and
+        // must keep their designed ordering (harder = more disciplined). `hard`
+        // is excluded: it is machine-tuned by powergrid-evolve and does not
+        // follow the hand-designed weight ladder, though it is strictly stronger
+        // in win rate (the property that actually matters).
         let registry = embedded_registry();
-        let (easy, normal, hard) = (
-            &registry.easy.auction,
-            &registry.normal.auction,
-            &registry.hard.auction,
-        );
-        // Net-income thinking is fundamental economics, not a sophistication
-        // tier — every difficulty nets fuel operating cost out the same way.
+        let (easy, normal) = (&registry.easy.auction, &registry.normal.auction);
         assert_eq!(easy.operating_cost_weight, normal.operating_cost_weight);
-        assert_eq!(normal.operating_cost_weight, hard.operating_cost_weight);
-        // Harder bots price fuel risk and replacement waste more aggressively...
         assert!(easy.fuel_risk_weight <= normal.fuel_risk_weight);
-        assert!(normal.fuel_risk_weight <= hard.fuel_risk_weight);
         assert!(easy.replacement_waste_weight <= normal.replacement_waste_weight);
-        assert!(normal.replacement_waste_weight <= hard.replacement_waste_weight);
-        // ...and plan capacity further ahead of their current city count (lower
-        // lookahead = tighter ceiling = more disciplined).
-        assert!(hard.buildable_lookahead <= normal.buildable_lookahead);
+        // Lower lookahead = tighter ceiling = more disciplined.
         assert!(normal.buildable_lookahead <= easy.buildable_lookahead);
     }
 }

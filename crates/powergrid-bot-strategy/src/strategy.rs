@@ -1453,6 +1453,11 @@ mod tests {
             state.players.push(opp);
         }
         let mut bot = hard_bot_for(&player);
+        // Exercise the stockpile FEATURE explicitly: the shipped `hard` profile
+        // is now the powergrid-evolve champion, which sets stockpile_rounds=1.0
+        // (stockpiling off — search found it not worth it in whole-game play).
+        // This unit test still guards the mechanism, so enable it here.
+        bot.profile.buy.stockpile_rounds = 2.0;
 
         let action = decide_buy_resources(&state, &mut bot).expect("bot should act");
         let Action::BuyResourceBatch { purchases } = action else {
@@ -1461,7 +1466,7 @@ mod tests {
         let coal = bought(&purchases, Resource::Coal);
         assert!(
             coal > 3,
-            "hard bot should stockpile past its 3-coal firing when coal is cheap now \
+            "a stockpiling bot should buy past its 3-coal firing when coal is cheap now \
              but dear later, got {coal}"
         );
         assert!(

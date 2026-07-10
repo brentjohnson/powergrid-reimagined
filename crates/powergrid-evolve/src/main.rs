@@ -33,6 +33,9 @@ struct Config {
     threads: usize,
     resume: Option<PathBuf>,
     cma_seed: u64,
+    /// If set, skip training: load this profile's `hard` as the candidate,
+    /// evaluate it once on the given seed block (jitter=0), print, and exit.
+    eval_toml: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -54,6 +57,7 @@ impl Default for Config {
                 .unwrap_or(4),
             resume: None,
             cma_seed: 42,
+            eval_toml: None,
         }
     }
 }
@@ -81,6 +85,7 @@ fn parse_args() -> Config {
             "--threads" => c.threads = val().parse().unwrap(),
             "--resume" => c.resume = Some(PathBuf::from(val())),
             "--cma-seed" => c.cma_seed = val().parse().unwrap(),
+            "--eval-toml" => c.eval_toml = Some(PathBuf::from(val())),
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -115,7 +120,9 @@ fn print_help() {
          --num-players N          players per game (default 4)\n\
          --threads N              worker threads (default: all cores)\n\
          --resume FILE            resume from a checkpoint.json\n\
-         --cma-seed S             RNG seed for CMA sampling (default 42)"
+         --cma-seed S             RNG seed for CMA sampling (default 42)\n\
+         --eval-toml FILE         score this profile's `hard` on the seed block and exit\n\
+                                  (no training; use --seed-base 90000+ for held-out)"
     );
 }
 
@@ -208,9 +215,17 @@ fn write_best_toml(path: &Path, base_reg: &ProfileRegistry, init_raw: &[f64; N_P
 
 fn main() {
     let cfg = parse_args();
-    fs::create_dir_all(&cfg.out_dir).expect("create out-dir");
 
     let base_reg = embedded_registry();
+
+    // Eval-only gate: score a champion TOML on a (held-out) seed block, no training.
+    if let Some(path) = &cfg.eval_toml {
+        eval_only(&cfg, &base_reg, path);
+        return;
+    }
+
+    fs::create_dir_all(&cfg.out_dir).expect("create out-dir");
+
     let init_raw = genome::profile_to_raw(&base_reg.hard);
     let opponents = build_opponents(&cfg, &base_reg);
 
@@ -305,6 +320,39 @@ fn main() {
     println!(
         "done. best mean win rate {:.3}. outputs in {:?}",
         best_win_rate, cfg.out_dir
+    );
+}
+
+/// Score one champion profile's `hard` seat vs the configured opponents on the
+/// current seed block (jitter=0 — same paired methodology as training). Use
+/// `--seed-base 90000+` for an honest held-out gate. Prints win rate / rank value.
+fn eval_only(cfg: &Config, base_reg: &ProfileRegistry, path: &Path) {
+    let text = fs::read_to_string(path).expect("read --eval-toml");
+    let champ: ProfileRegistry =
+        toml::from_str(&text).expect("--eval-toml must be a ProfileRegistry TOML");
+    let mut candidate = champ.hard;
+    genome::silence_noise(&mut candidate);
+
+    let opponents = build_opponents(cfg, base_reg);
+    // Reuse the training schedule builder (gen 0 → seed block starts at seed_base).
+    let schedule = build_schedule(cfg, 0, opponents.len());
+    let fit = games::evaluate(
+        &candidate,
+        &opponents,
+        &schedule,
+        cfg.num_players,
+        cfg.threads,
+    );
+    println!(
+        "eval {:?} vs {} | seeds {}..{} | win_rate {:.4}  rank_value {:+.4}  games {}  aborted {}",
+        path,
+        cfg.opponents,
+        cfg.seed_base,
+        cfg.seed_base + (cfg.games_per_eval / cfg.seat_rotations) as u64,
+        fit.win_rate,
+        fit.mean_rank_value,
+        fit.games,
+        fit.aborted,
     );
 }
 

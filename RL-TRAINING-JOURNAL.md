@@ -172,15 +172,33 @@ implemented and measured — and the measurement itself produced the most import
 
 | Agent | Win rate seat-0 vs 3 normal |
 |---|---|
-| hard heuristic (with stockpiling) | **~34.5%** |
+| **evolved hard (powergrid-evolve champion, SHIPPED)** | **~50%** (held-out, jitter=0) |
+| old hand-tuned hard (with stockpiling) | ~31–34.5% |
 | dagger582 + MCTS-800 (Python-side search) | ~26% |
 | dagger582 net-only (deployable as expert.bin) | ~23% |
 | BC clone of hard bot | ~9% |
 | AZ-finetuned nets | ~10–20%, regressing |
 | equal-player baseline | 25% |
 
-The in-game Expert bot currently falls back to the hard heuristic (embedded policy stale
-since the action-space change), which is — honestly — the correct choice today.
+The in-game Expert bot falls back to the hard heuristic (embedded policy stale since the
+action-space change) — now the *evolved* hard, which is the strongest agent in the project.
+
+### Phase 1 result (2026-07-10) — evolutionary search shipped a big win
+
+`powergrid-evolve` (CMA-ES, 200 generations, paired jitter=0 games vs normal bots) found a
+`BotProfile` that, on **held-out seeds**, beats the old hand-tuned hard by **+19–28pp**:
+vs 3 normal 30.8% → **50.2%**, vs 3 hard 25.0% → **53.4%** (i.e. it beats three copies of
+the old hard bot), vs 3 easy 28.2% → 48.7%. It wins *legitimately* — builds more cities
+(16.2 vs 15.9), powers more (16.2 vs 15.8), ends sooner (9.3 vs 9.7 rounds). The profile
+is "extreme-frugal": reserve cash for cities+fuel, high bar to bid on plants, keep plants
+fed, opponent-interference (denial/block) and stockpiling turned **off**. That reads as
+**auction discipline**, exactly how strong humans play — a much better Phase-2 teacher.
+Shipped into `assets/bots/default.toml` (`hard` = `expert`). Confirmed near-optimal:
+pushing the bounds-hit weights further *hurts* (widening bounds not warranted; diverging
+CMA `sigma` is just a benign clamped-plateau artifact). Follow-ups: Stage-2 co-evolution
+vs a champion pool (hardening), and eventually human testing. This also fixed a latent
+`InvalidFuelSplit` heuristic bug that profile search exposed (gas-preferring fuel split
+could exceed available gas).
 
 ## 4. Lessons that survived everything
 
