@@ -112,7 +112,13 @@ pub fn play_one(
         let mut acted = false;
         for bot in bots.iter_mut() {
             if let Some(action) = bot.decide(&state) {
-                apply_action(&mut state, bot.id, action).expect("bot move must be legal");
+                // A rejected move means a latent heuristic bug in some corner of
+                // profile space. Abort this single game (counted as worst finish)
+                // rather than panicking — a multi-hour tuning run must not die on
+                // one bad game. Aborts surface in the per-generation log.
+                if apply_action(&mut state, bot.id, action).is_err() {
+                    return f64::NAN;
+                }
                 acted = true;
                 break;
             }
@@ -245,5 +251,33 @@ mod tests {
     fn rank_value_endpoints() {
         assert!((rank_value(1, 4) - 1.0).abs() < 1e-9);
         assert!((rank_value(4, 4) + 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gas_preferring_profile_never_produces_illegal_fuel_split() {
+        // Regression: with oil_preference < 0.5 the fuel-split helper used to
+        // assign the whole hybrid cost to gas even when gas alone was short,
+        // which the engine rejects as InvalidFuelSplit (aborting the game =
+        // NaN here). Profile search drove oil_preference below 0.5 and crashed
+        // the tuner. Play many full games with a gas-preferring hard profile
+        // and assert every one terminates legally.
+        let reg = embedded_registry();
+        let mut gas_pref = silenced(reg.hard.clone());
+        gas_pref.bureaucracy.oil_preference = 0.0; // force the gas-first branch
+        let normal = silenced(reg.normal.clone());
+        for seed in 0..200u64 {
+            for seat in 0..4 {
+                let m = Match {
+                    seed: 40000 + seed,
+                    candidate_seat: seat,
+                    opponent_pick: vec![0, 0, 0],
+                };
+                let v = play_one(&m, &gas_pref, std::slice::from_ref(&normal), 4);
+                assert!(
+                    v.is_finite(),
+                    "gas-preferring game aborted (illegal move?) at seed {seed}, seat {seat}"
+                );
+            }
+        }
     }
 }

@@ -771,16 +771,24 @@ fn decide_power_cities_fuel(state: &GameState, bot: &mut Bot, hybrid_cost: u8) -
             .map(|p| p.cost)
             .sum();
 
-        let _gas_avail = player.resources.gas.saturating_sub(pure_gas);
+        let gas_avail = player.resources.gas.saturating_sub(pure_gas);
         let oil_avail = player.resources.oil.saturating_sub(pure_oil);
 
-        // Prefer oil for hybrids to conserve gas (controlled by oil_preference weight).
-        let oil_used = if bot.profile.bureaucracy.oil_preference >= 0.5 {
-            hybrid_cost.min(oil_avail)
+        // Cover the hybrid demand from the preferred fuel first, then fall back
+        // to the other for the remainder. Plant selection (`optimal_firing_subset`)
+        // already guarantees `gas_avail + oil_avail >= hybrid_cost`, so taking as
+        // much of the preferred fuel as is on hand and covering the rest with the
+        // other is always a legal split. (Naively assigning the whole cost to the
+        // preferred fuel is NOT: if that fuel alone is short the engine rejects it
+        // with InvalidFuelSplit — the bug that surfaced once profile search drove
+        // `oil_preference` below 0.5.)
+        let (gas, oil_used) = if bot.profile.bureaucracy.oil_preference >= 0.5 {
+            let oil_used = hybrid_cost.min(oil_avail);
+            (hybrid_cost - oil_used, oil_used)
         } else {
-            0
+            let gas_used = hybrid_cost.min(gas_avail);
+            (gas_used, hybrid_cost - gas_used)
         };
-        let gas = hybrid_cost - oil_used;
 
         info!(
             "PowerCitiesFuel: using {} gas + {} oil for hybrids (hybrid_cost={})",
