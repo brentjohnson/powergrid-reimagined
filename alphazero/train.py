@@ -58,6 +58,20 @@ def main() -> None:
         default=120,
         help="Move index after which self-play switches from sampling to greedy.",
     )
+    parser.add_argument(
+        "--dirichlet-eps",
+        type=float,
+        default=0.25,
+        help="Weight of root Dirichlet exploration noise mixed into the priors "
+        "during self-play. Lower it (e.g. 0.1) when finetuning a competent net "
+        "so search doesn't flatten an already-sharp policy.",
+    )
+    parser.add_argument(
+        "--dirichlet-alpha",
+        type=float,
+        default=0.3,
+        help="Concentration of the root Dirichlet noise.",
+    )
     parser.add_argument("--eval-games", type=int, default=20)
     parser.add_argument(
         "--eval-bot-difficulty", default="normal", choices=["easy", "normal", "hard"]
@@ -129,6 +143,8 @@ def main() -> None:
         num_sims=args.sims,
         fpu_reduction=args.fpu,
         temp_threshold=args.temp_threshold,
+        dirichlet_eps=args.dirichlet_eps,
+        dirichlet_alpha=args.dirichlet_alpha,
         num_workers=args.workers,
         net_width=args.net_width,
         value_hidden=args.value_hidden,

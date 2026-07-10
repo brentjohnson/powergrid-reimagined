@@ -130,6 +130,15 @@ class Coach:
         else:
             self.nnet = NNetWrapper(cfg)
 
+        # A resumed/continued net is rebuilt at the *checkpoint's* architecture
+        # (net_width/value_hidden/num_players), which can differ from the CLI's
+        # --net-width. `self.cfg` drives the self-play worker nets (they rebuild
+        # from it), so it must match the loaded weights or `load_state_dict`
+        # crashes with a size mismatch under --workers > 1. Adopt the loaded
+        # net's cfg (it preserves all CLI hyperparameters — lr/batch/etc — and
+        # only overrides the architecture fields).
+        self.cfg = cfg = self.nnet.cfg
+
         if not continuation and not os.path.exists(self.metrics_path):
             with open(self.metrics_path, "w", newline="") as f:
                 csv.DictWriter(f, fieldnames=METRICS_FIELDS).writeheader()
