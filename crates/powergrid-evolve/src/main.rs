@@ -36,6 +36,9 @@ struct Config {
     /// If set, skip training: load this profile's `hard` as the candidate,
     /// evaluate it once on the given seed block (jitter=0), print, and exit.
     eval_toml: Option<PathBuf>,
+    /// If set, every non-candidate seat plays this profile's `hard` (overrides
+    /// --opponents / --pool-dir). The sharp "can anything beat 3× this?" probe.
+    opponent_toml: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -58,6 +61,7 @@ impl Default for Config {
             resume: None,
             cma_seed: 42,
             eval_toml: None,
+            opponent_toml: None,
         }
     }
 }
@@ -86,6 +90,7 @@ fn parse_args() -> Config {
             "--resume" => c.resume = Some(PathBuf::from(val())),
             "--cma-seed" => c.cma_seed = val().parse().unwrap(),
             "--eval-toml" => c.eval_toml = Some(PathBuf::from(val())),
+            "--opponent-toml" => c.opponent_toml = Some(PathBuf::from(val())),
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -122,7 +127,9 @@ fn print_help() {
          --resume FILE            resume from a checkpoint.json\n\
          --cma-seed S             RNG seed for CMA sampling (default 42)\n\
          --eval-toml FILE         score this profile's `hard` on the seed block and exit\n\
-                                  (no training; use --seed-base 90000+ for held-out)"
+                                  (no training; use --seed-base 90000+ for held-out)\n\
+         --opponent-toml FILE     every opponent seat plays this profile's `hard`\n\
+                                  (overrides --opponents; the beat-3x-champion probe)"
     );
 }
 
@@ -132,6 +139,16 @@ fn build_opponents(cfg: &Config, reg: &ProfileRegistry) -> Vec<BotProfile> {
         genome::silence_noise(&mut p);
         p
     };
+    // A single fixed opponent profile (its `hard`) fills every non-candidate
+    // seat — no normal anchor, no mixing. This is the sharp exploitability probe:
+    // "can anything beat 3 copies of THIS profile?" (e.g. the current champion).
+    if let Some(path) = &cfg.opponent_toml {
+        let text = fs::read_to_string(path).expect("read --opponent-toml");
+        let reg: ProfileRegistry =
+            toml::from_str(&text).expect("--opponent-toml must be a ProfileRegistry TOML");
+        println!("opponents: 3× {:?} (hard)", path);
+        return vec![sil(reg.hard)];
+    }
     match cfg.opponents.as_str() {
         "normal" => vec![sil(reg.normal.clone())],
         "easy" => vec![sil(reg.easy.clone())],
