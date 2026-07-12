@@ -4,16 +4,15 @@ import numpy as np
 
 import powergrid_py  # type: ignore[import]
 
-from ..constants import PASS_AUCTION
-from ..encoding import action_json_to_id
+from ..constants import BUILD_NOTHING
 
 
 class RustBotPolicy:
     """
-    Delegates decisions to the Rust strategy bot via `game.bot_decide()`.
-
-    Use via `act(game, agent_id)` which returns a flat action integer.
-    The `observation` / `action_mask` arguments are accepted for API
+    Delegates decisions to the Rust strategy bot via `game.bot_decide_id()`,
+    which returns the **macro** id the heuristic would play (the imitation
+    label). Use via `act(game, agent_id)` which returns a flat macro integer.
+    The `observation` / `state` / `action_mask` arguments are accepted for API
     compatibility but ignored — the bot uses the live game state directly.
     """
 
@@ -24,11 +23,11 @@ class RustBotPolicy:
         self,
         game: powergrid_py.Game,
         agent_id: str,
-        state: dict,
+        state: dict | None = None,
         observation: np.ndarray | None = None,
         action_mask: np.ndarray | None = None,
     ) -> int:
-        action_json = game.bot_decide(agent_id, self.difficulty)
-        if action_json is None:
-            return PASS_AUCTION
-        return action_json_to_id(action_json, state, agent_id)
+        macro_id = game.bot_decide_id(agent_id, self.difficulty)
+        if macro_id is None:
+            return BUILD_NOTHING  # harmless no-op fallback; shouldn't occur mid-game
+        return int(macro_id)

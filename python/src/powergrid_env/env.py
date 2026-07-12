@@ -24,10 +24,10 @@ import powergrid_py  # type: ignore[import]  # built by maturin
 
 from .constants import (
     COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE,
-    POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
+    POWER_OPTIMAL, POWER_NOTHING,
     POWER_SHAPING_COEF,
 )
-from .encoding import encode_observation, id_to_action_json, mask_from_info
+from .encoding import encode_observation
 
 
 def env(**kwargs) -> AECEnv:
@@ -144,13 +144,15 @@ class PowerGridAECEnv(AECEnv):
         self.rewards = {a: 0.0 for a in self.agents}
 
         if action is None:
-            action = PASS_AUCTION  # shouldn't happen with wrappers
-
-        state = self._state_cache
-        action_json = id_to_action_json(int(action), state, uuid)
+            # Shouldn't happen with action-mask wrappers; fall back to any legal
+            # macro so the game can proceed.
+            legal = np.flatnonzero(self.game.action_mask(uuid))
+            action = int(legal[0]) if len(legal) else 0
 
         try:
-            self.game.apply(uuid, action_json)
+            # Apply the chosen MACRO natively (expands to its primitive action and
+            # auto-resolves any trailing fuel/discard split).
+            self.game.apply_action_id(uuid, int(action))
         except ValueError:
             # Invalid action: penalise and terminate.
             self.rewards[agent] = -1.0
@@ -220,32 +222,23 @@ class PowerGridAECEnv(AECEnv):
         if self.game is None:
             return np.zeros(N_ACTIONS, dtype=np.int8)
         uuid = self._id_to_uuid.get(agent, agent)
-        move_info_json = self.game.legal_move_info(uuid)
-        move_info = json.loads(move_info_json)
-        state = self._state_cache or {}
-        return mask_from_info(move_info, state, uuid)
+        # Native macro mask (length N_ACTIONS) — the single source of truth.
+        return self.game.action_mask(uuid).astype(np.int8)
 
     def _shape_rewards(self, agent: str, uuid: str, action: int) -> None:
         """Per-round powered-cities bonus, granted when the acting agent's
         powering resolves. `shaping_mode="absolute"` adds its own powered count
         (always ≥ 0); `"relative"` adds its lead over the best opponent (rewards
         out-powering the field, the win condition, and can go negative)."""
-        was_power_action = (
-            POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
-            or POWER_FUEL_BASE <= action < N_ACTIONS
-        )
+        # A POWER macro resolves the agent's powering for the round. `apply_macro`
+        # auto-resolves the trailing hybrid fuel split in the same call, so
+        # powering is fully settled here (no pending-fuel step to wait for).
+        was_power_action = action in (POWER_OPTIMAL, POWER_NOTHING)
         if not was_power_action:
             return
         state = self._state_cache
         if state is None:
             return
-        # Powering is still pending if the action paused on an ambiguous
-        # hybrid fuel split for this same agent.
-        phase = state.get("phase")
-        if isinstance(phase, dict):
-            fuel = phase.get("power_cities_fuel")
-            if fuel and fuel.get("player") == uuid:
-                return
         mine = 0
         opp_max = 0
         for p in state.get("players", []):
@@ -293,7 +286,3 @@ def _render_ansi(state: dict) -> str:
             lines.append(f"  » {msg}")
 
     return "\n".join(lines)
-
-
-# Import at bottom to avoid circular reference from constants.
-from .constants import PASS_AUCTION  # noqa: E402

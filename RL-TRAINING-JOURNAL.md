@@ -195,10 +195,23 @@ fed, opponent-interference (denial/block) and stockpiling turned **off**. That r
 **auction discipline**, exactly how strong humans play — a much better Phase-2 teacher.
 Shipped into `assets/bots/default.toml` (`hard` = `expert`). Confirmed near-optimal:
 pushing the bounds-hit weights further *hurts* (widening bounds not warranted; diverging
-CMA `sigma` is just a benign clamped-plateau artifact). Follow-ups: Stage-2 co-evolution
-vs a champion pool (hardening), and eventually human testing. This also fixed a latent
+CMA `sigma` is just a benign clamped-plateau artifact). This also fixed a latent
 `InvalidFuelSplit` heuristic bug that profile search exposed (gas-preferring fuel split
 could exceed available gas).
+
+**Stage 2 (co-evolution, 2026-07-11) — champion confirmed robust; Phase 1 complete.**
+Two 200-gen searches starting from the champion: (A) evolve vs 3 copies of the champion,
+(B) co-evolve vs a mixed pool {normal, old-hard, champion}. Neither beat the champion on
+held-out seeds — the best "counter" reached only 27.5% vs 3 champions (vs the 25% symmetric
+floor), and both Stage-2 results were slightly *worse* than the champion vs normal
+(49.1–49.6% vs 50.2%). All three independent searches converged on the same strategic spine
+(high reserves/thresholds, denial off, high fuel-risk), differing only in low-sensitivity
+weights — a **broad plateau of equivalent frugal strategies, not an exploitable knife-edge**.
+Verdict: the heuristic parameterization is maxed out (~50% vs normal, unexploitable vs
+itself). Robustness is proven only *within* the heuristic family — a fundamentally different
+strategy (a human, or a Phase-2/3 learned agent) could still find a blind spot. To go
+further we need a richer strategy space (Phase 2 macro-actions, with this champion as the
+DAgger teacher) or play-time search (Phase 3).
 
 ## 4. Lessons that survived everything
 

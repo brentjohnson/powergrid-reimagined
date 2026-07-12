@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use numpy::{IntoPyArray, PyArray1};
 use powergrid_bot_strategy::encoding::{
-    action_id_to_action, build_action_mask, build_observation, compute_legal_move_info,
-    current_actor_id, DISCARD_RESOURCE_BASE, N_ACTIONS, OBS_SIZE, POWER_CITIES_BASE,
-    POWER_FUEL_BASE,
+    build_action_mask, build_observation, compute_legal_move_info, current_actor_id, N_ACTIONS,
+    OBS_SIZE,
+};
+use powergrid_bot_strategy::macro_actions::{
+    apply_macro, teacher_macro_id, POWER_NOTHING, POWER_OPTIMAL,
 };
 use powergrid_bot_strategy::policy::MlpPolicy;
 use powergrid_bot_strategy::{default_registry, Bot};
@@ -213,30 +215,16 @@ impl Game {
             .map(|a| serde_json::to_string(&a).expect("serialize action")))
     }
 
-    /// Like `bot_decide`, but returns the action's integer id (0..N_ACTIONS)
-    /// instead of JSON, by matching the bot's chosen action against
-    /// `action_id_to_action` over every legal id in the mask. Returns `None`
-    /// if the bot has no move, or if its choice isn't representable in the
-    /// 94-action encoding (rare edge cases, e.g. a jump bid larger than the
-    /// encoded +1 raise) — callers (e.g. imitation-learning data generation) should
-    /// skip those examples rather than guess.
-    fn bot_decide_id(&self, actor: &str, difficulty: &str) -> PyResult<Option<u16>> {
+    /// The **macro** id the teacher heuristic would play for `actor` — the
+    /// imitation label (behavior cloning / DAgger). `None` if the actor has no
+    /// move. The macro teacher is canonically the shipped champion `hard`, so
+    /// `difficulty` is accepted for API compatibility but does not change the
+    /// label (imitation always clones the champion). Unlike the old primitive
+    /// path, this never fails to map a move to an id (the DEFAULT-family macro
+    /// reproduces any heuristic action bit-exactly), so no example is dropped.
+    fn bot_decide_id(&self, actor: &str, _difficulty: &str) -> PyResult<Option<u16>> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let Some(action) = self.bot_decide_action(actor_id, difficulty)? else {
-            return Ok(None);
-        };
-        let chosen_json = serde_json::to_string(&action).expect("serialize action");
-        let mask = build_action_mask(&self.state, actor_id);
-        for (id, &legal) in mask.iter().enumerate() {
-            if legal == 0 {
-                continue;
-            }
-            let candidate = action_id_to_action(id as u16, &self.state, actor_id);
-            if serde_json::to_string(&candidate).expect("serialize action") == chosen_json {
-                return Ok(Some(id as u16));
-            }
-        }
-        Ok(None)
+        Ok(teacher_macro_id(&self.state, actor_id))
     }
 
     /// Sorted list of all city IDs in the map (stable across calls — use to build the city index).
@@ -276,11 +264,11 @@ impl Game {
         Ok(build_action_mask(&self.state, actor_id).into_pyarray(py))
     }
 
-    /// Apply action by integer id (0..N_ACTIONS). Bypasses JSON encoding.
+    /// Apply a **macro** by id (0..N_ACTIONS). Expands to its primitive action,
+    /// applies it, and auto-resolves any trailing fuel/discard-resource split.
     fn apply_action_id(&mut self, actor: &str, action_id: u16) -> PyResult<()> {
         let actor_id = Uuid::parse_str(actor).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let action = action_id_to_action(action_id, &self.state, actor_id);
-        apply_action(&mut self.state, actor_id, action)
+        apply_macro(&mut self.state, actor_id, action_id)
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
@@ -332,21 +320,16 @@ impl Game {
             Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mode = self.opponent_mode(difficulty)?;
 
-        let aid = action_id as usize;
-        let was_power_action = (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&aid)
-            || (POWER_FUEL_BASE..N_ACTIONS).contains(&aid);
+        // A POWER macro resolves the learner's powering for the round. With
+        // macros, `apply_macro` also auto-resolves the trailing hybrid fuel
+        // split in the same call, so powering is fully settled below (no
+        // separate pending-fuel step to wait for).
+        let was_power_action = action_id == POWER_OPTIMAL || action_id == POWER_NOTHING;
 
-        let action = action_id_to_action(action_id, &self.state, learner_id);
-        apply_action(&mut self.state, learner_id, action)
+        apply_macro(&mut self.state, learner_id, action_id)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        // Powering resolves immediately unless the action paused on an
-        // ambiguous hybrid fuel split for the learner.
-        let power_pending = matches!(
-            &self.state.phase,
-            Phase::PowerCitiesFuel { player, .. } if *player == learner_id
-        );
-        let powered_now = if was_power_action && !power_pending {
+        let powered_now = if was_power_action {
             self.state
                 .player(learner_id)
                 .map(|p| p.last_cities_powered as u32)
@@ -362,7 +345,7 @@ impl Game {
         // Best opponent powering this round, read after the bots have acted so
         // it reflects the same round the learner just resolved. Gated to the
         // same steps as `powered_now` so the relative term is 0 off-round.
-        let opp_powered_max = if was_power_action && !power_pending {
+        let opp_powered_max = if was_power_action {
             self.state
                 .players
                 .iter()

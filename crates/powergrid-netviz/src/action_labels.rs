@@ -1,42 +1,40 @@
-//! Human-readable names for the 143-entry action space, mirroring the
-//! action-id ranges in `powergrid_bot_strategy::encoding`.
+//! Human-readable names for the macro action space
+//! (`powergrid_bot_strategy::macro_actions`), used by the netviz output panel.
 
-use powergrid_bot_strategy::encoding::{
-    BUILD_CITY_BASE, BUY_RESOURCE_BASE, CITY_IDS, DISCARD_PLANT_BASE, DISCARD_RESOURCE_BASE,
-    DONE_BUILDING_IDX, DONE_BUYING_IDX, N_ACTIONS, PASS_AUCTION_IDX, PLACE_BID_BASE,
-    POWER_CITIES_BASE, POWER_FUEL_BASE, SELECT_PLANT_BASE,
+use powergrid_bot_strategy::macro_actions::{
+    AUCTION_PASS, AUCTION_RAISE, BUILD_BLOCK, BUILD_CHEAPEST_1, BUILD_CHEAPEST_2, BUILD_CHEAPEST_3,
+    BUILD_DEFAULT, BUILD_MAX, BUILD_NOTHING, BUILD_RACE, BUY_DEFAULT, BUY_DENIAL, BUY_NOTHING,
+    BUY_STOCKPILE2, BUY_STOCKPILE3, DISCARD_PLANT_BASE, NOMINATE_BASE, N_DISCARD_PLANT, N_NOMINATE,
+    POWER_NOTHING, POWER_OPTIMAL,
 };
 
-const RESOURCE_NAMES: [&str; 4] = ["coal", "oil", "gas", "uranium"];
-
-/// Human-readable label for action id `id` (0..N_ACTIONS).
+/// Human-readable label for macro id `id` (0..N_ACTIONS).
 pub fn action_label(id: usize) -> String {
+    let id = id as u16;
     match id {
-        PASS_AUCTION_IDX => "PassAuction".to_string(),
-        DONE_BUYING_IDX => "DoneBuying".to_string(),
-        DONE_BUILDING_IDX => "DoneBuilding".to_string(),
-        id if (SELECT_PLANT_BASE..PLACE_BID_BASE).contains(&id) => {
-            format!("SelectPlant[slot {}]", id - SELECT_PLANT_BASE)
+        i if (NOMINATE_BASE..NOMINATE_BASE + N_NOMINATE).contains(&i) => {
+            format!("Nominate[slot {}]", i - NOMINATE_BASE)
         }
-        id if (PLACE_BID_BASE..DISCARD_PLANT_BASE).contains(&id) => "PlaceBid[+1]".to_string(),
-        id if (DISCARD_PLANT_BASE..BUILD_CITY_BASE).contains(&id) => {
-            format!("DiscardPlant[slot {}]", id - DISCARD_PLANT_BASE)
+        AUCTION_PASS => "Auction:Pass".to_string(),
+        AUCTION_RAISE => "Auction:Raise+1".to_string(),
+        BUILD_NOTHING => "Build:Nothing".to_string(),
+        BUILD_DEFAULT => "Build:Default".to_string(),
+        BUILD_CHEAPEST_1 => "Build:Cheapest1".to_string(),
+        BUILD_CHEAPEST_2 => "Build:Cheapest2".to_string(),
+        BUILD_CHEAPEST_3 => "Build:Cheapest3".to_string(),
+        BUILD_MAX => "Build:Max".to_string(),
+        BUILD_BLOCK => "Build:Block".to_string(),
+        BUILD_RACE => "Build:Race".to_string(),
+        BUY_NOTHING => "Buy:Nothing".to_string(),
+        BUY_DEFAULT => "Buy:Default".to_string(),
+        BUY_STOCKPILE2 => "Buy:Stockpile2".to_string(),
+        BUY_STOCKPILE3 => "Buy:Stockpile3".to_string(),
+        BUY_DENIAL => "Buy:Denial".to_string(),
+        i if (DISCARD_PLANT_BASE..DISCARD_PLANT_BASE + N_DISCARD_PLANT).contains(&i) => {
+            format!("DiscardPlant[slot {}]", i - DISCARD_PLANT_BASE)
         }
-        id if (BUILD_CITY_BASE..BUY_RESOURCE_BASE).contains(&id) => {
-            format!("BuildCity:{}", CITY_IDS[id - BUILD_CITY_BASE])
-        }
-        id if (BUY_RESOURCE_BASE..POWER_CITIES_BASE).contains(&id) => {
-            format!("BuyResource:{}", RESOURCE_NAMES[id - BUY_RESOURCE_BASE])
-        }
-        id if (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&id) => {
-            format!("PowerCities[mask={:03b}]", id - POWER_CITIES_BASE)
-        }
-        id if (DISCARD_RESOURCE_BASE..POWER_FUEL_BASE).contains(&id) => {
-            format!("DiscardResource[gas={}]", id - DISCARD_RESOURCE_BASE)
-        }
-        id if (POWER_FUEL_BASE..N_ACTIONS).contains(&id) => {
-            format!("PowerCitiesFuel[gas={}]", id - POWER_FUEL_BASE)
-        }
+        POWER_OPTIMAL => "Power:Optimal".to_string(),
+        POWER_NOTHING => "Power:Nothing".to_string(),
         _ => format!("unknown[{id}]"),
     }
 }
@@ -44,6 +42,7 @@ pub fn action_label(id: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use powergrid_bot_strategy::encoding::N_ACTIONS;
 
     #[test]
     fn every_action_id_has_a_label() {

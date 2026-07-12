@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 import powergrid_py
-from powergrid_env.encoding import encode_observation, mask_from_info, id_to_action_json
-from powergrid_env.constants import COLORS, OBS_SIZE
+from powergrid_env.encoding import encode_observation
+from powergrid_env.constants import COLORS, OBS_SIZE, N_ACTIONS
 
 
 def make_game(num_players: int = 4, seed: int = 42) -> tuple:
@@ -50,51 +50,17 @@ def test_observation_matches_python(num_players: int, seat: int):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("num_players", [2, 3, 4])
-def test_action_mask_matches_python(num_players: int):
-    game, player_ids, state = make_game(num_players)
-    actor = player_ids[0]  # first bidder in auction
-
-    rust_mask = np.asarray(game.action_mask(actor), dtype=np.int8)
-
-    move_info = json.loads(game.legal_move_info(actor))
-    py_mask = mask_from_info(move_info, state, actor)
-
-    np.testing.assert_array_equal(
-        rust_mask, py_mask,
-        err_msg=f"action mask mismatch for num_players={num_players}",
-    )
-
-
-# ---------------------------------------------------------------------------
-# apply_action_id parity: same result as apply(id_to_action_json(...))
-# ---------------------------------------------------------------------------
-
-def test_apply_action_id_select_plant():
-    game, player_ids, state = make_game(4)
-    actor = player_ids[0]
-
-    # Find a legal select_plant action.
-    move_info = json.loads(game.legal_move_info(actor))
-    slots = move_info.get("select_plant_slots", [])
-    if not slots:
-        pytest.skip("no selectable plants in auction")
-
-    from powergrid_env.constants import SELECT_PLANT_BASE
-    action_id = SELECT_PLANT_BASE + slots[0]
-
-    # Reference: apply via JSON
-    game_ref, player_ids_ref, state_ref = make_game(4)
-    action_json = id_to_action_json(action_id, state_ref, player_ids_ref[0])
-    game_ref.apply(player_ids_ref[0], action_json)
-    ref_state = json.loads(game_ref.state_json())
-
-    # Fast: apply via action_id
-    game.apply_action_id(actor, action_id)
-    fast_state = json.loads(game.state_json())
-
-    # Market and phase should agree.
-    assert fast_state["phase"] == ref_state["phase"], "phase mismatch"
-    assert fast_state["market"]["actual"] == ref_state["market"]["actual"], "market mismatch"
+def test_macro_mask_is_wellformed(num_players: int):
+    # The macro mask is native-only (the Python action mirror was removed in the
+    # Phase-2 rebuild). It must be N_ACTIONS long, uint8, and never empty at a
+    # decision point; the teacher's macro must be legal.
+    game, _player_ids, _state = make_game(num_players)
+    actor = game.current_actor()
+    mask = np.asarray(game.action_mask(actor), dtype=np.uint8)
+    assert mask.shape == (N_ACTIONS,)
+    assert mask.sum() >= 1
+    macro = game.bot_decide_id(actor, "hard")
+    assert macro is not None and mask[macro] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -250,10 +216,7 @@ def test_step_vs_bots_obs_matches_observation():
 @pytest.mark.parametrize("shaping_mode", ["absolute", "relative"])
 def test_reward_shaping_only_on_powering(shaping_mode):
     from powergrid_env import PowerGridSingleAgentEnv
-    from powergrid_env.constants import (
-        POWER_CITIES_BASE, DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
-        N_ACTIONS, POWER_SHAPING_COEF,
-    )
+    from powergrid_env.constants import POWER_OPTIMAL, POWER_NOTHING, POWER_SHAPING_COEF
 
     env = PowerGridSingleAgentEnv(
         num_players=4, seed=3, reward_shaping=True, shaping_mode=shaping_mode
@@ -273,12 +236,9 @@ def test_reward_shaping_only_on_powering(shaping_mode):
             if terminated or reward == 0.0:
                 continue
             shaped_steps += 1
-            is_power_action = (
-                POWER_CITIES_BASE <= action < DISCARD_RESOURCE_BASE
-                or POWER_FUEL_BASE <= action < N_ACTIONS
-            )
+            is_power_action = action in (POWER_OPTIMAL, POWER_NOTHING)
             assert is_power_action, (
-                f"nonzero non-terminal reward {reward} on non-power action {action}"
+                f"nonzero non-terminal reward {reward} on non-power macro {action}"
             )
             # Both modes yield a whole multiple of the coefficient. Absolute
             # (own powered) is always ≥ 0; relative (own − best opponent) may

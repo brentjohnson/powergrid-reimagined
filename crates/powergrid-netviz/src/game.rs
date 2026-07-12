@@ -148,9 +148,14 @@ impl GameDriver {
         self.note = Some("hit iteration cap while advancing bots".to_string());
     }
 
-    /// Applies `action` for the inspected seat, then [`advance`](Self::advance)s.
-    pub fn step_inspected(&mut self, action: Action) -> Result<(), ActionError> {
-        apply_action(&mut self.state, self.inspected, action)?;
+    /// Apply a macro id for the inspected seat (expands + auto-resolves the
+    /// trailing fuel/discard split), then advance the opponents.
+    pub fn step_inspected_macro(&mut self, macro_id: u16) -> Result<(), ActionError> {
+        powergrid_bot_strategy::macro_actions::apply_macro(
+            &mut self.state,
+            self.inspected,
+            macro_id,
+        )?;
         self.advance();
         Ok(())
     }
@@ -176,12 +181,9 @@ impl GameDriver {
         }
     }
 
+    #[cfg(test)]
     pub fn state(&self) -> &GameState {
         &self.state
-    }
-
-    pub fn inspected_id(&self) -> PlayerId {
-        self.inspected
     }
 
     /// Short human-readable summary of the current phase, round, and actor —
@@ -232,7 +234,7 @@ impl GameDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use powergrid_bot_strategy::encoding::{action_id_to_action, OBS_SIZE};
+    use powergrid_bot_strategy::encoding::OBS_SIZE;
     use powergrid_bot_strategy::policy::sample_masked;
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
@@ -284,11 +286,9 @@ mod tests {
                 .map(|&m| if m != 0 { 1.0 } else { -1e9 })
                 .collect();
             let action_id = sample_masked(&logits, &mask, &mut rng).expect("legal action exists");
-            let action =
-                action_id_to_action(action_id as u16, driver.state(), driver.inspected_id());
             driver
-                .step_inspected(action)
-                .expect("legal action applies cleanly");
+                .step_inspected_macro(action_id as u16)
+                .expect("legal macro applies cleanly");
         }
     }
 }

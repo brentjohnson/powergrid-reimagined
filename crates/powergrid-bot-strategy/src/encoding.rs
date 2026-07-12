@@ -108,25 +108,14 @@ pub const OBS_SIZE: usize = 1
     + 4 // 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
     + 5 * 3 * 5; // 21. opponent plants (5 opp × 3 slots × 5 feats)
 
-// Action base indices.
-pub const PASS_AUCTION_IDX: usize = 0;
-pub const DONE_BUYING_IDX: usize = 1;
-pub const DONE_BUILDING_IDX: usize = 2;
-pub const SELECT_PLANT_BASE: usize = 3;
-pub const PLACE_BID_BASE: usize = 11;
-/// Auction raises are English-auction style: the only representable raise is
-/// +1 over the standing bid (`PassAuction` covers dropping out). This makes
-/// over-bidding unrepresentable and turns each price level into a single
-/// raise-vs-pass decision. See `assets/policies/expert.bin` notes in
-/// `policy.rs` — this constant must match the embedded policy's output dim.
-pub const N_BID_ACTIONS: usize = 1;
-pub const DISCARD_PLANT_BASE: usize = PLACE_BID_BASE + N_BID_ACTIONS;
-pub const BUILD_CITY_BASE: usize = DISCARD_PLANT_BASE + 3;
-pub const BUY_RESOURCE_BASE: usize = BUILD_CITY_BASE + N_CITIES;
-pub const POWER_CITIES_BASE: usize = BUY_RESOURCE_BASE + 4;
-pub const DISCARD_RESOURCE_BASE: usize = POWER_CITIES_BASE + 8;
-pub const POWER_FUEL_BASE: usize = DISCARD_RESOURCE_BASE + 9;
-pub const N_ACTIONS: usize = POWER_FUEL_BASE + 9;
+/// The action space is the **macro** space (`crate::macro_actions`): the policy
+/// chooses one complete phase-plan per turn, not a primitive micro-action. The
+/// old primitive action-id layout (94 ids that shredded `BuildCities`/
+/// `BuyResourceBatch` into per-unit steps) was removed in the Phase-2 macro
+/// rebuild — it imposed the ~600-decision compounding-error tax that capped every
+/// learner. `N_ACTIONS` is the macro count; the id semantics live in
+/// `macro_actions` (`macro_id_to_action`, `build_action_mask` below).
+pub const N_ACTIONS: usize = crate::macro_actions::N_MACROS;
 
 /// True when `map` is the default USA map the encoding was compiled against.
 /// The Expert bot must fall back to the heuristic on any other map.
@@ -742,203 +731,29 @@ pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     obs
 }
 
-/// Port of `encoding.py::mask_from_info` — builds action mask directly from GameState.
+/// Legal **macro** mask for `actor_id`: `mask[id] == 1` iff macro `id` is a legal
+/// choice in the current state (phase-appropriate, applies cleanly, and not a
+/// duplicate of a lower-id macro). Length [`N_ACTIONS`]. Delegates to
+/// [`crate::macro_actions::legal_macros`].
 pub fn build_action_mask(state: &GameState, actor_id: PlayerId) -> Vec<u8> {
-    let info = compute_legal_move_info(state, actor_id);
-    let mut mask = vec![0u8; N_ACTIONS];
-
-    if info.pass_auction {
-        mask[PASS_AUCTION_IDX] = 1;
-    }
-    if info.done_buying {
-        mask[DONE_BUYING_IDX] = 1;
-    }
-    if info.done_building {
-        mask[DONE_BUILDING_IDX] = 1;
-    }
-
-    for &slot in &info.select_plant_slots {
-        if slot < 8 {
-            mask[SELECT_PLANT_BASE + slot] = 1;
-        }
-    }
-
-    if let (Some(bid_min), Some(bid_max)) = (info.bid_min, info.bid_max) {
-        // Only raise representable is +1 over the standing bid.
-        if bid_min <= bid_max {
-            mask[PLACE_BID_BASE] = 1;
-        }
-    }
-
-    for &slot in &info.discard_plant_slots {
-        if slot < 3 {
-            mask[DISCARD_PLANT_BASE + slot] = 1;
-        }
-    }
-
-    for city_id in &info.buildable_city_ids {
-        if let Some(ci) = city_index(city_id) {
-            mask[BUILD_CITY_BASE + ci] = 1;
-        }
-    }
-
-    for &ri in &info.buyable_resources {
-        if (ri as usize) < 4 {
-            mask[BUY_RESOURCE_BASE + ri as usize] = 1;
-        }
-    }
-
-    for &bm in &info.power_subsets {
-        if (bm as usize) < 8 {
-            mask[POWER_CITIES_BASE + bm as usize] = 1;
-        }
-    }
-
-    for &gas in &info.discard_resource_gas {
-        if (gas as usize) < 9 {
-            mask[DISCARD_RESOURCE_BASE + gas as usize] = 1;
-        }
-    }
-
-    for &gas in &info.fuel_gas {
-        if (gas as usize) < 9 {
-            mask[POWER_FUEL_BASE + gas as usize] = 1;
-        }
-    }
-
-    mask
+    crate::macro_actions::legal_macros(state, actor_id)
+        .into_iter()
+        .map(|b| b as u8)
+        .collect()
 }
 
-/// Port of `encoding.py::id_to_action_json` — converts flat integer to Action directly.
-pub fn action_id_to_action(action_id: u16, state: &GameState, actor_id: PlayerId) -> Action {
-    let aid = action_id as usize;
-
-    match aid {
-        0 => return Action::PassAuction,
-        1 => return Action::DoneBuying,
-        2 => return Action::DoneBuilding,
-        _ => {}
-    }
-
-    if (SELECT_PLANT_BASE..PLACE_BID_BASE).contains(&aid) {
-        let slot = aid - SELECT_PLANT_BASE;
-        let all: Vec<_> = state
-            .market
-            .actual
-            .iter()
-            .chain(state.market.future.iter())
-            .collect();
-        return if slot < all.len() {
-            Action::SelectPlant {
-                plant_number: all[slot].number,
-            }
-        } else {
-            Action::PassAuction
-        };
-    }
-
-    if (PLACE_BID_BASE..DISCARD_PLANT_BASE).contains(&aid) {
-        // Only one bid action exists: raise by +1 over the standing bid.
-        if let Phase::Auction {
-            active_bid: Some(bid),
-            ..
-        } = &state.phase
-        {
-            return Action::PlaceBid {
-                amount: bid.amount + 1,
-            };
-        }
-        return Action::PassAuction;
-    }
-
-    if (DISCARD_PLANT_BASE..BUILD_CITY_BASE).contains(&aid) {
-        let slot = aid - DISCARD_PLANT_BASE;
-        if let Some(player) = state.players.iter().find(|p| p.id == actor_id) {
-            let mut plants = player.plants.clone();
-            plants.sort_by_key(|p| p.number);
-            if slot < plants.len() {
-                return Action::DiscardPlant {
-                    plant_number: plants[slot].number,
-                };
-            }
-        }
-        return Action::PassAuction;
-    }
-
-    if (BUILD_CITY_BASE..BUY_RESOURCE_BASE).contains(&aid) {
-        let ci = aid - BUILD_CITY_BASE;
-        return if ci < CITY_IDS.len() {
-            Action::BuildCity {
-                city_id: CITY_IDS[ci].to_string(),
-            }
-        } else {
-            Action::DoneBuilding
-        };
-    }
-
-    if (BUY_RESOURCE_BASE..POWER_CITIES_BASE).contains(&aid) {
-        let ri = aid - BUY_RESOURCE_BASE;
-        let resource = [
-            Resource::Coal,
-            Resource::Oil,
-            Resource::Gas,
-            Resource::Uranium,
-        ][ri];
-        // Additive single-unit buy: this does NOT end the buy phase (see
-        // rules::handle_buy_resources), so a policy buys one unit at a time and
-        // sequences as many as it wants before choosing DoneBuying. The per-step
-        // mask (buyable_resources in compute_legal_move_info) already enforces
-        // capacity (hybrid-aware), market availability, and affordability for
-        // each +1, and the intra-turn coupling resolves automatically because
-        // every unit commits before the next mask is computed.
-        return Action::BuyResources {
-            resource,
-            amount: 1,
-        };
-    }
-
-    if (POWER_CITIES_BASE..DISCARD_RESOURCE_BASE).contains(&aid) {
-        let bitmask = (aid - POWER_CITIES_BASE) as u8;
-        if let Some(player) = state.players.iter().find(|p| p.id == actor_id) {
-            let mut plants = player.plants.clone();
-            plants.sort_by_key(|p| p.number);
-            let plant_numbers: Vec<u8> = plants
-                .iter()
-                .take(3)
-                .enumerate()
-                .filter(|(i, _)| bitmask & (1 << i) != 0)
-                .map(|(_, p)| p.number)
-                .collect();
-            return Action::PowerCities { plant_numbers };
-        }
-        return Action::PowerCities {
-            plant_numbers: vec![],
-        };
-    }
-
-    if (DISCARD_RESOURCE_BASE..POWER_FUEL_BASE).contains(&aid) {
-        let gas = (aid - DISCARD_RESOURCE_BASE) as u8;
-        let drop_total = if let Phase::DiscardResource { drop_total, .. } = &state.phase {
-            *drop_total
-        } else {
-            0
-        };
-        let oil = drop_total.saturating_sub(gas);
-        return Action::DiscardResource { gas, oil };
-    }
-
-    if (POWER_FUEL_BASE..N_ACTIONS).contains(&aid) {
-        let gas = (aid - POWER_FUEL_BASE) as u8;
-        let hybrid_cost = if let Phase::PowerCitiesFuel { hybrid_cost, .. } = &state.phase {
-            *hybrid_cost
-        } else {
-            0
-        };
-        let oil = hybrid_cost.saturating_sub(gas);
-        return Action::PowerCitiesFuel { gas, oil };
-    }
-
-    Action::PassAuction
+/// Decode a **macro** id to the single primitive [`Action`] it plays in the
+/// current state, or `None` if the macro is not legal here. (Every macro in a
+/// decision phase expands to exactly one engine action — build/buy are already
+/// whole-turn batches; the trailing fuel/discard split, when any, is auto-
+/// resolved separately by [`crate::macro_actions::apply_macro`].)
+pub fn action_id_to_action(
+    action_id: u16,
+    state: &GameState,
+    actor_id: PlayerId,
+) -> Option<Action> {
+    crate::macro_actions::expand_macro(state, actor_id, action_id)
+        .and_then(|mut seq| (seq.len() == 1).then(|| seq.remove(0)))
 }
 
 #[cfg(test)]
@@ -1130,147 +945,6 @@ mod tests {
             matches!(result, Err(ActionError::InvalidFuelSplit)),
             "expected gas=0 to be rejected, got {:?}",
             result
-        );
-    }
-
-    /// `powergrid-py`'s `bot_decide_id` matches a heuristic bot's chosen
-    /// `Action` against `action_id_to_action` over the legal ids in
-    /// `build_action_mask`, comparing by JSON string. This pins the
-    /// invariant that makes that match-up actually find something for most
-    /// moves of a real game — the imitation-learning pipeline
-    /// (`alphazero/imitation.py`) depends on it to harvest training pairs.
-    #[test]
-    fn hard_bot_decisions_round_trip_through_action_mask() {
-        use crate::bot::Bot;
-        use crate::profile::default_registry;
-        use powergrid_core::types::BotDifficulty;
-
-        let (mut state, _ids) = start_game(2024);
-        let registry = default_registry();
-        let mut round_tripped = 0;
-
-        for _ in 0..500 {
-            let Some(actor_id) = current_actor_id(&state) else {
-                break;
-            };
-            let player = state
-                .players
-                .iter()
-                .find(|p| p.id == actor_id)
-                .expect("actor is a player");
-            let profile = registry.profile_for(BotDifficulty::Hard).clone();
-            let mut bot = Bot::new(
-                actor_id,
-                player.name.clone(),
-                player.color,
-                profile,
-                actor_id.as_u128() as u64,
-            );
-            let Some(action) = bot.decide(&state) else {
-                break;
-            };
-
-            let mask = build_action_mask(&state, actor_id);
-            let chosen_json = serde_json::to_string(&action).expect("serialize action");
-            let matched_id = (0..N_ACTIONS as u16).find(|&id| {
-                mask[id as usize] == 1
-                    && serde_json::to_string(&action_id_to_action(id, &state, actor_id))
-                        .expect("serialize action")
-                        == chosen_json
-            });
-            if let Some(id) = matched_id {
-                round_tripped += 1;
-                let candidate = action_id_to_action(id, &state, actor_id);
-                apply_action(&mut state, actor_id, candidate)
-                    .expect("round-tripped action must be legal");
-            } else {
-                // Not every heuristic choice is representable in the
-                // action encoding (e.g. jump bids, since only +1 raises are
-                // representable); apply the bot's real action directly so
-                // the game still progresses.
-                apply_action(&mut state, actor_id, action).expect("bot move should be legal");
-            }
-            if matches!(state.phase, powergrid_core::types::Phase::GameOver { .. }) {
-                break;
-            }
-        }
-
-        assert!(
-            round_tripped > 20,
-            "expected most moves of a real game to round-trip, got {round_tripped}"
-        );
-    }
-
-    /// Regression test for the additive single-unit buy-resource encoding:
-    /// each `BUY_RESOURCE_BASE + ri` id must apply `Action::BuyResources
-    /// {resource, amount: 1}` (via `handle_buy_resources`, which does *not*
-    /// pop `remaining`), so a policy can sequence several +1 buys — across
-    /// several resources — in the same buy phase before ending it with
-    /// `DoneBuying`. This is the fix for the structural cap where the old
-    /// decode produced a single-unit `BuyResourceBatch`, which
-    /// `handle_buy_resource_batch` ended the turn after unconditionally.
-    #[test]
-    fn buy_resource_ids_are_additive_and_dont_end_the_turn() {
-        use powergrid_core::types::Phase;
-
-        let (mut state, ids) = start_game(123);
-        let p1 = ids[0];
-
-        state.phase = Phase::BuyResources {
-            remaining: vec![p1, ids[1]],
-        };
-        {
-            let player = state.player_mut(p1).unwrap();
-            // Coal plant with cost 5 -> capacity = cost * 2 = 10, plenty of
-            // headroom for several +1 buys. Give ample money too.
-            player.plants = vec![plant(3, PlantKind::Coal, 5, 1)];
-            player.money = 200;
-        }
-
-        let coal_id = (BUY_RESOURCE_BASE) as u16; // ri=0 -> Coal
-        let oil_id = (BUY_RESOURCE_BASE + 1) as u16; // ri=1 -> Oil
-
-        // Coal: buy 3 units one id-application at a time. Each must be the
-        // additive, non-turn-ending variant and must NOT advance `remaining`.
-        for expected_coal in 1..=3u8 {
-            let action = action_id_to_action(coal_id, &state, p1);
-            assert!(
-                matches!(
-                    action,
-                    Action::BuyResources {
-                        resource: Resource::Coal,
-                        amount: 1
-                    }
-                ),
-                "expected additive 1-unit BuyResources, got {action:?}"
-            );
-            apply_action(&mut state, p1, action).expect("buy 1 coal");
-            let player = state.player(p1).unwrap();
-            assert_eq!(player.resources.coal, expected_coal);
-            assert!(
-                matches!(&state.phase, Phase::BuyResources { remaining } if remaining == &vec![p1, ids[1]]),
-                "a single-unit buy must not advance the buy-phase turn order"
-            );
-        }
-
-        // Oil plant capacity is zero (player only owns the Coal plant above),
-        // so attempting to also buy oil now should be illegal via the mask —
-        // confirming capacity is still enforced per-unit, hybrid-aware logic
-        // notwithstanding (no GasOrOil plant in this setup).
-        let mask = build_action_mask(&state, p1);
-        assert_eq!(
-            mask[oil_id as usize], 0,
-            "no oil capacity, must be masked out"
-        );
-
-        // DoneBuying still ends this player's turn in the buy phase and
-        // advances to the next player (only DoneBuying pops `remaining`).
-        let action = action_id_to_action(DONE_BUYING_IDX as u16, &state, p1);
-        assert!(matches!(action, Action::DoneBuying));
-        apply_action(&mut state, p1, action).expect("done buying");
-        assert!(
-            matches!(&state.phase, Phase::BuyResources { remaining } if remaining == &vec![ids[1]]),
-            "DoneBuying must advance turn order, unlike a single-unit buy"
         );
     }
 }

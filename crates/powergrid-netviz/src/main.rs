@@ -23,7 +23,7 @@ use rand::Rng;
 
 use action_labels::action_label;
 use game::{GameConfig, GameDriver};
-use powergrid_bot_strategy::encoding::{action_id_to_action, N_ACTIONS, OBS_SIZE};
+use powergrid_bot_strategy::encoding::{N_ACTIONS, OBS_SIZE};
 use powergrid_bot_strategy::policy::{default_policy, sample_masked, ForwardTrace, MlpPolicy};
 use powergrid_core::BotDifficulty;
 
@@ -334,8 +334,7 @@ impl NetViz {
         let Some(game) = &mut self.game else { return };
         let mut rng = rand::thread_rng();
         if let Some(action_id) = sample_masked(&trace.logits, &mask, &mut rng) {
-            let action = action_id_to_action(action_id as u16, game.state(), game.inspected_id());
-            if let Err(e) = game.step_inspected(action) {
+            if let Err(e) = game.step_inspected_macro(action_id as u16) {
                 self.status = format!("action error: {e}");
                 return;
             }
@@ -356,8 +355,7 @@ impl NetViz {
             return;
         }
         let Some(game) = &mut self.game else { return };
-        let action = action_id_to_action(action_id as u16, game.state(), game.inspected_id());
-        if let Err(e) = game.step_inspected(action) {
+        if let Err(e) = game.step_inspected_macro(action_id as u16) {
             self.status = format!("action error: {e}");
             return;
         }

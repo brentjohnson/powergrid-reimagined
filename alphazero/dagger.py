@@ -28,21 +28,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
 import time
 from collections import deque
 
 import numpy as np
-from powergrid_env.constants import (
-    BUILD_CITY_BASE,
-    BUY_RESOURCE_BASE,
-    CITY_INDEX,
-    DONE_BUILDING,
-    DONE_BUYING,
-    N_ACTIONS,
-    RESOURCE_IDX,
-)
+from powergrid_env.constants import N_ACTIONS
 
 from . import arena
 from .config import AZConfig
@@ -58,40 +49,10 @@ def _one_hot(action_id: int) -> np.ndarray:
 
 
 def bot_first_action_id(game: PowerGridGame, difficulty: str) -> int | None:
-    """The single 94-action-space id the `difficulty` heuristic bot would play
-    *next* in `game`'s current state — the DAgger label for that state.
-
-    Most phases map one bot decision to one id. The two whole-turn *batch*
-    phases (`build_cities`, `buy_resources`) don't have a single id, but their
-    handlers don't end the turn, so the bot's turn is really a sequence of
-    single-id steps; the label at this state is the *first* of them (the bot's
-    highest-priority city / first resource unit — same ordering `imitation.py`
-    decomposes). After the net applies its own move, the bot re-decides from
-    the new state next turn, which is exactly the DAgger relabeling. Returns
-    `None` if the bot has no move or its choice isn't representable as an id."""
-    action_json = game.bot_decide_json(difficulty)
-    if action_json is None:
-        return None
-    action = json.loads(action_json)
-    kind = action["type"]
-    if kind == "build_cities":
-        cids = action["city_ids"]
-        return BUILD_CITY_BASE + CITY_INDEX[cids[0]] if cids else DONE_BUILDING
-    if kind == "build_city":
-        return BUILD_CITY_BASE + CITY_INDEX[action["city_id"]]
-    if kind == "done_building":
-        return DONE_BUILDING
-    if kind in ("buy_resources", "buy_resource_batch"):
-        purchases = (
-            action["purchases"]
-            if kind == "buy_resource_batch"
-            else [(action["resource"], action["amount"])]
-        )
-        if not purchases:
-            return DONE_BUYING
-        return BUY_RESOURCE_BASE + RESOURCE_IDX[purchases[0][0]]
-    if kind == "done_buying":
-        return DONE_BUYING
+    """The **macro** id the teacher heuristic would play in `game`'s current
+    state — the DAgger label for that state. Since the Phase-2 macro rebuild,
+    every phase (including the once-batched build/buy) maps to a single macro,
+    so this is just `game.bot_decide_id`. `None` if the teacher has no move."""
     return game.bot_decide_id(difficulty)
 
 

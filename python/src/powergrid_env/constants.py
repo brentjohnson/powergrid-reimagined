@@ -56,23 +56,37 @@ RESOURCE_IDX = {"coal": 0, "oil": 1, "gas": 2, "uranium": 3}
 POWER_SHAPING_COEF = 0.01
 
 # ---------------------------------------------------------------------------
-# Action space layout
+# Macro action space layout — mirrors crate::macro_actions (Phase-2 rebuild).
+#
+# The policy chooses one complete phase-plan per turn (~50 decisions/game)
+# instead of a primitive micro-action (~600/game). The old 94-id primitive
+# layout — which shredded BuildCities/BuyResourceBatch into per-unit steps and
+# imposed the compounding-error tax that capped every learner — was removed.
+# Mask/apply/label all live natively (powergrid_py `action_mask`,
+# `apply_action_id`, `bot_decide_id`); Python does NOT re-derive them.
 # ---------------------------------------------------------------------------
-PASS_AUCTION         = 0          # 1 action
-DONE_BUYING          = 1          # 1 action
-DONE_BUILDING        = 2          # 1 action
-SELECT_PLANT_BASE    = 3          # 8 actions: actual[0..7] (only 0..5 used; future not selectable)
-PLACE_BID_BASE       = 11         # 1 action: raise +1 over the standing bid (English-auction
-                                   # style; PassAuction covers dropping out). Mirrors the Rust
-                                   # N_BID_ACTIONS constant in encoding.rs.
-N_BID_ACTIONS        = 1
-DISCARD_PLANT_BASE   = PLACE_BID_BASE + N_BID_ACTIONS  # 3 actions: discard player.plants[0..2]
-BUILD_CITY_BASE      = DISCARD_PLANT_BASE + 3          # MAX_CITIES actions: one per city in CITY_IDS order
-BUY_RESOURCE_BASE    = BUILD_CITY_BASE + MAX_CITIES   # 4 actions: coal/oil/gas/uranium (1 unit)
-POWER_CITIES_BASE    = BUY_RESOURCE_BASE + 4          # 8 actions: bitmask 0..7 over first 3 plants
-DISCARD_RESOURCE_BASE = POWER_CITIES_BASE + 8         # 9 actions: gas_drop 0..8 (oil = total - gas)
-POWER_FUEL_BASE      = DISCARD_RESOURCE_BASE + 9      # 9 actions: gas 0..8 (oil = hybrid_cost - gas)
-N_ACTIONS            = POWER_FUEL_BASE + 9
+NOMINATE_BASE   = 0   # 0..5: nominate market actual slot
+N_NOMINATE      = 6
+AUCTION_PASS    = 6
+AUCTION_RAISE   = 7
+BUILD_NOTHING   = 8
+BUILD_DEFAULT   = 9
+BUILD_CHEAPEST_1 = 10
+BUILD_CHEAPEST_2 = 11
+BUILD_CHEAPEST_3 = 12
+BUILD_MAX       = 13
+BUILD_BLOCK     = 14
+BUILD_RACE      = 15
+BUY_NOTHING     = 16
+BUY_DEFAULT     = 17
+BUY_STOCKPILE2  = 18
+BUY_STOCKPILE3  = 19
+BUY_DENIAL      = 20
+DISCARD_PLANT_BASE = 21  # 21..23: discard owned plant slot 0..2 (by number)
+N_DISCARD_PLANT = 3
+POWER_OPTIMAL   = 24
+POWER_NOTHING   = 25
+N_ACTIONS       = 26
 
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +

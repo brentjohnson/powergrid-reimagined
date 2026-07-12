@@ -78,12 +78,16 @@ pub(crate) fn decide_rl(state: &GameState, bot: &mut Bot) -> RlDecision {
     let obs = encoding::build_observation(state, bot.id);
     let policy = bot.policy.clone().expect("decide_rl requires a policy");
     let logits = policy.logits(&obs);
+    // Sample a macro id, decode it to its single primitive action. On any
+    // failure (unusable sample, macro not legal after all) fall back to the
+    // heuristic. The trailing fuel/discard split of a POWER macro is a separate
+    // auto-phase, handled on the next `decide` call via the heuristic (its macro
+    // mask is empty), so returning the single macro action here is correct.
     match policy::sample_masked(&logits, &mask, &mut bot.rng) {
-        Some(action_id) => RlDecision::Action(encoding::action_id_to_action(
-            action_id as u16,
-            state,
-            bot.id,
-        )),
+        Some(macro_id) => match encoding::action_id_to_action(macro_id as u16, state, bot.id) {
+            Some(action) => RlDecision::Action(action),
+            None => RlDecision::Unavailable,
+        },
         None => RlDecision::Unavailable,
     }
 }

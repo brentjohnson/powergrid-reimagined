@@ -1,36 +1,26 @@
 """
-Action and observation encoding/decoding for the PettingZoo env.
+Observation encoding for the PettingZoo env (Python reference mirror).
 
-Action space layout (N_ACTIONS = 94, USA map with 49 cities):
-  0          PassAuction
-  1          DoneBuying
-  2          DoneBuilding
-  3..10      SelectPlant  slot 0..7   (actual[0..5]; only actual plants are selectable)
-  11         PlaceBid     raise +1 over the standing bid (English-auction style;
-                          PassAuction covers dropping out — no jump bids)
-  12..14     DiscardPlant slot 0..2   (index into player.plants sorted by number)
-  15..63     BuildCity    city index 0..48 in CITY_IDS order
-  64..67     BuyResources resource index 0..3 (coal/oil/gas/uranium), +1 unit (additive, does not end turn)
-  68..75     PowerCities  bitmask 0..7 over first 3 plants (sorted by number)
-  76..84     DiscardResource  gas_drop 0..8  (oil = drop_total - gas)
-  85..93     PowerCitiesFuel  gas 0..8       (oil = hybrid_cost - gas)
+The ACTION side (mask / apply / decode) lives natively in Rust
+(`crate::macro_actions`, exposed via `powergrid_py.action_mask` /
+`apply_action_id` / `bot_decide_id`) and is the single source of truth — the
+old Python action-encoding mirror (`mask_from_info` / `id_to_action_json` /
+`action_json_to_id`) was removed in the Phase-2 macro rebuild.
 
-Base indices are derived in constants.py; this table is illustrative.
+`encode_observation` remains a Python mirror of Rust's `build_observation`, kept
+because the observation layout is nontrivial (it reconstructs the default-map
+Dijkstra graph, which is not in the wire-safe view). The native parity test
+`test_native_bridge.test_observation_matches_python` guards it against drift.
 """
 
 import heapq
-import json
 import tomllib
 from pathlib import Path
 
 import numpy as np
 from .constants import (
-    N_ACTIONS, OBS_SIZE, CITY_IDS, CITY_INDEX, REGION_NAMES,
+    OBS_SIZE, CITY_IDS, CITY_INDEX, REGION_NAMES,
     KIND_IDS, PHASE_IDS, RESOURCE_IDX, MAX_CITIES,
-    PASS_AUCTION, DONE_BUYING, DONE_BUILDING,
-    SELECT_PLANT_BASE, PLACE_BID_BASE, DISCARD_PLANT_BASE,
-    BUILD_CITY_BASE, BUY_RESOURCE_BASE, POWER_CITIES_BASE,
-    DISCARD_RESOURCE_BASE, POWER_FUEL_BASE,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,218 +83,6 @@ def _plant_demand(plant: dict) -> dict[str, float]:
     if kind in ("coal", "oil", "gas", "uranium"):
         return {kind: cost}
     return {}  # wind
-
-
-def mask_from_info(move_info: dict, state: dict, actor_id: str) -> np.ndarray:
-    """Convert a LegalMoveInfo dict (from game.legal_move_info) to an action mask."""
-    mask = np.zeros(N_ACTIONS, dtype=np.int8)
-
-    if move_info.get("pass_auction"):
-        mask[PASS_AUCTION] = 1
-
-    if move_info.get("done_buying"):
-        mask[DONE_BUYING] = 1
-
-    if move_info.get("done_building"):
-        mask[DONE_BUILDING] = 1
-
-    for slot in move_info.get("select_plant_slots", []):
-        if 0 <= slot < 8:
-            mask[SELECT_PLANT_BASE + slot] = 1
-
-    bid_min = move_info.get("bid_min")
-    bid_max = move_info.get("bid_max")
-    if bid_min is not None and bid_max is not None and bid_min <= bid_max:
-        mask[PLACE_BID_BASE] = 1
-
-    for slot in move_info.get("discard_plant_slots", []):
-        if 0 <= slot < 3:
-            mask[DISCARD_PLANT_BASE + slot] = 1
-
-    for city_id in move_info.get("buildable_city_ids", []):
-        ci = CITY_INDEX.get(city_id)
-        if ci is not None:
-            mask[BUILD_CITY_BASE + ci] = 1
-
-    for ri in move_info.get("buyable_resources", []):
-        if 0 <= ri < 4:
-            mask[BUY_RESOURCE_BASE + ri] = 1
-
-    for bm in move_info.get("power_subsets", []):
-        if 0 <= bm < 8:
-            mask[POWER_CITIES_BASE + bm] = 1
-
-    for gas in move_info.get("discard_resource_gas", []):
-        if 0 <= gas < 9:
-            mask[DISCARD_RESOURCE_BASE + gas] = 1
-
-    for gas in move_info.get("fuel_gas", []):
-        if 0 <= gas < 9:
-            mask[POWER_FUEL_BASE + gas] = 1
-
-    return mask
-
-
-def id_to_action_json(action_id: int, state: dict, actor_id: str) -> str:
-    """Convert a flat action integer to the JSON string accepted by game.apply()."""
-    if action_id == PASS_AUCTION:
-        return '{"type":"pass_auction"}'
-
-    if action_id == DONE_BUYING:
-        return '{"type":"done_buying"}'
-
-    if action_id == DONE_BUILDING:
-        return '{"type":"done_building"}'
-
-    if SELECT_PLANT_BASE <= action_id < PLACE_BID_BASE:
-        slot = action_id - SELECT_PLANT_BASE
-        mkt = state["market"]
-        slots = mkt["actual"] + mkt["future"]
-        if slot < len(slots):
-            return json.dumps({"type": "select_plant", "plant_number": slots[slot]["number"]})
-        return '{"type":"pass_auction"}'
-
-    if PLACE_BID_BASE <= action_id < DISCARD_PLANT_BASE:
-        # Only one bid action exists: raise by +1 over the standing bid.
-        phase = state["phase"]
-        if isinstance(phase, dict) and "auction" in phase:
-            ab = phase["auction"].get("active_bid")
-            if ab:
-                amount = ab["amount"] + 1
-                return json.dumps({"type": "place_bid", "amount": amount})
-        return '{"type":"pass_auction"}'
-
-    if DISCARD_PLANT_BASE <= action_id < BUILD_CITY_BASE:
-        slot = action_id - DISCARD_PLANT_BASE
-        me = _find_player(state, actor_id)
-        if me:
-            plants = sorted(me["plants"], key=lambda p: p["number"])
-            if slot < len(plants):
-                return json.dumps({"type": "discard_plant", "plant_number": plants[slot]["number"]})
-        return '{"type":"pass_auction"}'
-
-    if BUILD_CITY_BASE <= action_id < BUY_RESOURCE_BASE:
-        ci = action_id - BUILD_CITY_BASE
-        if ci < len(CITY_IDS):
-            return json.dumps({"type": "build_city", "city_id": CITY_IDS[ci]})
-        return '{"type":"done_building"}'
-
-    if BUY_RESOURCE_BASE <= action_id < POWER_CITIES_BASE:
-        ri = action_id - BUY_RESOURCE_BASE
-        resource = ["coal", "oil", "gas", "uranium"][ri]
-        # Additive single-unit buy (does NOT end the buy phase) — the policy
-        # buys one unit at a time and sequences as many as it wants before
-        # choosing DoneBuying. Mirrors the Rust decode in encoding.rs.
-        return json.dumps({"type": "buy_resources", "resource": resource, "amount": 1})
-
-    if POWER_CITIES_BASE <= action_id < DISCARD_RESOURCE_BASE:
-        bitmask = action_id - POWER_CITIES_BASE
-        me = _find_player(state, actor_id)
-        numbers: list[int] = []
-        if me:
-            plants = sorted(me["plants"], key=lambda p: p["number"])
-            numbers = [plants[i]["number"] for i in range(min(len(plants), 3)) if bitmask & (1 << i)]
-        return json.dumps({"type": "power_cities", "plant_numbers": numbers})
-
-    if DISCARD_RESOURCE_BASE <= action_id < POWER_FUEL_BASE:
-        gas = action_id - DISCARD_RESOURCE_BASE
-        drop_total = 0
-        phase = state["phase"]
-        if isinstance(phase, dict) and "discard_resource" in phase:
-            drop_total = phase["discard_resource"]["drop_total"]
-        oil = max(0, drop_total - gas)
-        return json.dumps({"type": "discard_resource", "gas": gas, "oil": oil})
-
-    if POWER_FUEL_BASE <= action_id < N_ACTIONS:
-        gas = action_id - POWER_FUEL_BASE
-        hybrid_cost = 0
-        phase = state["phase"]
-        if isinstance(phase, dict) and "power_cities_fuel" in phase:
-            hybrid_cost = phase["power_cities_fuel"]["hybrid_cost"]
-        oil = max(0, hybrid_cost - gas)
-        return json.dumps({"type": "power_cities_fuel", "gas": gas, "oil": oil})
-
-    return '{"type":"pass_auction"}'
-
-
-def action_json_to_id(action_json: str, state: dict, actor_id: str) -> int:
-    """Reverse-encode an action JSON string to a flat integer id (for bot policy)."""
-    try:
-        action = json.loads(action_json)
-    except json.JSONDecodeError:
-        return PASS_AUCTION
-
-    t = action.get("type", "")
-
-    if t == "pass_auction":
-        return PASS_AUCTION
-    if t == "done_buying":
-        return DONE_BUYING
-    if t == "done_building":
-        return DONE_BUILDING
-
-    if t == "select_plant":
-        plant_num = action["plant_number"]
-        mkt = state["market"]
-        for i, p in enumerate(mkt["actual"] + mkt["future"]):
-            if p["number"] == plant_num:
-                return SELECT_PLANT_BASE + i
-        return PASS_AUCTION
-
-    if t == "place_bid":
-        # Only one bid action exists: raise by +1 over the standing bid.
-        return PLACE_BID_BASE
-
-    if t == "discard_plant":
-        plant_num = action["plant_number"]
-        me = _find_player(state, actor_id)
-        if me:
-            plants = sorted(me["plants"], key=lambda p: p["number"])
-            for i, p in enumerate(plants):
-                if p["number"] == plant_num:
-                    return DISCARD_PLANT_BASE + i
-        return DISCARD_PLANT_BASE
-
-    if t == "build_city":
-        ci = CITY_INDEX.get(action["city_id"])
-        return BUILD_CITY_BASE + ci if ci is not None else DONE_BUILDING
-
-    if t == "build_cities":
-        city_ids_list = action.get("city_ids", [])
-        if city_ids_list:
-            ci = CITY_INDEX.get(city_ids_list[0])
-            return BUILD_CITY_BASE + ci if ci is not None else DONE_BUILDING
-        return DONE_BUILDING
-
-    if t in ("buy_resource_batch", "buy_resources"):
-        if t == "buy_resource_batch":
-            purchases = action.get("purchases", [])
-            if not purchases:
-                return DONE_BUYING
-            resource = purchases[0][0]
-        else:
-            resource = action["resource"]
-        ri = RESOURCE_IDX.get(resource, 0)
-        return BUY_RESOURCE_BASE + ri
-
-    if t == "power_cities":
-        plant_numbers = set(action.get("plant_numbers", []))
-        me = _find_player(state, actor_id)
-        bitmask = 0
-        if me:
-            plants = sorted(me["plants"], key=lambda p: p["number"])
-            for i, p in enumerate(plants[:3]):
-                if p["number"] in plant_numbers:
-                    bitmask |= 1 << i
-        return POWER_CITIES_BASE + bitmask
-
-    if t == "discard_resource":
-        return DISCARD_RESOURCE_BASE + min(action.get("gas", 0), 8)
-
-    if t == "power_cities_fuel":
-        return POWER_FUEL_BASE + min(action.get("gas", 0), 8)
-
-    return PASS_AUCTION
 
 
 def encode_observation(state: dict, actor_id: str) -> np.ndarray:
