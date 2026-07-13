@@ -39,6 +39,14 @@ struct Config {
     /// If set, every non-candidate seat plays this profile's `hard` (overrides
     /// --opponents / --pool-dir). The sharp "can anything beat 3× this?" probe.
     opponent_toml: Option<PathBuf>,
+    /// If set, skip training: the candidate seat is driven by this native RL
+    /// policy (PGRLPOL1 `.bin`) instead of a profile; evaluate on the seed block
+    /// and exit. The held-out policy gate. Combine with `--seed-base 90000+`.
+    policy_file: Option<PathBuf>,
+    /// `--policy-file` only: play the policy greedily (argmax) instead of
+    /// sampling. Behavior-cloned policies are much stronger greedy; this matches
+    /// the alphazero arena eval methodology.
+    greedy: bool,
 }
 
 impl Default for Config {
@@ -62,6 +70,8 @@ impl Default for Config {
             cma_seed: 42,
             eval_toml: None,
             opponent_toml: None,
+            policy_file: None,
+            greedy: false,
         }
     }
 }
@@ -91,6 +101,8 @@ fn parse_args() -> Config {
             "--cma-seed" => c.cma_seed = val().parse().unwrap(),
             "--eval-toml" => c.eval_toml = Some(PathBuf::from(val())),
             "--opponent-toml" => c.opponent_toml = Some(PathBuf::from(val())),
+            "--policy-file" => c.policy_file = Some(PathBuf::from(val())),
+            "--greedy" => c.greedy = true,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -128,6 +140,10 @@ fn print_help() {
          --cma-seed S             RNG seed for CMA sampling (default 42)\n\
          --eval-toml FILE         score this profile's `hard` on the seed block and exit\n\
                                   (no training; use --seed-base 90000+ for held-out)\n\
+         --policy-file FILE       score this native RL policy (PGRLPOL1 .bin) as the\n\
+                                  candidate seat and exit (the held-out policy gate)\n\
+         --greedy                 with --policy-file: argmax play (stronger for BC\n\
+                                  clones; matches the alphazero arena eval)\n\
          --opponent-toml FILE     every opponent seat plays this profile's `hard`\n\
                                   (overrides --opponents; the beat-3x-champion probe)"
     );
@@ -235,9 +251,10 @@ fn main() {
 
     let base_reg = embedded_registry();
 
-    // Eval-only gate: score a champion TOML on a (held-out) seed block, no training.
-    if let Some(path) = &cfg.eval_toml {
-        eval_only(&cfg, &base_reg, path);
+    // Eval-only gate: score a champion TOML or a trained policy on a (held-out)
+    // seed block, no training.
+    if cfg.eval_toml.is_some() || cfg.policy_file.is_some() {
+        eval_only(&cfg, &base_reg);
         return;
     }
 
@@ -275,7 +292,15 @@ fn main() {
         let mut pop_best_win = f64::NEG_INFINITY;
         for x in &batch {
             let prof = genome::x_to_eval_profile(&base_reg.hard, &init_raw, x);
-            let f = games::evaluate(&prof, &opponents, &schedule, cfg.num_players, cfg.threads);
+            let f = games::evaluate(
+                &prof,
+                None,
+                false,
+                &opponents,
+                &schedule,
+                cfg.num_players,
+                cfg.threads,
+            );
             if f.win_rate > pop_best_win {
                 pop_best_win = f.win_rate;
                 pop_best = f;
@@ -288,6 +313,8 @@ fn main() {
         let mean_prof = genome::x_to_eval_profile(&base_reg.hard, &init_raw, &es.mean);
         let mean_fit = games::evaluate(
             &mean_prof,
+            None,
+            false,
             &opponents,
             &schedule,
             cfg.num_players,
@@ -340,29 +367,53 @@ fn main() {
     );
 }
 
-/// Score one champion profile's `hard` seat vs the configured opponents on the
-/// current seed block (jitter=0 — same paired methodology as training). Use
-/// `--seed-base 90000+` for an honest held-out gate. Prints win rate / rank value.
-fn eval_only(cfg: &Config, base_reg: &ProfileRegistry, path: &Path) {
-    let text = fs::read_to_string(path).expect("read --eval-toml");
-    let champ: ProfileRegistry =
-        toml::from_str(&text).expect("--eval-toml must be a ProfileRegistry TOML");
-    let mut candidate = champ.hard;
+/// Score a candidate seat vs the configured opponents on the current seed block
+/// (jitter=0 — same paired methodology as training). The candidate is either a
+/// profile's `hard` (`--eval-toml`, else the embedded champion) or, when
+/// `--policy-file` is given, a native RL policy playing macros via `decide_rl`
+/// (with that profile as the fallback). Use `--seed-base 90000+` for an honest
+/// held-out gate. Prints win rate / rank value.
+fn eval_only(cfg: &Config, base_reg: &ProfileRegistry) {
+    // Candidate profile: an explicit champion TOML, else the embedded champion.
+    let mut candidate = match &cfg.eval_toml {
+        Some(path) => {
+            let text = fs::read_to_string(path).expect("read --eval-toml");
+            let reg: ProfileRegistry =
+                toml::from_str(&text).expect("--eval-toml must be a ProfileRegistry TOML");
+            reg.hard
+        }
+        None => base_reg.hard.clone(),
+    };
     genome::silence_noise(&mut candidate);
+
+    // Optional native RL policy driving the candidate seat.
+    let policy = cfg.policy_file.as_ref().map(|path| {
+        let bytes = fs::read(path).expect("read --policy-file");
+        let p = powergrid_bot_strategy::policy::MlpPolicy::from_bytes(&bytes)
+            .unwrap_or_else(|e| panic!("invalid policy {:?}: {:?}", path, e));
+        std::sync::Arc::new(p)
+    });
 
     let opponents = build_opponents(cfg, base_reg);
     // Reuse the training schedule builder (gen 0 → seed block starts at seed_base).
     let schedule = build_schedule(cfg, 0, opponents.len());
     let fit = games::evaluate(
         &candidate,
+        policy.as_ref(),
+        cfg.greedy,
         &opponents,
         &schedule,
         cfg.num_players,
         cfg.threads,
     );
+    let what = match (&cfg.policy_file, &cfg.eval_toml) {
+        (Some(p), _) => format!("policy {:?}", p),
+        (None, Some(t)) => format!("profile {:?}", t),
+        (None, None) => "embedded champion".to_string(),
+    };
     println!(
-        "eval {:?} vs {} | seeds {}..{} | win_rate {:.4}  rank_value {:+.4}  games {}  aborted {}",
-        path,
+        "eval {} vs {} | seeds {}..{} | win_rate {:.4}  rank_value {:+.4}  games {}  aborted {}",
+        what,
         cfg.opponents,
         cfg.seed_base,
         cfg.seed_base + (cfg.games_per_eval / cfg.seat_rotations) as u64,

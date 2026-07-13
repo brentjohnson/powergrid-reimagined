@@ -152,7 +152,11 @@ impl Session {
         let mut bot = Bot::new(bot_id, bot_name, color, profile, seed);
         if difficulty == BotDifficulty::Expert {
             match powergrid_bot_strategy::policy::default_policy() {
-                Some(policy) => bot = bot.with_policy(policy),
+                // Play the macro policy greedily (argmax): on the macro action
+                // space greedy is both safe (explicit terminal macros, ~50
+                // decisions/game — no stalls) and clearly stronger than sampling
+                // for the trained policy (held-out ~60% greedy vs ~54% sampled).
+                Some(policy) => bot = bot.with_policy(policy).with_greedy(true),
                 None => warn!("expert RL policy unavailable; bot will use the hard heuristic"),
             }
         }

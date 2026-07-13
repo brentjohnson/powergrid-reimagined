@@ -107,9 +107,6 @@ fn expert_bot_falls_back_to_heuristic_on_non_default_map() {
 }
 
 #[test]
-#[ignore = "embedded expert.bin is a stale 143-action export (pre +1-only bid \
-            encoding); re-export a 94-action policy via \
-            python/scripts/export_policy.py and remove this #[ignore]"]
 fn expert_bot_plays_policy_action_on_its_turn() {
     let (state, _) = start_game(default_map(), 42);
     let actor = encoding::current_actor_id(&state).unwrap();

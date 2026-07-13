@@ -168,17 +168,46 @@ implemented and measured — and the measurement itself produced the most import
   made it fire only on fragile money tiebreaks). Turn-order penalty (#2): **−2.8pp,
   reverted**.
 
-## 3. Current strength ladder (2026-07-10)
+## 3. Current strength ladder (2026-07-13)
 
-| Agent | Win rate seat-0 vs 3 normal |
+| Agent | Win rate seat-0 vs 3 normal (held-out, jitter=0) |
 |---|---|
-| **evolved hard (powergrid-evolve champion, SHIPPED)** | **~50%** (held-out, jitter=0) |
+| **macro PPO policy (SHIPPED as expert.bin, greedy) — beats the champion** | **~60% greedy / ~54% sampled** |
+| evolved hard (powergrid-evolve champion) | ~50% |
 | old hand-tuned hard (with stockpiling) | ~31–34.5% |
-| dagger582 + MCTS-800 (Python-side search) | ~26% |
-| dagger582 net-only (deployable as expert.bin) | ~23% |
-| BC clone of hard bot | ~9% |
-| AZ-finetuned nets | ~10–20%, regressing |
+| macro DAgger / macro BC clone | ~32% / ~31% |
+| dagger582 + MCTS-800 (old primitive-encoding Python search) | ~26% |
+| **old primitive-encoding BC clone (the ceiling that stalled the project)** | ~9% |
 | equal-player baseline | 25% |
+
+### THE MILESTONE (2026-07-13): a learned agent finally beats the heuristic — Phase 2 succeeded
+
+For the first time in the project's history a *learned* policy is the strongest agent.
+**MaskablePPO trained on the macro action space wins ~60% greedy (54% sampled) vs 3 normal
+bots on held-out seeds — decisively beating the ~50% evolved champion — and ~47% vs three
+copies of the champion itself (25% = equal footing).** Stable across held-out seed blocks
+(62.5% @ seed 90000, 58.3% @ 95000, 1200 games each) and the full 100M-step run.
+
+This is the payoff of the whole diagnosis→redesign arc. PPO failed for months on the
+~600-primitive-decision encoding (sparse-reward credit assignment over a huge horizon);
+the macro rebuild gave it a ~50-decision horizon, and it now wins. **Gate 1 already proved
+the mechanism** — behavior cloning jumped from the old ~9% primitive-BC ceiling to ~31%
+with *only the action representation changed* (same teacher, same algorithm). Gate 2 then
+showed PPO exceeds the teacher outright.
+
+Notable: DAgger barely moved the clone (~31%→~32%) — imitation is capped below its teacher,
+as always — whereas **PPO, which can discover play the teacher never demonstrates, blew past
+it.** Deployment finding: greedy (argmax) play is safe on the macro space (explicit terminal
+macros, no stalls) and stronger than sampling, so the Expert bot plays greedy.
+
+Shipped: `assets/policies/expert.bin` is now the PPO policy (582/256/26); the golden-logits
+parity test (Rust inference == torch, un-`#[ignore]`d) passes, so the in-game Expert bot is
+a bit-faithful copy. `session::add_bot` attaches it with `.with_greedy(true)`.
+
+**Open frontier — beating humans.** The policy beats every *bot* we have, including the
+champion. Whether it beats strong *humans* is untested (no automated proxy exists). The
+next levers if needed: inference-time search (Phase 3) on this now-competent net, self-play
+from this non-underdog base (the precondition AZ always lacked), and human playtesting.
 
 The in-game Expert bot falls back to the hard heuristic (embedded policy stale since the
 action-space change) — now the *evolved* hard, which is the strongest agent in the project.

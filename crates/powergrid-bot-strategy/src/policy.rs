@@ -167,6 +167,21 @@ impl MlpPolicy {
     }
 }
 
+/// The legal (mask = 1) action index with the highest logit — greedy/argmax play.
+/// Returns `None` when the mask is all-zero. Behavior-cloned policies play much
+/// stronger greedily than sampled (sampling picks the teacher's non-top move a
+/// fraction of the time); with the macro action space greedy no longer risks the
+/// stalls the primitive encoding had, so it is a viable deployment mode.
+pub fn argmax_masked(logits: &[f32], mask: &[u8]) -> Option<usize> {
+    logits
+        .iter()
+        .zip(mask)
+        .enumerate()
+        .filter(|(_, (_, &m))| m != 0)
+        .max_by(|(_, (a, _)), (_, (b, _))| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(i, _)| i)
+}
+
 /// Sample an action index from the softmax over legal (mask = 1) logits,
 /// replicating sb3's `MaskableCategorical` at temperature 1.0.
 /// Returns `None` when the mask is all-zero.
@@ -314,10 +329,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "expert.bin/expert.golden.json are stale 143-action exports; \
-                re-export with python/scripts/export_policy.py after training \
-                a policy against the new 94-action (PLACE_BID collapsed to +1) \
-                encoding, then remove this #[ignore]"]
     fn embedded_policy_matches_torch_golden_logits() {
         #[derive(serde::Deserialize)]
         struct Golden {

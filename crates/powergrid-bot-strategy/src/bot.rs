@@ -23,6 +23,10 @@ pub struct Bot {
     /// RL policy (Expert difficulty). When set, `decide` plays the policy and
     /// only falls back to the heuristic if the policy is unusable (non-default map).
     pub(crate) policy: Option<Arc<MlpPolicy>>,
+    /// When true, the policy plays greedily (argmax over legal) instead of
+    /// sampling from the masked softmax. Stronger for behavior-cloned policies;
+    /// used by the held-out evaluation harness.
+    pub(crate) greedy: bool,
 }
 
 impl Bot {
@@ -40,7 +44,14 @@ impl Bot {
             profile,
             rng: SmallRng::seed_from_u64(seed),
             policy: None,
+            greedy: false,
         }
+    }
+
+    /// Make the policy play greedily (argmax) rather than sampling.
+    pub fn with_greedy(mut self, greedy: bool) -> Self {
+        self.greedy = greedy;
+        self
     }
 
     pub fn with_policy(mut self, policy: Arc<MlpPolicy>) -> Self {

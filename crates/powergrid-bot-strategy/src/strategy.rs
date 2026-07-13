@@ -83,7 +83,12 @@ pub(crate) fn decide_rl(state: &GameState, bot: &mut Bot) -> RlDecision {
     // heuristic. The trailing fuel/discard split of a POWER macro is a separate
     // auto-phase, handled on the next `decide` call via the heuristic (its macro
     // mask is empty), so returning the single macro action here is correct.
-    match policy::sample_masked(&logits, &mask, &mut bot.rng) {
+    let sampled = if bot.greedy {
+        policy::argmax_masked(&logits, &mask)
+    } else {
+        policy::sample_masked(&logits, &mask, &mut bot.rng)
+    };
+    match sampled {
         Some(macro_id) => match encoding::action_id_to_action(macro_id as u16, state, bot.id) {
             Some(action) => RlDecision::Action(action),
             None => RlDecision::Unavailable,

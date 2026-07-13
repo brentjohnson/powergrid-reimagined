@@ -8,7 +8,9 @@
 //! essential (jittered A/B has a ±5pp noise floor that inverts small effects).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+use powergrid_bot_strategy::policy::MlpPolicy;
 use powergrid_bot_strategy::{Bot, BotProfile};
 use powergrid_core::{
     actions::Action,
@@ -63,10 +65,17 @@ fn player_id(seed: u64, seat: usize) -> PlayerId {
 ///
 /// `candidate` sits in `m.candidate_seat`; the remaining seats are filled from
 /// `opponents` per `m.opponent_pick`. All profiles must already have noise
-/// silenced. Rank value: `1st → +1`, `last → -1`, linearly spaced.
+/// silenced. When `candidate_policy` is `Some`, the candidate seat plays the RL
+/// policy natively (macro `decide_rl`, falling back to `candidate` only if the
+/// policy is unusable) — this is the held-out policy-evaluation path. The policy
+/// samples stochastically, but the candidate bot's RNG is seeded deterministically
+/// per (seed, seat), so the game stays reproducible and paired.
+/// Rank value: `1st → +1`, `last → -1`, linearly spaced.
 pub fn play_one(
     m: &Match,
     candidate: &BotProfile,
+    candidate_policy: Option<&Arc<MlpPolicy>>,
+    greedy: bool,
     opponents: &[BotProfile],
     num_players: usize,
 ) -> f64 {
@@ -96,13 +105,19 @@ pub fn play_one(
             opp_cursor += 1;
             opponents[pick % opponents.len()].clone()
         };
-        bots.push(Bot::new(
+        let mut bot = Bot::new(
             *id,
             format!("P{seat}"),
             COLORS[seat],
             profile,
             id.as_u128() as u64,
-        ));
+        );
+        if seat == m.candidate_seat {
+            if let Some(policy) = candidate_policy {
+                bot = bot.with_policy(policy.clone()).with_greedy(greedy);
+            }
+        }
+        bots.push(bot);
     }
 
     for _ in 0..STEP_CAP {
@@ -155,8 +170,11 @@ pub fn rank_value(pos: usize, num_players: usize) -> f64 {
 ///
 /// The schedule (and thus the games) is identical for every candidate in a
 /// generation, so returned fitnesses are directly comparable (paired).
+#[allow(clippy::too_many_arguments)]
 pub fn evaluate(
     candidate: &BotProfile,
+    candidate_policy: Option<&Arc<MlpPolicy>>,
+    greedy: bool,
     opponents: &[BotProfile],
     schedule: &[Match],
     num_players: usize,
@@ -178,7 +196,14 @@ pub fn evaluate(
                         if i >= n {
                             break;
                         }
-                        let v = play_one(&schedule[i], candidate, opponents, num_players);
+                        let v = play_one(
+                            &schedule[i],
+                            candidate,
+                            candidate_policy,
+                            greedy,
+                            opponents,
+                            num_players,
+                        );
                         if v.is_nan() {
                             // Aborted game → treat as worst finish.
                             aborts += 1;
@@ -237,10 +262,10 @@ mod tests {
                     candidate_seat: seat,
                     opponent_pick: vec![0, 0, 0],
                 };
-                let first = play_one(&m, &hard, std::slice::from_ref(&normal), 4);
+                let first = play_one(&m, &hard, None, false, std::slice::from_ref(&normal), 4);
                 assert!(first.is_finite(), "game should terminate (seed {seed})");
                 for _ in 0..3 {
-                    let again = play_one(&m, &hard, std::slice::from_ref(&normal), 4);
+                    let again = play_one(&m, &hard, None, false, std::slice::from_ref(&normal), 4);
                     assert_eq!(first, again, "replay diverged (seed {seed}, seat {seat})");
                 }
             }
@@ -272,7 +297,7 @@ mod tests {
                     candidate_seat: seat,
                     opponent_pick: vec![0, 0, 0],
                 };
-                let v = play_one(&m, &gas_pref, std::slice::from_ref(&normal), 4);
+                let v = play_one(&m, &gas_pref, None, false, std::slice::from_ref(&normal), 4);
                 assert!(
                     v.is_finite(),
                     "gas-preferring game aborted (illegal move?) at seed {seed}, seat {seat}"
