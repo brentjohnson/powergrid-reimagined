@@ -4,6 +4,7 @@ pub mod features;
 pub mod macro_actions;
 pub mod policy;
 pub mod profile;
+pub mod search;
 pub mod strategy;
 
 pub use bot::Bot;

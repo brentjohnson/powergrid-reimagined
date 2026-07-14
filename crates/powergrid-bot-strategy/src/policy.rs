@@ -245,6 +245,107 @@ pub fn default_policy() -> Option<Arc<MlpPolicy>> {
 }
 
 // ---------------------------------------------------------------------------
+// Value network (play-time search leaf evaluation)
+// ---------------------------------------------------------------------------
+
+const VALUE_MAGIC: &[u8; 8] = b"PGRLVAL1";
+const VALUE_OUT_DIM: usize = 1;
+const EMBEDDED_VALUE: &[u8] = include_bytes!("../../../assets/policies/expert.value.bin");
+
+/// The value-path MLP: `obs(OBS_SIZE) → H → tanh → H → tanh → 1`. Same shape as
+/// [`MlpPolicy`] but a single scalar output — the acting seat's expected return
+/// (win-value), used by the play-time search (`search.rs`) as the MCTS leaf value
+/// (one forward pass instead of a full rollout). Exported by
+/// `export_policy.py --value-out` / `export::value_state_dict_to_bytes`.
+pub struct ValueNet {
+    obs_size: usize,
+    hidden: usize,
+    l1_w: Vec<f32>,
+    l1_b: Vec<f32>,
+    l2_w: Vec<f32>,
+    l2_b: Vec<f32>,
+    out_w: Vec<f32>,
+    out_b: Vec<f32>,
+}
+
+impl ValueNet {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PolicyLoadError> {
+        if bytes.len() < HEADER_LEN || &bytes[..8] != VALUE_MAGIC {
+            return Err(PolicyLoadError::BadMagic);
+        }
+        let dim = |i: usize| {
+            u32::from_le_bytes(bytes[8 + i * 4..12 + i * 4].try_into().unwrap()) as usize
+        };
+        let (obs_size, hidden, out_dim) = (dim(0), dim(1), dim(2));
+        if obs_size != OBS_SIZE || out_dim != VALUE_OUT_DIM {
+            return Err(PolicyLoadError::DimMismatch {
+                obs_size,
+                n_actions: out_dim,
+            });
+        }
+        let n_params =
+            hidden * obs_size + hidden + hidden * hidden + hidden + out_dim * hidden + out_dim;
+        let expected = HEADER_LEN + n_params * 4;
+        if bytes.len() != expected {
+            return Err(PolicyLoadError::BadLength {
+                expected,
+                actual: bytes.len(),
+            });
+        }
+
+        let mut cursor = HEADER_LEN;
+        Ok(Self {
+            obs_size,
+            hidden,
+            l1_w: read_f32s(bytes, hidden * obs_size, &mut cursor),
+            l1_b: read_f32s(bytes, hidden, &mut cursor),
+            l2_w: read_f32s(bytes, hidden * hidden, &mut cursor),
+            l2_b: read_f32s(bytes, hidden, &mut cursor),
+            out_w: read_f32s(bytes, out_dim * hidden, &mut cursor),
+            out_b: read_f32s(bytes, out_dim, &mut cursor),
+        })
+    }
+
+    /// Forward pass: observation vector → scalar value for the acting seat.
+    pub fn value(&self, obs: &[f32]) -> f32 {
+        debug_assert_eq!(obs.len(), self.obs_size);
+        let h1 = linear(&self.l1_w, &self.l1_b, obs, self.hidden, self.obs_size);
+        let h1: Vec<f32> = h1.iter().map(|v| v.tanh()).collect();
+        let h2 = linear(&self.l2_w, &self.l2_b, &h1, self.hidden, self.hidden);
+        let h2: Vec<f32> = h2.iter().map(|v| v.tanh()).collect();
+        linear(&self.out_w, &self.out_b, &h2, VALUE_OUT_DIM, self.hidden)[0]
+    }
+}
+
+/// The value net for play-time search: `RL_VALUE_FILE` if set, else the embedded
+/// `expert.value.bin`. `None` (with a warning) if the weights are missing/invalid,
+/// in which case search falls back to rollout leaf values.
+pub fn default_value_net() -> Option<Arc<ValueNet>> {
+    static VALUE: OnceLock<Option<Arc<ValueNet>>> = OnceLock::new();
+    VALUE
+        .get_or_init(|| {
+            let (bytes, source) = match std::env::var("RL_VALUE_FILE") {
+                Ok(path) => match std::fs::read(&path) {
+                    Ok(b) => (b, path),
+                    Err(e) => {
+                        warn!("failed to read RL_VALUE_FILE {}: {}", path, e);
+                        return None;
+                    }
+                },
+                Err(_) => (EMBEDDED_VALUE.to_vec(), "embedded".to_string()),
+            };
+            match ValueNet::from_bytes(&bytes) {
+                Ok(v) => Some(Arc::new(v)),
+                Err(e) => {
+                    warn!("invalid RL value weights ({}): {:?}", source, e);
+                    None
+                }
+            }
+        })
+        .clone()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -353,6 +454,32 @@ mod tests {
                 .map(|(a, b)| (a - b).abs())
                 .fold(0.0f32, f32::max);
             assert!(max_diff < 1e-3, "logits diverge from torch: {max_diff}");
+        }
+    }
+
+    #[test]
+    fn embedded_value_net_matches_torch_golden() {
+        #[derive(serde::Deserialize)]
+        struct Golden {
+            obs: Vec<f32>,
+            value: Vec<f32>,
+            zeros_value: Vec<f32>,
+        }
+        let golden: Golden = serde_json::from_str(include_str!(
+            "../../../assets/policies/expert.value.golden.json"
+        ))
+        .expect("parse expert.value.golden.json");
+        let vnet = default_value_net().expect("embedded value net must load");
+
+        for (obs, want) in [
+            (&golden.obs, golden.value[0]),
+            (&vec![0.0f32; OBS_SIZE], golden.zeros_value[0]),
+        ] {
+            let got = vnet.value(obs);
+            assert!(
+                (got - want).abs() < 1e-3,
+                "value diverges from torch: got {got}, want {want}"
+            );
         }
     }
 

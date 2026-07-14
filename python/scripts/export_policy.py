@@ -26,6 +26,8 @@ from powergrid_env.export import (
     MAGIC,
     policy_state_dict_to_bytes,
     policy_tensors_from_state_dict,
+    value_state_dict_to_bytes,
+    value_tensors_from_state_dict,
 )
 
 
@@ -51,6 +53,10 @@ def main():
                         help="Path to a saved MaskablePPO .zip (without .zip suffix).")
     parser.add_argument("--out", default="../assets/policies/expert.bin")
     parser.add_argument("--golden", default="../assets/policies/expert.golden.json")
+    parser.add_argument("--value-out", default=None,
+                        help="Also export the value head (PGRLVAL1) to this path.")
+    parser.add_argument("--value-golden", default=None,
+                        help="Golden JSON (obs + torch value) for the ValueNet parity test.")
     args = parser.parse_args()
 
     sd = load_state_dict(args.model)
@@ -74,6 +80,23 @@ def main():
     n_params = (len(data) - len(MAGIC) - 12) // 4
     print(f"Wrote {args.out} ({n_params} params, {len(data)} bytes) and {args.golden}")
     print("First 5 logits:", [round(v, 4) for v in golden["logits"][:5]])
+
+    # Optionally export the value head (PGRLVAL1) + its golden.
+    if args.value_out:
+        vdata = value_state_dict_to_bytes(sd)
+        with open(args.value_out, "wb") as f:
+            f.write(vdata)
+        vtensors = value_tensors_from_state_dict(sd)
+        vgolden = {
+            "obs": obs.tolist(),
+            "value": forward(vtensors, obs).tolist(),
+            "zeros_value": forward(vtensors, zeros).tolist(),
+        }
+        vgolden_path = args.value_golden or (args.value_out + ".golden.json")
+        with open(vgolden_path, "w") as f:
+            json.dump(vgolden, f)
+        print(f"Wrote {args.value_out} ({len(vdata)} bytes) and {vgolden_path}")
+        print("Value(obs):", round(vgolden["value"][0], 4))
 
 
 if __name__ == "__main__":

@@ -205,9 +205,29 @@ parity test (Rust inference == torch, un-`#[ignore]`d) passes, so the in-game Ex
 a bit-faithful copy. `session::add_bot` attaches it with `.with_greedy(true)`.
 
 **Open frontier — beating humans.** The policy beats every *bot* we have, including the
-champion. Whether it beats strong *humans* is untested (no automated proxy exists). The
-next levers if needed: inference-time search (Phase 3) on this now-competent net, self-play
-from this non-underdog base (the precondition AZ always lacked), and human playtesting.
+champion. Whether it beats strong *humans* is untested (no automated proxy exists).
+
+### Follow-up runs (2026-07-13): more PPO helps modestly; self-play regresses (0-for-5)
+
+- **Extended PPO to 200M steps** (resumed the 100M run). Held-out greedy, averaged over 3
+  seed blocks: 200M-best ~**62%** (64.5/60.3/62.0) vs the 100M-best's ~60% (62.5/58.3/58.8)
+  — a **robust +2–3pp** on every block. Diminishing but real; the steep early climb
+  (BC 31% → 63% at 100M) has flattened to ~+2pp per 100M. Re-shipped the 200M-best as
+  `expert.bin` (golden test passes). **Caveat learned:** the in-run `best_mean_reward`
+  jumped 0.26→0.44 (implying 72%), but held-out greedy is only ~64% — the in-run vs-jittered
+  small-N eval materially *overstates* strength; trust the held-out harness, not TB reward.
+- **Self-play from the competent PPO base FAILED — now 0-for-5.** Resumed self-play from the
+  ~63% base (frozen-opponent + league + `--bot-mix 0.3` grounding, no shaping). Over ~40M
+  steps it *regressed*: held-out greedy 63% base → ~51% best → ~53% latest. Heavy grounding
+  kept it from full collapse (still ~champion level) but it destroyed the competence it
+  started from. This falsifies the last standing pro-self-play hypothesis ("it'll bootstrap
+  once we start from a non-underdog") — self-play does not bootstrap in this project even
+  from a base that *beats* the champion. Stop pursuing it.
+
+**Net: the shipped Expert bot is PPO-200M-best (~62% vs normal, beats the ~50% champion).**
+Remaining levers toward beating humans, in order: inference-time search (Phase 3) on this
+net (the macro horizon is now shallow enough for MCTS), still more PPO / a wider net (gains
+are shrinking but positive), and human playtesting.
 
 The in-game Expert bot falls back to the hard heuristic (embedded policy stale since the
 action-space change) — now the *evolved* hard, which is the strongest agent in the project.

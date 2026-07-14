@@ -21,6 +21,11 @@ import struct
 from .constants import N_ACTIONS, OBS_SIZE
 
 MAGIC = b"PGRLPOL1"
+# Value network: same MLP shape as the policy but a single scalar output (the
+# acting seat's expected return / win-value). Used by the Rust play-time search
+# (search.rs) as the MCTS leaf value — one forward pass instead of a rollout.
+VALUE_MAGIC = b"PGRLVAL1"
+VALUE_OUT_DIM = 1
 
 # Net width (the single hidden size shared by both layers) is inferred from the
 # state_dict rather than hard-coded — the format encodes it in the header, the
@@ -60,5 +65,44 @@ def policy_state_dict_to_bytes(state_dict) -> bytes:
     out = bytearray(MAGIC)
     out += struct.pack("<III", OBS_SIZE, _hidden_size(state_dict), N_ACTIONS)
     for t in policy_tensors_from_state_dict(state_dict):
+        out += t.detach().cpu().numpy().astype("<f4").tobytes()
+    return bytes(out)
+
+
+def _value_hidden_size(state_dict) -> int:
+    return int(state_dict["mlp_extractor.value_net.0.weight"].shape[0])
+
+
+def value_tensors_from_state_dict(state_dict) -> list:
+    """Value-path tensors in file order, shape-checked for the
+    ``OBS_SIZE -> hidden -> hidden -> 1`` MLP (hidden inferred)."""
+    hidden = _value_hidden_size(state_dict)
+    layers = [
+        ("mlp_extractor.value_net.0", (hidden, OBS_SIZE)),
+        ("mlp_extractor.value_net.2", (hidden, hidden)),
+        ("value_net", (VALUE_OUT_DIM, hidden)),
+    ]
+    tensors = []
+    for key, shape in layers:
+        weight = state_dict[f"{key}.weight"]
+        bias = state_dict[f"{key}.bias"]
+        assert tuple(weight.shape) == shape, (
+            f"{key}.weight has shape {tuple(weight.shape)}, expected {shape} — "
+            "the value net must be two equal-width hidden layers (vf=[h, h])."
+        )
+        assert tuple(bias.shape) == (shape[0],)
+        tensors.extend([weight, bias])
+    return tensors
+
+
+def value_state_dict_to_bytes(state_dict) -> bytes:
+    """Serialize the value path of a MaskablePPO ``policy.state_dict()`` to the
+    flat PGRLVAL1 binary consumed by Rust (``policy.rs::ValueNet::from_bytes``).
+
+    Layout mirrors PGRLPOL1: magic + (obs_size, hidden, out_dim=1) + the six
+    f32 tensor blocks (l1/l2/out weight+bias, torch row-major)."""
+    out = bytearray(VALUE_MAGIC)
+    out += struct.pack("<III", OBS_SIZE, _value_hidden_size(state_dict), VALUE_OUT_DIM)
+    for t in value_tensors_from_state_dict(state_dict):
         out += t.detach().cpu().numpy().astype("<f4").tobytes()
     return bytes(out)
