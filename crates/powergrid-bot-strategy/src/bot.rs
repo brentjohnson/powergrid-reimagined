@@ -8,8 +8,9 @@ use powergrid_core::{
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
-use crate::policy::MlpPolicy;
+use crate::policy::{MlpPolicy, ValueNet};
 use crate::profile::BotProfile;
+use crate::search::SearchConfig;
 use crate::strategy::RlDecision;
 
 /// A stateful bot: holds its identity, decision profile, and a seeded RNG.
@@ -27,6 +28,11 @@ pub struct Bot {
     /// sampling from the masked softmax. Stronger for behavior-cloned policies;
     /// used by the held-out evaluation harness.
     pub(crate) greedy: bool,
+    /// Play-time MCTS search config. When set (with a policy), `decide` searches
+    /// with the policy as prior instead of playing the raw policy.
+    pub(crate) search_config: Option<SearchConfig>,
+    /// Value net for search leaf evaluation (falls back to rollouts if absent).
+    pub(crate) value: Option<Arc<ValueNet>>,
 }
 
 impl Bot {
@@ -45,12 +51,22 @@ impl Bot {
             rng: SmallRng::seed_from_u64(seed),
             policy: None,
             greedy: false,
+            search_config: None,
+            value: None,
         }
     }
 
     /// Make the policy play greedily (argmax) rather than sampling.
     pub fn with_greedy(mut self, greedy: bool) -> Self {
         self.greedy = greedy;
+        self
+    }
+
+    /// Play with MCTS search (policy as prior, `value` net for leaf eval — falls
+    /// back to rollouts when `value` is `None`). Requires a policy (`with_policy`).
+    pub fn with_search(mut self, cfg: SearchConfig, value: Option<Arc<ValueNet>>) -> Self {
+        self.search_config = Some(cfg);
+        self.value = value;
         self
     }
 

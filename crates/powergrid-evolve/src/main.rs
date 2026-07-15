@@ -47,6 +47,13 @@ struct Config {
     /// sampling. Behavior-cloned policies are much stronger greedy; this matches
     /// the alphazero arena eval methodology.
     greedy: bool,
+    /// `--policy-file` only: play with MCTS search of this many sims (0 = off).
+    search_sims: usize,
+    /// Value net (PGRLVAL1 .bin) for search leaf eval; else the embedded one.
+    value_file: Option<PathBuf>,
+    /// Search with deck determinization (fair vs humans); off = search true
+    /// state (information-advantage upper bound).
+    search_determinize: bool,
 }
 
 impl Default for Config {
@@ -72,6 +79,9 @@ impl Default for Config {
             opponent_toml: None,
             policy_file: None,
             greedy: false,
+            search_sims: 0,
+            value_file: None,
+            search_determinize: false,
         }
     }
 }
@@ -103,6 +113,9 @@ fn parse_args() -> Config {
             "--opponent-toml" => c.opponent_toml = Some(PathBuf::from(val())),
             "--policy-file" => c.policy_file = Some(PathBuf::from(val())),
             "--greedy" => c.greedy = true,
+            "--search-sims" => c.search_sims = val().parse().unwrap(),
+            "--value-file" => c.value_file = Some(PathBuf::from(val())),
+            "--search-determinize" => c.search_determinize = true,
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -144,6 +157,11 @@ fn print_help() {
                                   candidate seat and exit (the held-out policy gate)\n\
          --greedy                 with --policy-file: argmax play (stronger for BC\n\
                                   clones; matches the alphazero arena eval)\n\
+         --search-sims N          with --policy-file: play MCTS search of N sims\n\
+                                  (0 = off; value net = embedded or --value-file)\n\
+         --value-file FILE        PGRLVAL1 value net for search (else embedded)\n\
+         --search-determinize     reshuffle the deck in search (fair vs humans);\n\
+                                  default off = search true state (upper bound)\n\
          --opponent-toml FILE     every opponent seat plays this profile's `hard`\n\
                                   (overrides --opponents; the beat-3x-champion probe)"
     );
@@ -294,8 +312,7 @@ fn main() {
             let prof = genome::x_to_eval_profile(&base_reg.hard, &init_raw, x);
             let f = games::evaluate(
                 &prof,
-                None,
-                false,
+                &games::CandidatePlay::default(),
                 &opponents,
                 &schedule,
                 cfg.num_players,
@@ -313,8 +330,7 @@ fn main() {
         let mean_prof = genome::x_to_eval_profile(&base_reg.hard, &init_raw, &es.mean);
         let mean_fit = games::evaluate(
             &mean_prof,
-            None,
-            false,
+            &games::CandidatePlay::default(),
             &opponents,
             &schedule,
             cfg.num_players,
@@ -394,19 +410,48 @@ fn eval_only(cfg: &Config, base_reg: &ProfileRegistry) {
         std::sync::Arc::new(p)
     });
 
+    // Optional MCTS search + value net for the candidate.
+    let search = (cfg.search_sims > 0).then(|| powergrid_bot_strategy::search::SearchConfig {
+        num_sims: cfg.search_sims,
+        determinize: cfg.search_determinize,
+        ..Default::default()
+    });
+    let value = search.as_ref().map(|_| {
+        cfg.value_file
+            .as_ref()
+            .map(|path| {
+                let bytes = fs::read(path).expect("read --value-file");
+                std::sync::Arc::new(
+                    powergrid_bot_strategy::policy::ValueNet::from_bytes(&bytes)
+                        .unwrap_or_else(|e| panic!("invalid value net {:?}: {:?}", path, e)),
+                )
+            })
+            .or_else(powergrid_bot_strategy::policy::default_value_net)
+            .expect("a value net (embedded or --value-file) is required for search")
+    });
+
+    let play = games::CandidatePlay {
+        policy: policy.as_ref(),
+        greedy: cfg.greedy,
+        search: search.as_ref(),
+        value: value.as_ref(),
+    };
+
     let opponents = build_opponents(cfg, base_reg);
     // Reuse the training schedule builder (gen 0 → seed block starts at seed_base).
     let schedule = build_schedule(cfg, 0, opponents.len());
     let fit = games::evaluate(
         &candidate,
-        policy.as_ref(),
-        cfg.greedy,
+        &play,
         &opponents,
         &schedule,
         cfg.num_players,
         cfg.threads,
     );
     let what = match (&cfg.policy_file, &cfg.eval_toml) {
+        (Some(p), _) if cfg.search_sims > 0 => {
+            format!("policy {:?} + search-{}", p, cfg.search_sims)
+        }
         (Some(p), _) => format!("policy {:?}", p),
         (None, Some(t)) => format!("profile {:?}", t),
         (None, None) => "embedded champion".to_string(),

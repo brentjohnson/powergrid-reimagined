@@ -50,6 +50,11 @@ pub struct SearchConfig {
     pub fpu_reduction: f64,
     /// Hard cap on rollout length (macros) — a safety net; games end well under.
     pub rollout_cap: usize,
+    /// Reshuffle the unseen deck per world (fair vs a human — the search can't
+    /// exploit the true deck order). Set false to search the true state (an
+    /// information-advantage upper bound, useful for measuring whether search
+    /// helps at all before paying the determinization cost).
+    pub determinize: bool,
 }
 
 impl Default for SearchConfig {
@@ -60,6 +65,7 @@ impl Default for SearchConfig {
             cpuct: 1.5,
             fpu_reduction: 0.2,
             rollout_cap: 400,
+            determinize: true,
         }
     }
 }
@@ -108,7 +114,9 @@ pub fn choose_macro(
     for d in 0..cfg.determinizations.max(1) {
         let mut rng = SmallRng::seed_from_u64(seed ^ ((d as u64).wrapping_mul(0x9E3779B97F4A7C15)));
         let mut root_state = state.clone();
-        determinize(&mut root_state, &mut rng);
+        if cfg.determinize {
+            determinize(&mut root_state, &mut rng);
+        }
         let mut root = Node {
             state: root_state,
             actor,

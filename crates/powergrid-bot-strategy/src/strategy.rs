@@ -7,6 +7,7 @@ use powergrid_core::{
         ResourceMarket,
     },
 };
+use rand::Rng;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -69,6 +70,29 @@ pub(crate) fn decide_rl(state: &GameState, bot: &mut Bot) -> RlDecision {
         return RlDecision::NotMyTurn;
     }
 
+    let policy = bot.policy.clone().expect("decide_rl requires a policy");
+
+    // Play-time search: use the policy as a prior and pick the searched macro.
+    // At an auto-phase (fuel/discard) the macro mask is empty, so `choose_macro`
+    // returns None and we fall through to the heuristic — same as the raw path.
+    if let Some(cfg) = bot.search_config.clone() {
+        let seed = bot.rng.gen();
+        return match crate::search::choose_macro(
+            state,
+            bot.id,
+            &policy,
+            bot.value.as_deref(),
+            &cfg,
+            seed,
+        ) {
+            Some(macro_id) => match encoding::action_id_to_action(macro_id, state, bot.id) {
+                Some(action) => RlDecision::Action(action),
+                None => RlDecision::Unavailable,
+            },
+            None => RlDecision::Unavailable,
+        };
+    }
+
     let mask = encoding::build_action_mask(state, bot.id);
     if mask.iter().all(|&m| m == 0) {
         warn!("bot '{}': empty action mask on own turn", bot.name);
@@ -76,7 +100,6 @@ pub(crate) fn decide_rl(state: &GameState, bot: &mut Bot) -> RlDecision {
     }
 
     let obs = encoding::build_observation(state, bot.id);
-    let policy = bot.policy.clone().expect("decide_rl requires a policy");
     let logits = policy.logits(&obs);
     // Sample a macro id, decode it to its single primitive action. On any
     // failure (unusable sample, macro not legal after all) fall back to the
