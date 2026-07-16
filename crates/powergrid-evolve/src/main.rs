@@ -54,6 +54,9 @@ struct Config {
     /// Search with deck determinization (fair vs humans); off = search true
     /// state (information-advantage upper bound).
     search_determinize: bool,
+    /// Number of reshuffled deck worlds to search and sum (only when
+    /// `--search-determinize`); averages out the hidden deck order.
+    search_determinizations: usize,
 }
 
 impl Default for Config {
@@ -82,6 +85,7 @@ impl Default for Config {
             search_sims: 0,
             value_file: None,
             search_determinize: false,
+            search_determinizations: 1,
         }
     }
 }
@@ -116,6 +120,7 @@ fn parse_args() -> Config {
             "--search-sims" => c.search_sims = val().parse().unwrap(),
             "--value-file" => c.value_file = Some(PathBuf::from(val())),
             "--search-determinize" => c.search_determinize = true,
+            "--search-determinizations" => c.search_determinizations = val().parse().unwrap(),
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -162,6 +167,8 @@ fn print_help() {
          --value-file FILE        PGRLVAL1 value net for search (else embedded)\n\
          --search-determinize     reshuffle the deck in search (fair vs humans);\n\
                                   default off = search true state (upper bound)\n\
+         --search-determinizations N  reshuffled worlds to average (with\n\
+                                  --search-determinize; default 1)\n\
          --opponent-toml FILE     every opponent seat plays this profile's `hard`\n\
                                   (overrides --opponents; the beat-3x-champion probe)"
     );
@@ -414,6 +421,7 @@ fn eval_only(cfg: &Config, base_reg: &ProfileRegistry) {
     let search = (cfg.search_sims > 0).then(|| powergrid_bot_strategy::search::SearchConfig {
         num_sims: cfg.search_sims,
         determinize: cfg.search_determinize,
+        determinizations: cfg.search_determinizations.max(1),
         ..Default::default()
     });
     let value = search.as_ref().map(|_| {

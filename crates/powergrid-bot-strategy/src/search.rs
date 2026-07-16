@@ -38,8 +38,16 @@ type Values = HashMap<PlayerId, f64>;
 
 #[derive(Clone)]
 pub struct SearchConfig {
-    /// MCTS simulations per determinized world.
+    /// MCTS simulations per determinized world. Acts as an upper bound: if
+    /// `time_budget_ms` is set, the search stops early when the budget is hit,
+    /// so heavy late-game positions never run all `num_sims`.
     pub num_sims: usize,
+    /// Optional wall-clock cap (milliseconds) across the whole `choose_macro`
+    /// call. `None` = run exactly `num_sims` per world (deterministic — the eval
+    /// harness and tests rely on this). `Some(ms)` = stop once `ms` elapses,
+    /// which bounds per-move latency regardless of how expensive the position's
+    /// simulations are (each sim gets costlier as plants/cities accumulate).
+    pub time_budget_ms: Option<u64>,
     /// Number of reshuffled-deck worlds to search and sum (1 = search a single
     /// determinized world). Higher averages out the hidden deck order.
     pub determinizations: usize,
@@ -61,6 +69,7 @@ impl Default for SearchConfig {
     fn default() -> Self {
         SearchConfig {
             num_sims: 100,
+            time_budget_ms: None,
             determinizations: 1,
             cpuct: 1.5,
             fpu_reduction: 0.2,
@@ -110,8 +119,14 @@ pub fn choose_macro(
         _ => {}
     }
 
+    // Optional wall-clock cap: when set, stop searching once the deadline passes
+    // (checked between simulations), so a heavy late-game move can't stall play.
+    let deadline = cfg
+        .time_budget_ms
+        .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+
     let mut visits: HashMap<u16, u32> = HashMap::new();
-    for d in 0..cfg.determinizations.max(1) {
+    'worlds: for d in 0..cfg.determinizations.max(1) {
         let mut rng = SmallRng::seed_from_u64(seed ^ ((d as u64).wrapping_mul(0x9E3779B97F4A7C15)));
         let mut root_state = state.clone();
         if cfg.determinize {
@@ -125,6 +140,14 @@ pub fn choose_macro(
         };
         for _ in 0..cfg.num_sims {
             simulate(&mut root, policy, value, cfg, &mut rng);
+            if deadline.is_some_and(|dl| std::time::Instant::now() >= dl) {
+                // Fold this world's partial visits in before bailing so the move
+                // still reflects the work done.
+                for e in &root.edges {
+                    *visits.entry(e.macro_id).or_insert(0) += e.n;
+                }
+                break 'worlds;
+            }
         }
         for e in &root.edges {
             *visits.entry(e.macro_id).or_insert(0) += e.n;
@@ -416,21 +439,45 @@ mod tests {
             return;
         };
         let value = default_value_net();
-        let (state, _) = started_game(42);
-        let actor = macro_current_actor(&state).unwrap();
-        for &sims in &[50usize, 100, 200] {
+        // Advance a real game to mid/late (heavier states = the honest latency);
+        // drive every seat with the heuristic macro until ~120 moves in.
+        let (mut state, _) = started_game(42);
+        for _ in 0..260 {
+            resolve_auto_phases(&mut state);
+            if matches!(state.phase, Phase::GameOver { .. }) || state.round >= 9 {
+                break;
+            }
+            let a = macro_current_actor(&state).unwrap();
+            let m = crate::macro_actions::teacher_macro_id(&state, a).unwrap();
+            apply_macro(&mut state, a, m).unwrap();
+        }
+        resolve_auto_phases(&mut state);
+        let actor = macro_current_actor(&state).expect("late-game decision");
+        println!(
+            "timing at phase {:?}, round {}",
+            std::mem::discriminant(&state.phase),
+            state.round
+        );
+        for &sims in &[100usize, 200, 400] {
             let cfg = SearchConfig {
                 num_sims: sims,
-                determinizations: 1,
+                determinize: true,
                 ..Default::default()
             };
             let t = std::time::Instant::now();
             let _ = choose_macro(&state, actor, &policy, value.as_deref(), &cfg, 1);
-            println!(
-                "choose_macro {sims} sims (value-net leaf): {:?}",
-                t.elapsed()
-            );
+            println!("late-game move, {sims} sims UNCAPPED: {:?}", t.elapsed());
         }
+        // The deployed config: 400 sims cap with a 500ms wall-clock budget.
+        let cfg = SearchConfig {
+            num_sims: 400,
+            time_budget_ms: Some(500),
+            determinize: true,
+            ..Default::default()
+        };
+        let t = std::time::Instant::now();
+        let _ = choose_macro(&state, actor, &policy, value.as_deref(), &cfg, 1);
+        println!("late-game move, 400 sims + 500ms BUDGET: {:?}", t.elapsed());
     }
 
     #[test]

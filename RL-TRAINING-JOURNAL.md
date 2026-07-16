@@ -207,7 +207,19 @@ a bit-faithful copy. `session::add_bot` attaches it with `.with_greedy(true)`.
 **Open frontier — beating humans.** The policy beats every *bot* we have, including the
 champion. Whether it beats strong *humans* is untested (no automated proxy exists).
 
-### Follow-up runs (2026-07-13): more PPO helps modestly; self-play regresses (0-for-5)
+### Phase 3 result (2026-07-14): play-time search adds ~+6pp — SHIPPED on the Expert bot
+
+MCTS-over-macros (`search.rs`) with the policy as prior and the exported **PPO value
+head** for leaf values (one forward pass, ~40× faster than rollouts → ~120ms/move at 100
+sims). Held-out gate (600 games, seed 90000, vs 3 normal): bare greedy **67%** → search-50
+**68.5%** → **search-100 73.2%** (+6.2pp); the fair *determinized* mode (reshuffles the
+unseen deck so it can't exploit true deck order) also helps (search-50 det **71%**). Vs 3
+champions the gain is smaller (bare 54% → search-100 55.5%). **Shipped**: the Expert bot
+now plays search-100 determinized (`session::add_bot` → `with_search`); the value net is
+embedded (`expert.value.bin`, PGRLVAL1) with a golden parity test. This is the first time
+the deployed bot *thinks* rather than one-shotting a policy.
+
+### Follow-up runs (2026-07-13/14): PPO plateauing (~62-68%); self-play regresses (0-for-5)
 
 - **Extended PPO to 200M steps** (resumed the 100M run). Held-out greedy, averaged over 3
   seed blocks: 200M-best ~**62%** (64.5/60.3/62.0) vs the 100M-best's ~60% (62.5/58.3/58.8)
@@ -216,13 +228,18 @@ champion. Whether it beats strong *humans* is untested (no automated proxy exist
   `expert.bin` (golden test passes). **Caveat learned:** the in-run `best_mean_reward`
   jumped 0.26→0.44 (implying 72%), but held-out greedy is only ~64% — the in-run vs-jittered
   small-N eval materially *overstates* strength; trust the held-out harness, not TB reward.
+- **Extended PPO to 300M steps.** 300M-best held-out greedy: 68.1% @90000 / 58.4% @95000 —
+  **~neutral vs 200M-best** (better on one block, worse on the other; ~+1pp avg, within
+  noise). In-run `best_mean_reward` 0.44→0.48 overstates again. PPO has **plateaued** at
+  ~62–68% (block-dependent); further raw-PPO gains are marginal. Kept the 200M-best shipped
+  (the search gate was validated on it; 300M isn't clearly better).
 - **Self-play from the competent PPO base FAILED — now 0-for-5.** Resumed self-play from the
-  ~63% base (frozen-opponent + league + `--bot-mix 0.3` grounding, no shaping). Over ~40M
-  steps it *regressed*: held-out greedy 63% base → ~51% best → ~53% latest. Heavy grounding
-  kept it from full collapse (still ~champion level) but it destroyed the competence it
-  started from. This falsifies the last standing pro-self-play hypothesis ("it'll bootstrap
-  once we start from a non-underdog") — self-play does not bootstrap in this project even
-  from a base that *beats* the champion. Stop pursuing it.
+  ~63% base (frozen-opponent + league + `--bot-mix 0.3` grounding, no shaping); ran to 200M.
+  Held-out greedy: 63% base → self-play best **51%** / final **58%** — it *regressed* and
+  never recovered the base's competence. Heavy grounding kept it from full collapse but
+  couldn't make it improve. This falsifies the last standing pro-self-play hypothesis ("it'll
+  bootstrap once we start from a non-underdog") — self-play does not bootstrap in this
+  project even from a base that *beats* the champion. Stop pursuing it.
 
 **Net: the shipped Expert bot is PPO-200M-best (~62% vs normal, beats the ~50% champion).**
 Remaining levers toward beating humans, in order: inference-time search (Phase 3) on this

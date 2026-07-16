@@ -152,11 +152,35 @@ impl Session {
         let mut bot = Bot::new(bot_id, bot_name, color, profile, seed);
         if difficulty == BotDifficulty::Expert {
             match powergrid_bot_strategy::policy::default_policy() {
-                // Play the macro policy greedily (argmax): on the macro action
-                // space greedy is both safe (explicit terminal macros, ~50
-                // decisions/game — no stalls) and clearly stronger than sampling
-                // for the trained policy (held-out ~60% greedy vs ~54% sampled).
-                Some(policy) => bot = bot.with_policy(policy).with_greedy(true),
+                // Play the macro policy with play-time MCTS search (policy as
+                // prior, value net for leaf eval). `determinize` reshuffles the
+                // unseen deck each move so the search can't exploit the true deck
+                // order — the fair mode vs a human. Config tuned by held-out
+                // sweep (vs 3 normal): 400 sims robustly beats 100 by +3-5pp on
+                // two seed blocks (~80%/73% vs ~77%/68%); 800 adds ~nothing, and
+                // more determinization worlds don't help — so 400 sims, 1 world.
+                //
+                // `time_budget_ms` is the real cap on think time; `num_sims` is a
+                // high upper bound so the clock (not the sim count) is what binds.
+                // At ~1.2ms/sim a 1000ms budget runs ~800 sims, past the ~400-sim
+                // strength plateau, so play is at full strength while each move
+                // stays ~1s. Override with `EXPERT_SEARCH_MS` (no rebuild): e.g.
+                // 300 = snappier, 150 = snappiest/weaker. Falls back to rollout
+                // leaves if the value net is unavailable, heuristic if no policy.
+                Some(policy) => {
+                    let value = powergrid_bot_strategy::policy::default_value_net();
+                    let budget_ms = std::env::var("EXPERT_SEARCH_MS")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(1000);
+                    let cfg = powergrid_bot_strategy::search::SearchConfig {
+                        num_sims: 2000,
+                        time_budget_ms: Some(budget_ms),
+                        determinize: true,
+                        ..Default::default()
+                    };
+                    bot = bot.with_policy(policy).with_search(cfg, value);
+                }
                 None => warn!("expert RL policy unavailable; bot will use the hard heuristic"),
             }
         }
@@ -198,13 +222,23 @@ impl Session {
 
 const MAX_BOT_ITERATIONS: usize = 500;
 
+/// Minimum pause after each bot move, even when the bot's think time already
+/// exceeded `delay`. The driver only forwards queued `StateUpdate`s to the UI
+/// while the pump is parked at an `await`; without a guaranteed pause here,
+/// consecutive bot moves (e.g. three Expert bots each searching ~1s with no
+/// slack left in `delay`) run back-to-back and the display jumps several actions
+/// at once instead of one at a time. 50ms comfortably exceeds the driver's 16ms
+/// forward tick, so each move renders before the next bot starts thinking.
+const MIN_PACE: Duration = Duration::from_millis(50);
+
 /// Drive all in-process bots in `session_arc` until none has a move or the cap is hit.
-/// The lock is released during `delay` so other work can proceed.
+/// The lock is released while pacing so other work can proceed.
 /// Bots that produce an invalid action are blocked for the remainder of this pump
 /// invocation so a strategy bug cannot stall the game.
 pub async fn run_bot_pump(session_arc: Arc<Mutex<Session>>, delay: Duration) {
     let mut failed: HashSet<PlayerId> = HashSet::new();
     for iter in 0..MAX_BOT_ITERATIONS {
+        let decide_start = std::time::Instant::now();
         let next = {
             let mut session = session_arc.lock().await;
             session.next_bot_action(&failed)
@@ -214,18 +248,31 @@ pub async fn run_bot_pump(session_arc: Arc<Mutex<Session>>, delay: Duration) {
             return;
         };
 
-        tokio::time::sleep(delay).await;
-
-        let mut session = session_arc.lock().await;
-        match session.apply(bot_id, action) {
-            Ok(()) => {
-                info!("Bot {} acted (iter {})", bot_id, iter);
-            }
-            Err(e) => {
-                warn!("Bot {} produced invalid action: {}", bot_id, e);
-                failed.insert(bot_id);
+        // Apply first (broadcasts the move), then pace — so the pause below is
+        // the window in which the driver forwards *this* move to the UI before
+        // the next bot's search begins.
+        {
+            let mut session = session_arc.lock().await;
+            match session.apply(bot_id, action) {
+                Ok(()) => {
+                    info!("Bot {} acted (iter {})", bot_id, iter);
+                }
+                Err(e) => {
+                    warn!("Bot {} produced invalid action: {}", bot_id, e);
+                    failed.insert(bot_id);
+                }
             }
         }
+
+        // Pace as a FLOOR, not an addend: think time counts toward `delay` (so a
+        // slow-thinking Expert bot isn't doubly slow — an Expert move is
+        // ~max(search, delay), not search + delay), but always pause at least
+        // MIN_PACE so consecutive moves render one at a time (see MIN_PACE).
+        let pace = delay
+            .checked_sub(decide_start.elapsed())
+            .unwrap_or(Duration::ZERO)
+            .max(MIN_PACE);
+        tokio::time::sleep(pace).await;
     }
 
     let session = session_arc.lock().await;
