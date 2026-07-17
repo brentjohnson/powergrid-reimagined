@@ -25,6 +25,8 @@ services:
       - PORT=3000
       - RUST_LOG=debug
       - DATABASE_URL=postgres://powergrid:powergrid@postgres:5432/powergrid
+      # Set a token to enable the admin interface at /admin (disabled if unset):
+      # - ADMIN_TOKEN=change-me
     depends_on:
       postgres:
         condition: service_healthy

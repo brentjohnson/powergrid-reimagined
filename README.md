@@ -107,6 +107,10 @@ docker compose up --build
 
 The lobby server requires a `DATABASE_URL` pointing at a PostgreSQL instance. The Docker Compose file configures this automatically.
 
+## Admin Console
+
+The lobby server includes a web admin console at `/admin` for browsing players, resetting passwords, and reviewing game metrics. It is disabled unless the `ADMIN_TOKEN` environment variable is set. See [docs/admin-console.md](docs/admin-console.md) for setup, authentication, and the full feature/API reference.
+
 ## Health Check
 
 ```bash

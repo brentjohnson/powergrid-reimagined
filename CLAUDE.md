@@ -139,16 +139,19 @@ Pure strategy + AI lib. No I/O, no tokio. Depended on by session, lobby, and cli
 
 Production multi-game server. Handles auth, room lifecycle, and in-process bots. Requires PostgreSQL (`DATABASE_URL` env var).
 
-- `main.rs` — axum router: `/health`, `/rooms` (REST), `/ws`, `/auth/{register,login,logout}`. `AppState { manager, bot_delay, db }`.
+- `main.rs` — axum router: `/health`, `/rooms` (REST), `/ws`, `/auth/{register,login,logout}`, and (when `ADMIN_TOKEN` is set) the `/admin` interface merged in. `AppState { manager, bot_delay, db }`.
 - `ws.rs` — `ConnState { user_id, username, current_room, tx }`. Pre-auth gate: expects `ClientMessage::Authenticate { token, protocol_version }` as the first message (10s timeout); rejects mismatched `protocol_version` with `AuthError::VersionMismatch`. On success dispatches `Lobby { action }` and `Room { room, action }` messages.
-- `rooms.rs` — `Room { name, game, humans, bots, creator_user_id }` with `broadcast`, `broadcast_msg`, `add_bot`, `remove_bot`, `summary`. `RoomManager` owns `RwLock<HashMap<String, Arc<Mutex<Room>>>>`.
+- `rooms.rs` — `Room { name, session, humans, creator_user_id, started_at, results_recorded }` with `broadcast`, `broadcast_msg`, `add_bot`, `remove_bot`, `summary`, `is_game_over`. `started_at`/`results_recorded` support the game-over persistence hook. `RoomManager` owns `RwLock<HashMap<String, Arc<Mutex<Room>>>>`.
 - `lobby_handler.rs` — handles `LobbyAction` variants: `ListRooms`, `CreateRoom`, `JoinRoom`, `LeaveRoom`, `AddBot`, `RemoveBot`.
-- `room_handler.rs` — handles in-game `Action`: lock room, call `apply_action`, broadcast `StateUpdate`, trigger `run_bot_pump`.
+- `room_handler.rs` — handles in-game `Action`: lock room, call `apply_action`, broadcast `StateUpdate`, trigger `run_bot_pump`. Records `started_at` on the Lobby→started transition, and after the pump calls `maybe_record_result` → `build_game_record` (from `finish_ranks`) → `Db::record_game`. The `results_recorded` flag (set under the room mutex) makes this fire exactly once per game, whether a human or a subsequent bot move ended it — `handle_room_action` is the sole path that can reach `Phase::GameOver`.
 - `hint_handler.rs` — handles `ClientMessage::RoomHint`: forwards `HintPayload` to all other clients in the room via `PeerHint`.
 - `driver.rs` — `run_bot_pump(room_arc, delay)`: polls `strategy::decide` for each in-process bot (up to 500 iterations), applies moves via `apply_action`, broadcasts state. Bots never touch the network.
 - `auth.rs` — REST handlers for register/login/logout. 32-byte URL-safe-base64 tokens, 30-day TTL.
-- `db.rs` — `Db { pool: PgPool }`. Methods: `register`, `login`, `validate_token`, `logout`. Uses Argon2 for password hashing.
-- Configured via env vars: `PORT` (3000), `DATABASE_URL` (required), `BOT_DELAY_MS` (250), `MAP_FILE`, `RUST_LOG`.
+- `db.rs` — `Db { pool: PgPool }`. Methods: `register`, `login` (both set `users.last_login`), `validate_token`, `logout`, `record_game` (transactional game + per-seat insert), `admin_reset_password` (generate temp password, rehash, revoke sessions). Uses Argon2 for password hashing.
+- `admin_queries.rs` — read-only queries backing the admin API (second `impl Db` block): `admin_list_players`, `admin_player`, `admin_player_games`, `admin_player_position_counts`, `admin_recent_games`, `admin_metrics`. Row structs derive `FromRow + Serialize`.
+- `admin.rs` — the `/admin` router (see [docs/admin-console.md](docs/admin-console.md) for the operator-facing guide). Static UI (`admin.html`/`admin.css`/`admin.js` embedded via `include_str!` from `static/`) served token-free; `/admin/api/*` JSON endpoints gated by a constant-time `ADMIN_TOKEN` bearer check (`middleware::from_fn_with_state`). Endpoints: `GET /api/players`, `GET /api/players/:id`, `POST /api/players/:id/reset-password`, `GET /api/metrics`, `GET /api/games`. Only mounted when `ADMIN_TOKEN` is set (else the routes 404). The UI (vanilla JS, no build step, dark theme) has players/player-detail/metrics/games views with inline-SVG/CSS bar charts and a reset-password → temp-password-once modal; it stores the token in `sessionStorage`.
+- `migrations/` — sqlx embedded migrations run at startup. `0001_init.sql` (`users`, `sessions`); `0002_admin.sql` adds `users.last_login` and the `games` / `game_players` result tables (`game_players.user_id` is the human's `users.id`, NULL for bots; `finish_position` 1-based).
+- Configured via env vars: `PORT` (3000), `DATABASE_URL` (required), `BOT_DELAY_MS` (250), `ADMIN_TOKEN` (admin disabled if unset), `MAP_FILE`, `RUST_LOG`.
 
 ### powergrid-client
 

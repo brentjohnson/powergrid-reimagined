@@ -15,6 +15,10 @@ pub struct Room {
     pub humans: Vec<(PlayerId, mpsc::UnboundedSender<String>)>,
     /// user_id of the human who created the room (survives reconnects).
     pub creator_user_id: PlayerId,
+    /// When the game left the Lobby phase (for game-result persistence).
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Once-only guard so a finished game is recorded to the DB exactly once.
+    pub results_recorded: bool,
 }
 
 impl Room {
@@ -24,6 +28,8 @@ impl Room {
             session: Session::new(map, MAX_PLAYERS),
             humans: Vec::new(),
             creator_user_id,
+            started_at: None,
+            results_recorded: false,
         }
     }
 

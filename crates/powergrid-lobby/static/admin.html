@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PowerGrid Admin</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <!-- Token gate -->
+  <div id="gate" class="gate hidden">
+    <form id="gate-form" class="gate-card">
+      <h1>PowerGrid Admin</h1>
+      <p class="muted">Enter the admin token to continue.</p>
+      <input id="gate-token" type="password" placeholder="Admin token" autocomplete="off" spellcheck="false">
+      <button type="submit">Unlock</button>
+      <p id="gate-error" class="error hidden">Invalid token.</p>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand">⚡ PowerGrid <span class="muted">Admin</span></div>
+      <nav class="nav">
+        <a href="#players" data-route="players">Players</a>
+        <a href="#metrics" data-route="metrics">Metrics</a>
+        <a href="#games" data-route="games">Games</a>
+      </nav>
+      <button id="lock" class="ghost" title="Forget token">Lock</button>
+    </header>
+
+    <main id="view"></main>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="ghost">Cancel</button>
+        <button id="modal-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin/admin.js"></script>
+</body>
+</html>

@@ -162,7 +162,7 @@ pub async fn handle_socket(
                 handle_lobby_action(action, &mut conn, &manager).await;
             }
             ClientMessage::Room { room, action } => {
-                handle_room_action(room, action, &conn, &manager, bot_delay).await;
+                handle_room_action(room, action, &conn, &manager, bot_delay, &db).await;
             }
             ClientMessage::RoomHint { room, hint } => {
                 handle_room_hint(room, hint, &conn, &manager).await;
