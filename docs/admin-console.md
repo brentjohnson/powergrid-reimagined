@@ -115,15 +115,15 @@ power plant each seat held at the end.
 
 ### Reset password
 
-From the Players table, click **Reset** on a player's row and confirm. The server:
+From the Players table, click **Reset** on a player's row. A modal opens with a
+password input; type a new password (8–128 characters) or click **Generate** to
+fill the field with a random one, then click **Save**. The server:
 
-1. Generates a new random temporary password.
-2. Replaces the player's Argon2 password hash with it.
-3. Deletes all of that player's active sessions (logging them out everywhere).
+1. Replaces the player's Argon2 password hash with the supplied password.
+2. Deletes all of that player's active sessions (logging them out everywhere).
 
-The temporary password is then shown **once** in a modal with a copy button —
-it is not stored anywhere retrievable, so copy it and deliver it to the player
-through a secure channel. The player can log in with it and change it as normal.
+Deliver the new password to the player through a secure channel. The player can
+log in with it and change it as normal.
 
 There is no email-based self-service reset flow; the server has no mail
 infrastructure, so admin-initiated reset is the recovery path.
@@ -153,7 +153,7 @@ JSON.
 |---|---|---|
 | `GET`  | `/admin/api/players` | List all players with aggregate stats. |
 | `GET`  | `/admin/api/players/:id` | One player: profile, recent games, finish-position counts, career averages, favorite plants. |
-| `POST` | `/admin/api/players/:id/reset-password` | Reset password; returns `{ "temp_password": "…" }`. |
+| `POST` | `/admin/api/players/:id/reset-password` | Set the player's password to the supplied `{ "password": "…" }` (8–128 chars) and revoke their sessions; returns `{ "ok": true }`. |
 | `GET`  | `/admin/api/metrics` | Server-wide aggregate metrics (see the Metrics section for the full breakdown). |
 | `GET`  | `/admin/api/games?limit=N` | Recent finished games (default 50, max 500). |
 | `GET`  | `/admin/api/games/:id` | One game: metadata, full standings, and per-seat plants. |

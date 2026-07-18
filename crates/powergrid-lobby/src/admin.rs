@@ -12,6 +12,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use powergrid_core::limits::{MAX_PASSWORD, MIN_PASSWORD};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -182,13 +183,26 @@ async fn game_detail(
     })))
 }
 
+#[derive(Deserialize)]
+struct ResetPasswordReq {
+    password: String,
+}
+
 async fn reset_password(
     State(app): State<AppState>,
     Path(id): Path<Uuid>,
+    Json(req): Json<ResetPasswordReq>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrResp>)> {
-    match app.db.admin_reset_password(id).await {
-        Ok(Some(temp)) => Ok(Json(json!({ "temp_password": temp }))),
-        Ok(None) => Err(err(StatusCode::NOT_FOUND, "player not found")),
+    let plen = req.password.chars().count();
+    if !(MIN_PASSWORD..=MAX_PASSWORD).contains(&plen) {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            format!("password must be {MIN_PASSWORD}–{MAX_PASSWORD} characters"),
+        ));
+    }
+    match app.db.admin_reset_password(id, &req.password).await {
+        Ok(true) => Ok(Json(json!({ "ok": true }))),
+        Ok(false) => Err(err(StatusCode::NOT_FOUND, "player not found")),
         Err(e) => Err(err(StatusCode::INTERNAL_SERVER_ERROR, e)),
     }
 }

@@ -42,13 +42,6 @@ fn generate_token() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// A short, human-passable random password for admin-initiated resets.
-fn generate_temp_password() -> String {
-    let mut bytes = [0u8; 12];
-    OsRng.fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
 /// A finished game and its final standings, ready to persist.
 pub struct GameRecord {
     pub room_name: String,
@@ -303,13 +296,16 @@ impl Db {
         Ok(game_id)
     }
 
-    /// Reset a user's password to a freshly generated temp value, revoke all of
-    /// their sessions, and return the temp password. `Ok(None)` if no such user.
-    pub async fn admin_reset_password(&self, user_id: Uuid) -> Result<Option<String>, AuthError> {
-        let temp = generate_temp_password();
+    /// Reset a user's password to the admin-supplied value, revoke all of their
+    /// sessions, and return `Ok(true)`. `Ok(false)` if no such user.
+    pub async fn admin_reset_password(
+        &self,
+        user_id: Uuid,
+        new_password: &str,
+    ) -> Result<bool, AuthError> {
         let salt = SaltString::generate(&mut OsRng);
         let hash = Argon2::default()
-            .hash_password(temp.as_bytes(), &salt)
+            .hash_password(new_password.as_bytes(), &salt)
             .map_err(|_| AuthError::Hash)?
             .to_string();
 
@@ -321,13 +317,13 @@ impl Db {
             .await?;
         if updated.rows_affected() == 0 {
             tx.rollback().await?;
-            return Ok(None);
+            return Ok(false);
         }
         sqlx::query("DELETE FROM sessions WHERE user_id = $1")
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(Some(temp))
+        Ok(true)
     }
 }

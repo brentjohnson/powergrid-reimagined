@@ -225,20 +225,9 @@ tbody tr:last-child td { border-bottom: none; }
 }
 .modal-card h3 { margin: 0 0 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-.temp-pw {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  font-family: ui-monospace, monospace;
-  font-size: 16px;
-  word-break: break-all;
-  margin: 12px 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
+.pw-row { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
+.pw-row .pw-input { flex: 1; font-family: ui-monospace, monospace; }
+.pw-row .ghost { flex: none; white-space: nowrap; }
 .warn-text { color: var(--muted); font-size: 13px; }
 
 /* ---- Vertical bars: taller variant with x-axis labels ---- */

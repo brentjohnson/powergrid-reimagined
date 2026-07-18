@@ -725,36 +725,73 @@ function closeModal() { modal.classList.add("hidden"); }
 modalCancel.addEventListener("click", closeModal);
 modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 
+const MIN_PW = 8;
+const MAX_PW = 128;
+
+// Generate a readable random password (ambiguous chars omitted).
+function generatePassword() {
+  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const arr = new Uint32Array(16);
+  crypto.getRandomValues(arr);
+  let s = "";
+  for (let i = 0; i < arr.length; i++) s += chars[arr[i] % chars.length];
+  return s;
+}
+
 function confirmReset(p) {
+  const errLine = el("p", { class: "error hidden" });
+  const input = el("input", {
+    type: "text",
+    class: "pw-input",
+    placeholder: "New password",
+    autocomplete: "new-password",
+    spellcheck: "false",
+  });
+  const genBtn = el("button", {
+    class: "ghost", type: "button",
+    onclick: () => { input.value = generatePassword(); errLine.classList.add("hidden"); input.focus(); },
+  }, "Generate");
+
   modalBody.replaceChildren(
     el("h3", {}, "Reset password"),
-    el("p", {}, "Generate a new temporary password for ", el("strong", {}, p.username), "? This immediately logs them out of all sessions.")
+    el("p", {}, "Set a new password for ", el("strong", {}, p.username), ". This immediately logs them out of all sessions."),
+    el("div", { class: "pw-row" }, input, genBtn),
+    errLine
   );
-  modalConfirm.textContent = "Reset password";
-  modalConfirm.className = "danger";
+  modalConfirm.textContent = "Save";
+  modalConfirm.className = "";
   modalCancel.classList.remove("hidden");
   modalConfirm.onclick = async () => {
+    const pw = input.value;
+    if (pw.length < MIN_PW || pw.length > MAX_PW) {
+      errLine.textContent = "Password must be " + MIN_PW + "–" + MAX_PW + " characters.";
+      errLine.classList.remove("hidden");
+      input.focus();
+      return;
+    }
     modalConfirm.disabled = true;
     try {
-      const res = await api("/players/" + p.id + "/reset-password", { method: "POST" });
-      showTempPassword(p.username, res.temp_password);
+      await api("/players/" + p.id + "/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      showResetDone(p.username);
     } catch (e) {
-      modalBody.replaceChildren(el("h3", {}, "Error"), el("p", { class: "error" }, e.message));
+      errLine.textContent = e.message;
+      errLine.classList.remove("hidden");
     } finally {
       modalConfirm.disabled = false;
     }
   };
   modal.classList.remove("hidden");
+  input.focus();
 }
 
-function showTempPassword(username, pw) {
-  const pwBox = el("div", { class: "temp-pw" }, el("span", {}, pw),
-    el("button", { class: "ghost", onclick: () => navigator.clipboard && navigator.clipboard.writeText(pw) }, "Copy"));
+function showResetDone(username) {
   modalBody.replaceChildren(
     el("h3", {}, "Password reset"),
-    el("p", {}, "New temporary password for ", el("strong", {}, username), ":"),
-    pwBox,
-    el("p", { class: "warn-text" }, "This is shown only once. Copy it now and share it securely.")
+    el("p", {}, "The password for ", el("strong", {}, username), " has been updated and their sessions were revoked.")
   );
   modalConfirm.textContent = "Done";
   modalConfirm.className = "";
