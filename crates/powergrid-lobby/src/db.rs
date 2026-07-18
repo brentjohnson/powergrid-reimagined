@@ -64,11 +64,32 @@ pub struct SeatRecord {
     pub player_name: String,
     pub color: String,
     pub is_bot: bool,
+    /// Difficulty for bot seats ("easy"|"normal"|"hard"|"expert"); None for humans.
+    pub bot_difficulty: Option<String>,
+    /// 1-based seat/turn order at game end.
+    pub turn_order: i16,
     pub finish_position: i16,
     pub cities: i16,
     pub money: i32,
     pub powered: i16,
     pub plants: i16,
+    // Cumulative economic activity over the whole game (from `Player::stats`).
+    pub plants_bought: i32,
+    pub spent_on_plants: i32,
+    pub resources_bought: i32,
+    pub spent_on_resources: i32,
+    pub cities_bought: i32,
+    pub spent_on_cities: i32,
+    /// Every plant this seat still owned at game end.
+    pub plant_details: Vec<PlantRecord>,
+}
+
+/// One power plant held by a seat at game end.
+pub struct PlantRecord {
+    pub number: i16,
+    pub kind: String,
+    pub capacity: i16,
+    pub resource_cost: i16,
 }
 
 fn map_insert_error(e: sqlx::Error) -> AuthError {
@@ -233,22 +254,49 @@ impl Db {
         for s in &rec.seats {
             sqlx::query(
                 "INSERT INTO game_players \
-                 (game_id, user_id, player_name, color, is_bot, finish_position, \
-                  cities, money, powered, plants) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                 (game_id, user_id, player_name, color, is_bot, bot_difficulty, turn_order, \
+                  finish_position, cities, money, powered, plants, \
+                  plants_bought, spent_on_plants, resources_bought, spent_on_resources, \
+                  cities_bought, spent_on_cities) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+                         $13, $14, $15, $16, $17, $18)",
             )
             .bind(game_id)
             .bind(s.user_id)
             .bind(&s.player_name)
             .bind(&s.color)
             .bind(s.is_bot)
+            .bind(&s.bot_difficulty)
+            .bind(s.turn_order)
             .bind(s.finish_position)
             .bind(s.cities)
             .bind(s.money)
             .bind(s.powered)
             .bind(s.plants)
+            .bind(s.plants_bought)
+            .bind(s.spent_on_plants)
+            .bind(s.resources_bought)
+            .bind(s.spent_on_resources)
+            .bind(s.cities_bought)
+            .bind(s.spent_on_cities)
             .execute(&mut *tx)
             .await?;
+
+            for p in &s.plant_details {
+                sqlx::query(
+                    "INSERT INTO game_player_plants \
+                     (game_id, finish_position, plant_number, kind, capacity, resource_cost) \
+                     VALUES ($1, $2, $3, $4, $5, $6)",
+                )
+                .bind(game_id)
+                .bind(s.finish_position)
+                .bind(p.number)
+                .bind(&p.kind)
+                .bind(p.capacity)
+                .bind(p.resource_cost)
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         tx.commit().await?;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use powergrid_core::{
     actions::Action,
     state::GameState,
-    types::{PlayerColor, PlayerId},
+    types::{BotDifficulty, PlayerColor, PlayerId},
 };
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -19,6 +19,10 @@ pub struct Bot {
     pub id: PlayerId,
     pub name: String,
     pub color: PlayerColor,
+    /// The difficulty this bot was created at. Not used by decision logic (the
+    /// `profile`/`policy` already encode strength) — retained so callers (e.g.
+    /// the lobby's game-result recorder) can report which kind of bot played.
+    pub difficulty: BotDifficulty,
     pub profile: BotProfile,
     pub(crate) rng: SmallRng,
     /// RL policy (Expert difficulty). When set, `decide` plays the policy and
@@ -47,6 +51,7 @@ impl Bot {
             id,
             name,
             color,
+            difficulty: BotDifficulty::default(),
             profile,
             rng: SmallRng::seed_from_u64(seed),
             policy: None,
@@ -54,6 +59,12 @@ impl Bot {
             search_config: None,
             value: None,
         }
+    }
+
+    /// Tag this bot with the difficulty it was created at (reporting only).
+    pub fn with_difficulty(mut self, difficulty: BotDifficulty) -> Self {
+        self.difficulty = difficulty;
+        self
     }
 
     /// Make the policy play greedily (argmax) rather than sampling.

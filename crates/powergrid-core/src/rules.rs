@@ -382,6 +382,8 @@ fn award_plant(
 
     let player = state.player_mut(winner).ok_or(ActionError::UnknownPlayer)?;
     player.money -= cost;
+    player.stats.plants_bought += 1;
+    player.stats.spent_on_plants += cost;
 
     if player.plants.len() >= 3 {
         // Player already has 3 plants — pause and ask them which to discard.
@@ -715,6 +717,8 @@ fn handle_buy_resources(
     state.resources.take(resource, amount);
     let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
     player.money -= cost;
+    player.stats.resources_bought += amount as u32;
+    player.stats.spent_on_resources += cost;
     player.resources.add(resource, amount);
 
     let name = state
@@ -787,6 +791,8 @@ fn handle_buy_resource_batch(
                 .player_mut(actor)
                 .ok_or(ActionError::UnknownPlayer)?;
             player.money -= cost;
+            player.stats.resources_bought += *amount as u32;
+            player.stats.spent_on_resources += cost;
             player.resources.add(*resource, *amount);
             total_cost += cost;
         }
@@ -866,6 +872,8 @@ fn apply_single_build(
 
     let player = state.player_mut(actor).ok_or(ActionError::UnknownPlayer)?;
     player.money -= total_cost;
+    player.stats.cities_bought += 1;
+    player.stats.spent_on_cities += total_cost;
 
     state
         .map

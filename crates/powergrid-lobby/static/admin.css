@@ -240,3 +240,70 @@ tbody tr:last-child td { border-bottom: none; }
   gap: 10px;
 }
 .warn-text { color: var(--muted); font-size: 13px; }
+
+/* ---- Vertical bars: taller variant with x-axis labels ---- */
+.bars-v.tall { height: 180px; }
+.vbar .vlabel { font-size: 10px; color: var(--ink-2); margin-top: 2px; }
+
+/* ---- Inline mini win-rate / share bar (inside table cells) ---- */
+.mini-bar {
+  display: inline-block;
+  width: 90px;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.mini-fill { height: 100%; background: var(--series-1); border-radius: 4px; min-width: 1px; }
+.mini-val { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ---- Badges ---- */
+.color-badge { display: inline-flex; align-items: center; gap: 6px; text-transform: capitalize; }
+.pill.diff-easy   { background: rgba(25,158,112,0.20); color: #37c08d; }
+.pill.diff-normal { background: rgba(57,135,229,0.20); color: var(--series-1); }
+.pill.diff-hard   { background: rgba(224,169,58,0.20); color: #e0a93a; }
+.pill.diff-expert { background: rgba(208,59,59,0.22); color: #ef6a6a; }
+.pill.diff-bot, .pill.diff-unknown { background: rgba(137,135,129,0.2); color: var(--ink-2); }
+
+.plant-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  margin: 2px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-2);
+}
+.pdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* ---- Stat chips ---- */
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.chip-k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+.chip-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.small { font-size: 13px; }
+
+/* ---- Game-detail seat cards ---- */
+.seat-list { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.seat-card { padding: 14px 16px; }
+.seat-card.winner { border-color: rgba(224,169,58,0.5); box-shadow: 0 0 0 1px rgba(224,169,58,0.25) inset; }
+.seat-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.seat-head .place { font-weight: 700; font-size: 16px; min-width: 34px; }
+.seat-head .seat-name { font-weight: 600; }
+.seat-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.seat-econ { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px; font-size: 13px; }
+.seat-econ .econ .chip-k { margin-right: 2px; }
+.plant-row { display: flex; flex-wrap: wrap; gap: 2px; }

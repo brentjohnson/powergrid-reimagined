@@ -149,7 +149,7 @@ impl Session {
         let registry = default_registry();
         let profile = registry.profile_for(difficulty).clone();
         let seed = bot_id.as_u128() as u64;
-        let mut bot = Bot::new(bot_id, bot_name, color, profile, seed);
+        let mut bot = Bot::new(bot_id, bot_name, color, profile, seed).with_difficulty(difficulty);
         if difficulty == BotDifficulty::Expert {
             match powergrid_bot_strategy::policy::default_policy() {
                 // Play the macro policy with play-time MCTS search (policy as

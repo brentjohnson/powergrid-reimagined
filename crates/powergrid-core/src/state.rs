@@ -271,6 +271,7 @@ impl GameState {
                 } else {
                     crate::types::Player {
                         money: 0,
+                        stats: crate::types::PlayerStats::default(),
                         ..p.clone()
                     }
                 }

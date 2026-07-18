@@ -1,5 +1,5 @@
 use crate::{
-    db::{Db, GameRecord, SeatRecord},
+    db::{Db, GameRecord, PlantRecord, SeatRecord},
     driver::run_bot_pump,
     rooms::{Room, RoomManager},
     ws::ConnState,
@@ -104,18 +104,39 @@ fn build_game_record(room: &Room) -> GameRecord {
     let seats = finish_ranks(game)
         .into_iter()
         .filter_map(|(pid, position)| {
-            let player = game.players.iter().find(|p| p.id == pid)?;
-            let is_bot = room.session.bots.iter().any(|b| b.id == pid);
+            let seat_index = game.players.iter().position(|p| p.id == pid)?;
+            let player = &game.players[seat_index];
+            let bot = room.session.bots.iter().find(|b| b.id == pid);
+            let is_bot = bot.is_some();
+            let plant_details = player
+                .plants
+                .iter()
+                .map(|p| PlantRecord {
+                    number: p.number as i16,
+                    kind: format!("{:?}", p.kind).to_lowercase(),
+                    capacity: p.cities as i16,
+                    resource_cost: p.cost as i16,
+                })
+                .collect();
             Some(SeatRecord {
                 user_id: (!is_bot).then_some(pid),
                 player_name: player.name.clone(),
                 color: format!("{:?}", player.color).to_lowercase(),
                 is_bot,
+                bot_difficulty: bot.map(|b| format!("{:?}", b.difficulty).to_lowercase()),
+                turn_order: (seat_index + 1) as i16,
                 finish_position: position as i16,
                 cities: game.player_city_count(pid) as i16,
                 money: player.money as i32,
                 powered: player.last_cities_powered as i16,
                 plants: player.plants.len() as i16,
+                plants_bought: player.stats.plants_bought as i32,
+                spent_on_plants: player.stats.spent_on_plants as i32,
+                resources_bought: player.stats.resources_bought as i32,
+                spent_on_resources: player.stats.spent_on_resources as i32,
+                cities_bought: player.stats.cities_bought as i32,
+                spent_on_cities: player.stats.spent_on_cities as i32,
+                plant_details,
             })
         })
         .collect();
@@ -211,11 +232,44 @@ mod tests {
             .find(|s| s.user_id == Some(human))
             .expect("human seat present");
         assert!(!human_seat.is_bot);
+        assert!(human_seat.bot_difficulty.is_none());
         assert_eq!(rec.seats.iter().filter(|s| s.is_bot).count(), 3);
         assert!(rec
             .seats
             .iter()
             .filter(|s| s.is_bot)
             .all(|s| s.user_id.is_none()));
+
+        // Bot seats carry their difficulty ("normal", as added above).
+        assert!(rec
+            .seats
+            .iter()
+            .filter(|s| s.is_bot)
+            .all(|s| s.bot_difficulty.as_deref() == Some("normal")));
+
+        // turn_order is a permutation of 1..=4 (one per stable seat index).
+        let mut orders: Vec<i16> = rec.seats.iter().map(|s| s.turn_order).collect();
+        orders.sort_unstable();
+        assert_eq!(orders, vec![1, 2, 3, 4]);
+
+        // Plant details are captured: a seat's `plants` count matches its
+        // recorded plant list, and a finished game leaves plants on the board.
+        assert!(rec
+            .seats
+            .iter()
+            .all(|s| s.plant_details.len() == s.plants as usize));
+        assert!(rec.seats.iter().any(|s| !s.plant_details.is_empty()));
+
+        // Cumulative economy stats accrue over a full game: every seat bought
+        // plants and built cities (both cost money), and totals are positive.
+        for s in &rec.seats {
+            assert!(s.plants_bought > 0, "seat bought no plants");
+            assert!(s.spent_on_plants > 0, "seat spent nothing on plants");
+            assert!(s.cities_bought > 0, "seat built no cities");
+            assert!(s.spent_on_cities > 0, "seat spent nothing on cities");
+            // A seat holds at most its cumulative purchases (some may be discarded).
+            assert!(s.plants as i32 <= s.plants_bought);
+            assert!(s.cities as i32 <= s.cities_bought);
+        }
     }
 }

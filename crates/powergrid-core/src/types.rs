@@ -225,6 +225,26 @@ impl PlayerResources {
     }
 }
 
+/// Cumulative spending/activity counters for a player, accumulated over the
+/// whole game as purchases are applied in `rules`. Distinct from end-of-game
+/// snapshot fields (money, plant count): these only ever grow. Treated as
+/// hidden info like `money` — zeroed for opponents in `GameState::view_for`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerStats {
+    /// Power plants won at auction.
+    pub plants_bought: u32,
+    /// Total Elektro paid for those plants (winning bids).
+    pub spent_on_plants: u32,
+    /// Resource units purchased from the market.
+    pub resources_bought: u32,
+    /// Total Elektro paid for resources.
+    pub spent_on_resources: u32,
+    /// Cities built (connections established).
+    pub cities_bought: u32,
+    /// Total Elektro paid to build cities (connection + slot cost).
+    pub spent_on_cities: u32,
+}
+
 /// A player in the game.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Player {
@@ -235,6 +255,9 @@ pub struct Player {
     pub plants: Vec<PowerPlant>,
     pub resources: PlayerResources,
     pub last_cities_powered: u8,
+    /// Cumulative spend/activity totals over the game (hidden info like `money`).
+    #[serde(default)]
+    pub stats: PlayerStats,
 }
 
 impl Player {
@@ -247,6 +270,7 @@ impl Player {
             plants: Vec::new(),
             resources: PlayerResources::default(),
             last_cities_powered: 0,
+            stats: PlayerStats::default(),
         }
     }
 

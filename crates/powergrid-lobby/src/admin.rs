@@ -51,6 +51,7 @@ pub fn router(token: Arc<str>) -> Router<AppState> {
         )
         .route("/admin/api/metrics", get(metrics))
         .route("/admin/api/games", get(recent_games))
+        .route("/admin/api/games/:id", get(game_detail))
         .layer(middleware::from_fn_with_state(token, check_token));
 
     Router::new()
@@ -133,10 +134,51 @@ async fn player_detail(
         .admin_player_position_counts(id)
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let stats = app
+        .db
+        .admin_player_stats(id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let favorite_plants = app
+        .db
+        .admin_player_favorite_plants(id, 10)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(json!({
         "player": player,
         "games": games,
         "position_counts": position_counts,
+        "stats": stats,
+        "favorite_plants": favorite_plants,
+    })))
+}
+
+async fn game_detail(
+    State(app): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrResp>)> {
+    let game = app
+        .db
+        .admin_game(id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let Some(game) = game else {
+        return Err(err(StatusCode::NOT_FOUND, "game not found"));
+    };
+    let seats = app
+        .db
+        .admin_game_seats(id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let plants = app
+        .db
+        .admin_game_plants(id)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(json!({
+        "game": game,
+        "seats": seats,
+        "plants": plants,
     })))
 }
 
