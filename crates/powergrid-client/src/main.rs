@@ -73,6 +73,14 @@ impl eframe::App for PowerGridApp {
         state::process_auth_events(&mut self.state);
         ws::process_ws_events(&mut self.state, self.ws.as_ref());
 
+        // Tear down the WS worker after a logout or auth rejection so it stops
+        // reconnecting (and stops clobbering the error we just showed). A fresh
+        // connection is only spawned via the pending_connect path below.
+        if std::mem::take(&mut self.state.disconnect_requested) {
+            self.ws = None;
+            self.local = None;
+        }
+
         // Play the turn-notification sound once per transition into "it's my turn",
         // but only in online (lobby) games — not local-vs-bots play.
         if std::mem::take(&mut self.state.play_turn_sound) && self.local.is_none() {

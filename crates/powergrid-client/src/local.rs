@@ -91,6 +91,9 @@ pub fn start_local_session(cfg: LocalConfig) -> (WsChannels, LocalHandle) {
     let _ = event_tx.send(WsEvent::MessageReceived(ServerMessage::Authenticated {
         user_id: human_id,
         username: human_name.clone(),
+        // Local play: the "server" is this same binary.
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
+        server_protocol: powergrid_core::PROTOCOL_VERSION,
     }));
     let _ = event_tx.send(WsEvent::MessageReceived(ServerMessage::RoomJoined {
         room: "local".to_string(),

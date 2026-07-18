@@ -116,7 +116,14 @@ pub async fn handle_socket(
     let (user_id, username) = match auth_result {
         Some(u) => u,
         None => {
-            send_task.abort();
+            // Auth was rejected and an AuthError was queued on `tx`. Drop our
+            // sender so the send task drains the channel (flushing that error to
+            // the client) and exits on its own, instead of aborting mid-flush —
+            // otherwise the client sees a bare connection reset with no reason
+            // and silently reconnect-loops forever. Bounded so a client that
+            // stopped reading can't wedge the task.
+            drop(tx);
+            let _ = tokio::time::timeout(Duration::from_secs(5), send_task).await;
             return;
         }
     };
@@ -131,6 +138,8 @@ pub async fn handle_socket(
     conn.send_msg(&ServerMessage::Authenticated {
         user_id,
         username: username.clone(),
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
+        server_protocol: PROTOCOL_VERSION,
     });
     info!("Client authenticated: {user_id} ({username})");
 

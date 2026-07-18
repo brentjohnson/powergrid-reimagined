@@ -147,14 +147,18 @@ impl RoomManager {
         rooms.get(&name.to_lowercase()).cloned()
     }
 
-    /// Drop the room if game is over and no humans remain.
+    /// Drop the room if no humans remain and it's either finished or still an
+    /// unstarted (Lobby-phase) room. Dropping empty Lobby rooms keeps a stale
+    /// pre-game room from lingering and blocking re-creation with the same name
+    /// (e.g. after a disconnect during setup).
     pub async fn drop_if_finished(&self, name: &str) {
         let key = name.to_lowercase();
         let should_drop = {
             let rooms = self.rooms.read().await;
             if let Some(room_arc) = rooms.get(&key) {
                 let room = room_arc.lock().await;
-                room.is_game_over() && room.human_count() == 0
+                room.human_count() == 0
+                    && (room.is_game_over() || matches!(room.session.game.phase, Phase::Lobby))
             } else {
                 false
             }
@@ -162,10 +166,7 @@ impl RoomManager {
         if should_drop {
             let mut rooms = self.rooms.write().await;
             rooms.remove(&key);
-            info!(
-                "Room '{}' dropped after game over with no human connections",
-                name
-            );
+            info!("Room '{}' dropped: no human connections remain", name);
         }
     }
 }

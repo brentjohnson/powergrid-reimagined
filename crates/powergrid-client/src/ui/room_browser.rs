@@ -28,7 +28,29 @@ pub(super) fn room_browser_screen(
                         .color(theme::NEON_CYAN_DIM)
                         .monospace(),
                 );
-                ui.add_space(30.0);
+                ui.add_space(12.0);
+
+                // Connection status, so a not-yet-established or dropped
+                // connection is visible instead of the browser silently showing
+                // an empty room list.
+                if state.connected {
+                    ui.label(
+                        RichText::new("● CONNECTED")
+                            .color(theme::NEON_GREEN)
+                            .monospace()
+                            .small(),
+                    );
+                } else {
+                    ui.label(
+                        RichText::new(
+                            "● CONNECTING… (retrying — check the server if this persists)",
+                        )
+                        .color(theme::NEON_AMBER)
+                        .monospace()
+                        .small(),
+                    );
+                }
+                ui.add_space(16.0);
 
                 // Create / join room form
                 theme::neon_frame().show(ui, |ui| {

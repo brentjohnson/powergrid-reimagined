@@ -69,7 +69,18 @@ pub enum LobbyError {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
     /// Sent after a successful Authenticate handshake.
-    Authenticated { user_id: PlayerId, username: String },
+    ///
+    /// `server_version`/`server_protocol` let the client display what it
+    /// connected to. They are `#[serde(default)]` so a client can still parse
+    /// this from an older server that predates the fields (empty string / 0).
+    Authenticated {
+        user_id: PlayerId,
+        username: String,
+        #[serde(default)]
+        server_version: String,
+        #[serde(default)]
+        server_protocol: u32,
+    },
     /// Sent when authentication fails; connection will be closed.
     AuthError { error: AuthError },
     /// Wire-safe game state broadcast after every valid action (no hidden deck, no map).

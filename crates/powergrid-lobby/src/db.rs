@@ -196,6 +196,14 @@ impl Db {
             .execute(&self.pool)
             .await?;
 
+        // Refresh last_login so the admin console reflects token-based
+        // reconnects (the WS client authenticates with a saved token and never
+        // hits the REST login path that would otherwise update this).
+        sqlx::query("UPDATE users SET last_login = now() WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
         Ok((user_id, username))
     }
 

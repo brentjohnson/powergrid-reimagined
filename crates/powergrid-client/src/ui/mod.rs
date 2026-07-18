@@ -96,6 +96,19 @@ pub fn ui_system(
         }
     }
 
+    // Version/protocol overlay (bottom-right) on every screen except active
+    // gameplay — i.e. shown in menus, login, room browser, and the in-room
+    // lobby, but hidden once a game is actually in progress to keep the board
+    // uncluttered.
+    let in_active_game = matches!(state.screen, Screen::Game)
+        && state
+            .game_state
+            .as_ref()
+            .is_some_and(|gs| !matches!(gs.phase, Phase::Lobby));
+    if !in_active_game {
+        version_overlay(ctx, state);
+    }
+
     if state.menu_open {
         egui::Window::new("MENU")
             .collapsible(false)
@@ -149,6 +162,51 @@ pub fn ui_system(
     }
 
     action
+}
+
+// ---------------------------------------------------------------------------
+// Version overlay
+// ---------------------------------------------------------------------------
+
+/// Small dim readout in the bottom-right corner: the client's own version and
+/// protocol, plus the server's once connected. If the server's protocol differs
+/// from ours it's drawn in red as a mismatch warning.
+fn version_overlay(ctx: &egui::Context, state: &AppState) {
+    let client_proto = powergrid_core::PROTOCOL_VERSION;
+    let dim = egui::Color32::from_gray(120);
+
+    egui::Area::new(egui::Id::new("version_overlay"))
+        .order(egui::Order::Foreground)
+        .interactable(false)
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -6.0))
+        .show(ctx, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                ui.label(
+                    RichText::new(format!(
+                        "CLIENT v{} · protocol {}",
+                        env!("CARGO_PKG_VERSION"),
+                        client_proto
+                    ))
+                    .color(dim)
+                    .size(11.0),
+                );
+
+                if state.connected {
+                    let ver = state.server_version.as_deref().unwrap_or("?");
+                    let proto = state
+                        .server_protocol
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "?".to_string());
+                    let mismatch = matches!(state.server_protocol, Some(p) if p != client_proto);
+                    let color = if mismatch { theme::NEON_RED } else { dim };
+                    ui.label(
+                        RichText::new(format!("SERVER v{ver} · protocol {proto}"))
+                            .color(color)
+                            .size(11.0),
+                    );
+                }
+            });
+        });
 }
 
 // ---------------------------------------------------------------------------

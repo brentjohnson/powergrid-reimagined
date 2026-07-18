@@ -78,6 +78,14 @@ pub struct AppState {
     pub connected: bool,
     pub pending_connect: bool,
     pub my_id: Option<PlayerId>,
+    /// App version + protocol version reported by the server in `Authenticated`.
+    /// `None` until connected; shown in the version overlay.
+    pub server_version: Option<String>,
+    pub server_protocol: Option<u32>,
+    /// Set after a logout or auth rejection so the main loop drops the WS worker
+    /// instead of letting it reconnect-loop (and clobber the shown error). A
+    /// fresh connection is spawned only on an explicit reconnect.
+    pub disconnect_requested: bool,
 
     // Lobby / room state
     pub current_room: Option<String>,
@@ -233,6 +241,9 @@ impl AppState {
             connected: false,
             pending_connect: false,
             my_id: None,
+            server_version: None,
+            server_protocol: None,
+            disconnect_requested: false,
             current_room: None,
             room_list: Vec::new(),
             room_name_input: String::new(),
@@ -338,6 +349,9 @@ impl AppState {
         self.auth_error = None;
         self.auth_in_flight = false;
         self.connected = false;
+        self.server_version = None;
+        self.server_protocol = None;
+        self.disconnect_requested = true;
         self.pending_connect = false;
         self.my_id = None;
         self.current_room = None;

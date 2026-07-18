@@ -1,6 +1,8 @@
 use crossbeam_channel::{Receiver, Sender};
 use futures_util::{SinkExt, StreamExt};
-use powergrid_core::actions::{Action, ClientMessage, HintPayload, LobbyAction, ServerMessage};
+use powergrid_core::actions::{
+    Action, AuthError, ClientMessage, HintPayload, LobbyAction, ServerMessage,
+};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
@@ -123,9 +125,22 @@ async fn ws_worker(
         let _ = event_tx.send(WsEvent::Connected);
         let (mut write, mut read) = ws_stream.split();
 
+        // Keepalive: send a ping on an interval so an otherwise-idle lobby
+        // connection keeps carrying traffic. Without this, an idle socket is
+        // reaped by proxies/NAT after ~2 minutes and we churn through the
+        // reconnect loop. Sending also flushes any pong tungstenite queued in
+        // response to a server ping (writes only happen when we send).
+        let mut keepalive = tokio::time::interval(tokio::time::Duration::from_secs(30));
+        keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         'inner: loop {
             tokio::select! {
                 _ = &mut shutdown_rx => return,
+                _ = keepalive.tick() => {
+                    if write.send(WsMessage::Ping(Vec::new())).await.is_err() {
+                        break 'inner;
+                    }
+                }
                 msg = read.next() => {
                     match msg {
                         Some(Ok(WsMessage::Text(text))) => {
@@ -193,9 +208,16 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                 }
             }
             WsEvent::MessageReceived(msg) => match msg {
-                ServerMessage::Authenticated { user_id, username } => {
+                ServerMessage::Authenticated {
+                    user_id,
+                    username,
+                    server_version,
+                    server_protocol,
+                } => {
                     state.my_id = Some(user_id);
                     state.auth_username = Some(username);
+                    state.server_version = (!server_version.is_empty()).then_some(server_version);
+                    state.server_protocol = Some(server_protocol);
                     state.pending_connect = false;
                     state.screen = crate::state::Screen::RoomBrowser;
                     channels.send_lobby(LobbyAction::ListRooms);
@@ -204,7 +226,25 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                     }
                 }
                 ServerMessage::AuthError { error } => {
-                    state.auth_error = Some(error.to_string());
+                    // Friendlier copy for the common cases; fall back to the
+                    // error's own text otherwise. All cases drop the connection
+                    // and return to the login screen (logout() clears the saved
+                    // token and sets disconnect_requested so the worker stops).
+                    let msg = match &error {
+                        AuthError::InvalidToken => {
+                            "Your saved session has expired. Please log in again.".to_string()
+                        }
+                        AuthError::VersionMismatch {
+                            server_version,
+                            client_version,
+                        } => format!(
+                            "Version mismatch: this client speaks protocol {client_version}, \
+                             but the server requires {server_version}. Update the client (or \
+                             server) so they match."
+                        ),
+                        other => other.to_string(),
+                    };
+                    state.auth_error = Some(msg);
                     state.connected = false;
                     state.logout();
                 }
@@ -247,6 +287,8 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
             },
             WsEvent::Disconnected => {
                 state.connected = false;
+                state.server_version = None;
+                state.server_protocol = None;
                 state.current_room = None;
                 state.game_state = None;
                 state.map = None;
