@@ -235,8 +235,13 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                     ServerMessage::AuthError { error } => {
                         // Friendlier copy for the common cases; fall back to the
                         // error's own text otherwise. All cases drop the connection
-                        // and return to the login screen (logout() clears the saved
-                        // token and sets disconnect_requested so the worker stops).
+                        // and return to the login screen. Only `InvalidToken` means
+                        // the saved token is genuinely bad — forget it so the user
+                        // logs in fresh. Every other case (version mismatch, etc.)
+                        // leaves a valid token that we must keep on disk, so the
+                        // next launch can still auto-login once the mismatch is
+                        // resolved; nuking it here is what forced a re-login every
+                        // time.
                         let msg = match &error {
                             AuthError::InvalidToken => {
                                 "Your saved session has expired. Please log in again.".to_string()
@@ -252,8 +257,12 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                             other => other.to_string(),
                         };
                         state.connected = false;
-                        // logout() clears auth_error, so set the message after it.
-                        state.logout();
+                        // logout()/end_session clear auth_error, so set the message after.
+                        if matches!(error, AuthError::InvalidToken) {
+                            state.logout();
+                        } else {
+                            state.end_session_keep_credentials();
+                        }
                         state.auth_error = Some(msg);
                     }
                     ServerMessage::RoomJoined { room, your_id, map } => {
@@ -296,23 +305,27 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
             }
             WsEvent::Disconnected => {
                 // A connection that died right after `Authenticate` without a
-                // single server message is a rejected handshake on a server
-                // that predates the auth-error flush fix (it resets instead of
-                // reporting why). After three in a row, stop the reconnect
-                // loop: the saved session is almost certainly invalid, so
-                // clear it and ask the user to log in again.
+                // single server message is an ambiguous failure: a rejected
+                // handshake on a server that predates the auth-error flush fix
+                // (it resets instead of reporting why), a transient network
+                // blip, or the server briefly being down. After three in a row,
+                // stop the reconnect loop and return to the login screen — but
+                // *keep* the saved token on disk. We can't tell a bad token from
+                // a transient drop here, and deleting a still-valid token is
+                // exactly what forced a manual re-login on every launch. The
+                // next launch will auto-retry with the same token.
                 let silent_auth_drop = state.ws_auth_sent_this_conn && !state.ws_got_msg_this_conn;
                 state.ws_auth_sent_this_conn = false;
                 if silent_auth_drop {
                     state.ws_silent_auth_drops += 1;
                     if state.ws_silent_auth_drops >= 3 {
                         state.ws_silent_auth_drops = 0;
-                        state.logout();
+                        state.end_session_keep_credentials();
                         state.auth_error = Some(
                             "The server dropped the connection during sign-in without \
-                             giving a reason — your saved session is probably no longer \
-                             valid (or the server is running an older version). Please \
-                             log in again."
+                             giving a reason (it may be down or running an older \
+                             version). Your saved login was kept — try again, or it \
+                             will reconnect automatically next time."
                                 .to_string(),
                         );
                     }
@@ -360,7 +373,9 @@ mod tests {
 
     /// A server predating the auth-error flush fix resets a rejected handshake
     /// with no reply. Three such connect→silent-drop cycles must end the
-    /// reconnect loop: session cleared, error shown, back to Login.
+    /// reconnect loop: in-memory session cleared, error shown, back to Login.
+    /// The saved token on disk is NOT forgotten here (the drop is ambiguous —
+    /// could be transient — so the next launch retries with the same token).
     #[test]
     fn silent_auth_drops_end_reconnect_loop() {
         let mut state = test_state_with_token();
@@ -378,12 +393,65 @@ mod tests {
         event_tx.send(WsEvent::Disconnected).unwrap();
         process_ws_events(&mut state, Some(&channels));
 
-        assert!(state.auth_token.is_none(), "session must be cleared");
+        assert!(
+            state.auth_token.is_none(),
+            "in-memory session must be cleared"
+        );
         assert!(state.disconnect_requested, "worker must be torn down");
         assert!(!state.pending_connect);
         assert_eq!(state.screen, Screen::Login);
         let err = state.auth_error.as_deref().expect("error must be shown");
-        assert!(err.contains("log in again"), "unexpected copy: {err}");
+        assert!(
+            err.contains("saved login was kept"),
+            "unexpected copy: {err}"
+        );
+    }
+
+    /// A silently-dropped handshake must NOT delete the persisted token — that
+    /// bug forced a manual re-login on every launch. Here we drive the real
+    /// disk path (no_preferences = false) and confirm the credential file
+    /// survives the teardown.
+    #[test]
+    fn silent_auth_drops_keep_saved_credentials_on_disk() {
+        use crate::auth::{
+            clear_credentials, load_credentials, save_credentials, SavedCredentials,
+        };
+        let server = "silentdrop.test.zzz";
+        let port = 65003u16;
+        let _ = clear_credentials(server, port);
+        save_credentials(&SavedCredentials {
+            token: "keep-me".into(),
+            user_id: uuid::Uuid::nil(),
+            username: "carol".into(),
+            server: server.into(),
+            port,
+        })
+        .unwrap();
+
+        let mut state = AppState::new(CliArgs {
+            color: None,
+            server: Some(server.to_string()),
+            port: Some(port),
+            room: None,
+            windowed: false,
+            no_preferences: false,
+        });
+        assert_eq!(state.auth_token.as_deref(), Some("keep-me"));
+        let (event_tx, channels) = test_channels();
+
+        for _ in 0..3 {
+            event_tx.send(WsEvent::Connected).unwrap();
+            event_tx.send(WsEvent::Disconnected).unwrap();
+        }
+        process_ws_events(&mut state, Some(&channels));
+
+        let survived = load_credentials(server, port);
+        let _ = clear_credentials(server, port);
+        assert_eq!(
+            survived.map(|c| c.token).as_deref(),
+            Some("keep-me"),
+            "silent drop must not delete the saved token"
+        );
     }
 
     /// Any server message on a connection proves the drop wasn't an auth

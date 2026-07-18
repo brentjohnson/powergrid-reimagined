@@ -349,13 +349,30 @@ impl AppState {
         }
     }
 
-    /// Clear all auth state and return to Login screen.
+    /// Clear all auth state and return to Login screen, forgetting the saved
+    /// token on disk. Use for an explicit user logout or when the server tells
+    /// us the token is genuinely bad (`AuthError::InvalidToken`).
     pub fn logout(&mut self) {
         if !self.no_preferences {
             if let Err(e) = crate::auth::clear_credentials(&self.server_name, self.port) {
                 tracing::warn!("Failed to clear credentials: {e}");
             }
         }
+        self.end_session();
+    }
+
+    /// Tear down the current online session and return to the Login screen, but
+    /// *keep* the saved credentials on disk so the next launch can auto-login.
+    /// Use for transient/ambiguous failures (a silently dropped handshake, a
+    /// version mismatch) where the token itself is probably still valid —
+    /// nuking it there is what forced a manual re-login every launch.
+    pub fn end_session_keep_credentials(&mut self) {
+        self.end_session();
+    }
+
+    /// Shared teardown: drop all in-memory session state and go to Login.
+    /// Does not touch on-disk credentials — callers decide that.
+    fn end_session(&mut self) {
         self.auth_token = None;
         self.auth_username = None;
         self.auth_user_id = None;
@@ -1055,6 +1072,42 @@ mod tests {
         p.plants = plants;
         p.resources = resources;
         p
+    }
+
+    #[test]
+    fn credential_lifecycle_roundtrip() {
+        use crate::auth::SavedCredentials;
+        let server = "lifecycle.test.zzz";
+        let port = 65002u16;
+        let _ = crate::auth::clear_credentials(server, port);
+        let mk_cli = || CliArgs {
+            color: None,
+            server: Some(server.to_string()),
+            port: Some(port),
+            room: None,
+            windowed: true,
+            no_preferences: false,
+        };
+        // First launch: no saved creds.
+        let mut s = AppState::new(mk_cli());
+        assert!(s.auth_token.is_none(), "no token before login");
+        // Simulate a successful login.
+        s.apply_auth_success(SavedCredentials {
+            token: "tok-lifecycle".into(),
+            user_id: uuid::Uuid::nil(),
+            username: "bob".into(),
+            server: server.to_string(),
+            port,
+        });
+        // Second launch: token must be picked up from disk.
+        let s2 = AppState::new(mk_cli());
+        let got = s2.auth_token.clone();
+        let _ = crate::auth::clear_credentials(server, port);
+        assert_eq!(
+            got.as_deref(),
+            Some("tok-lifecycle"),
+            "token must persist across launches"
+        );
     }
 
     #[test]
