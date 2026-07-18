@@ -59,6 +59,8 @@ When making visual changes, do not attempt to launch the game to verify changes.
 
 If adding or removing crates, update the stubs in the Dockerfile.
 
+Do not create git branches.  Make all commits on main.  Do not push or tag.
+
 ## Architecture
 
 Nine-crate Cargo workspace:
