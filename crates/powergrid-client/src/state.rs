@@ -86,6 +86,16 @@ pub struct AppState {
     /// instead of letting it reconnect-loop (and clobber the shown error). A
     /// fresh connection is spawned only on an explicit reconnect.
     pub disconnect_requested: bool,
+    /// True once `Authenticate` has been sent on the current WS connection.
+    pub ws_auth_sent_this_conn: bool,
+    /// True once any server message arrived on the current WS connection.
+    pub ws_got_msg_this_conn: bool,
+    /// Consecutive connections that died right after we sent `Authenticate`
+    /// without the server saying anything. Servers predating the auth-error
+    /// flush fix reset a rejected handshake with no reason; after a few such
+    /// drops in a row we treat it as a rejected session instead of
+    /// reconnect-looping forever.
+    pub ws_silent_auth_drops: u32,
 
     // Lobby / room state
     pub current_room: Option<String>,
@@ -244,6 +254,9 @@ impl AppState {
             server_version: None,
             server_protocol: None,
             disconnect_requested: false,
+            ws_auth_sent_this_conn: false,
+            ws_got_msg_this_conn: false,
+            ws_silent_auth_drops: 0,
             current_room: None,
             room_list: Vec::new(),
             room_name_input: String::new(),

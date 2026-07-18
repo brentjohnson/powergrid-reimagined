@@ -197,6 +197,8 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
         match event {
             WsEvent::Connected => {
                 state.connected = true;
+                state.ws_got_msg_this_conn = false;
+                state.ws_auth_sent_this_conn = false;
                 if let Some(token) = state.auth_token.clone() {
                     channels
                         .action_tx
@@ -205,87 +207,116 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                             protocol_version: powergrid_core::PROTOCOL_VERSION,
                         })
                         .ok();
+                    state.ws_auth_sent_this_conn = true;
                 }
             }
-            WsEvent::MessageReceived(msg) => match msg {
-                ServerMessage::Authenticated {
-                    user_id,
-                    username,
-                    server_version,
-                    server_protocol,
-                } => {
-                    state.my_id = Some(user_id);
-                    state.auth_username = Some(username);
-                    state.server_version = (!server_version.is_empty()).then_some(server_version);
-                    state.server_protocol = Some(server_protocol);
-                    state.pending_connect = false;
-                    state.screen = crate::state::Screen::RoomBrowser;
-                    channels.send_lobby(LobbyAction::ListRooms);
-                    if let Some(room_name) = state.auto_room.clone() {
-                        channels.send_lobby(LobbyAction::CreateRoom { name: room_name });
-                    }
-                }
-                ServerMessage::AuthError { error } => {
-                    // Friendlier copy for the common cases; fall back to the
-                    // error's own text otherwise. All cases drop the connection
-                    // and return to the login screen (logout() clears the saved
-                    // token and sets disconnect_requested so the worker stops).
-                    let msg = match &error {
-                        AuthError::InvalidToken => {
-                            "Your saved session has expired. Please log in again.".to_string()
+            WsEvent::MessageReceived(msg) => {
+                state.ws_got_msg_this_conn = true;
+                state.ws_silent_auth_drops = 0;
+                match msg {
+                    ServerMessage::Authenticated {
+                        user_id,
+                        username,
+                        server_version,
+                        server_protocol,
+                    } => {
+                        state.my_id = Some(user_id);
+                        state.auth_username = Some(username);
+                        state.server_version =
+                            (!server_version.is_empty()).then_some(server_version);
+                        state.server_protocol = Some(server_protocol);
+                        state.pending_connect = false;
+                        state.screen = crate::state::Screen::RoomBrowser;
+                        channels.send_lobby(LobbyAction::ListRooms);
+                        if let Some(room_name) = state.auto_room.clone() {
+                            channels.send_lobby(LobbyAction::CreateRoom { name: room_name });
                         }
-                        AuthError::VersionMismatch {
-                            server_version,
-                            client_version,
-                        } => format!(
-                            "Version mismatch: this client speaks protocol {client_version}, \
+                    }
+                    ServerMessage::AuthError { error } => {
+                        // Friendlier copy for the common cases; fall back to the
+                        // error's own text otherwise. All cases drop the connection
+                        // and return to the login screen (logout() clears the saved
+                        // token and sets disconnect_requested so the worker stops).
+                        let msg = match &error {
+                            AuthError::InvalidToken => {
+                                "Your saved session has expired. Please log in again.".to_string()
+                            }
+                            AuthError::VersionMismatch {
+                                server_version,
+                                client_version,
+                            } => format!(
+                                "Version mismatch: this client speaks protocol {client_version}, \
                              but the server requires {server_version}. Update the client (or \
                              server) so they match."
-                        ),
-                        other => other.to_string(),
-                    };
-                    state.auth_error = Some(msg);
-                    state.connected = false;
-                    state.logout();
-                }
-                ServerMessage::RoomJoined { room, your_id, map } => {
-                    state.my_id = Some(your_id);
-                    state.current_room = Some(room.clone());
-                    state.map = Some(Arc::new(*map));
-                    state.error_message = None;
-                    state.peer_hints.clear();
-                    state.hint_tracker.reset();
-                }
-                ServerMessage::RoomLeft { .. } => {
-                    state.current_room = None;
-                    state.game_state = None;
-                    state.screen = crate::state::Screen::RoomBrowser;
-                    state.peer_hints.clear();
-                    state.hint_tracker.reset();
-                    channels.send_lobby(LobbyAction::ListRooms);
-                }
-                ServerMessage::RoomList { rooms } => {
-                    state.room_list = rooms;
-                }
-                ServerMessage::StateUpdate(gs) => {
-                    state.handle_state_update(*gs);
-                }
-                ServerMessage::ActionError { error } => {
-                    state.error_message = Some(error.to_string());
-                }
-                ServerMessage::LobbyError { error } => {
-                    state.error_message = Some(error.to_string());
-                }
-                ServerMessage::Event { .. } => {
-                    // event log is populated from gs.event_log in StateUpdate; no client-side dispatch needed
-                }
-                ServerMessage::PeerHint { player_id, hint } => {
-                    if state.my_id != Some(player_id) {
-                        state.peer_hints.set(player_id, hint);
+                            ),
+                            other => other.to_string(),
+                        };
+                        state.connected = false;
+                        // logout() clears auth_error, so set the message after it.
+                        state.logout();
+                        state.auth_error = Some(msg);
+                    }
+                    ServerMessage::RoomJoined { room, your_id, map } => {
+                        state.my_id = Some(your_id);
+                        state.current_room = Some(room.clone());
+                        state.map = Some(Arc::new(*map));
+                        state.error_message = None;
+                        state.peer_hints.clear();
+                        state.hint_tracker.reset();
+                    }
+                    ServerMessage::RoomLeft { .. } => {
+                        state.current_room = None;
+                        state.game_state = None;
+                        state.screen = crate::state::Screen::RoomBrowser;
+                        state.peer_hints.clear();
+                        state.hint_tracker.reset();
+                        channels.send_lobby(LobbyAction::ListRooms);
+                    }
+                    ServerMessage::RoomList { rooms } => {
+                        state.room_list = rooms;
+                    }
+                    ServerMessage::StateUpdate(gs) => {
+                        state.handle_state_update(*gs);
+                    }
+                    ServerMessage::ActionError { error } => {
+                        state.error_message = Some(error.to_string());
+                    }
+                    ServerMessage::LobbyError { error } => {
+                        state.error_message = Some(error.to_string());
+                    }
+                    ServerMessage::Event { .. } => {
+                        // event log is populated from gs.event_log in StateUpdate; no client-side dispatch needed
+                    }
+                    ServerMessage::PeerHint { player_id, hint } => {
+                        if state.my_id != Some(player_id) {
+                            state.peer_hints.set(player_id, hint);
+                        }
                     }
                 }
-            },
+            }
             WsEvent::Disconnected => {
+                // A connection that died right after `Authenticate` without a
+                // single server message is a rejected handshake on a server
+                // that predates the auth-error flush fix (it resets instead of
+                // reporting why). After three in a row, stop the reconnect
+                // loop: the saved session is almost certainly invalid, so
+                // clear it and ask the user to log in again.
+                let silent_auth_drop = state.ws_auth_sent_this_conn && !state.ws_got_msg_this_conn;
+                state.ws_auth_sent_this_conn = false;
+                if silent_auth_drop {
+                    state.ws_silent_auth_drops += 1;
+                    if state.ws_silent_auth_drops >= 3 {
+                        state.ws_silent_auth_drops = 0;
+                        state.logout();
+                        state.auth_error = Some(
+                            "The server dropped the connection during sign-in without \
+                             giving a reason — your saved session is probably no longer \
+                             valid (or the server is running an older version). Please \
+                             log in again."
+                                .to_string(),
+                        );
+                    }
+                }
                 state.connected = false;
                 state.server_version = None;
                 state.server_protocol = None;
@@ -296,5 +327,101 @@ pub fn process_ws_events(state: &mut crate::state::AppState, channels: Option<&W
                 state.hint_tracker.reset();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{AppState, CliArgs, Screen};
+
+    fn test_state_with_token() -> AppState {
+        let mut state = AppState::new(CliArgs {
+            color: None,
+            server: None,
+            port: None,
+            room: None,
+            windowed: false,
+            no_preferences: true, // never touch saved credentials on disk
+        });
+        state.auth_token = Some("stale-token".to_string());
+        state
+    }
+
+    fn test_channels() -> (Sender<WsEvent>, WsChannels) {
+        let (event_tx, event_rx) = crossbeam_channel::unbounded::<WsEvent>();
+        let (action_tx, _action_rx) = crossbeam_channel::unbounded::<ClientMessage>();
+        let (shutdown_tx, _shutdown_rx) = oneshot::channel::<()>();
+        (
+            event_tx,
+            WsChannels::new_local(event_rx, action_tx, shutdown_tx),
+        )
+    }
+
+    /// A server predating the auth-error flush fix resets a rejected handshake
+    /// with no reply. Three such connect→silent-drop cycles must end the
+    /// reconnect loop: session cleared, error shown, back to Login.
+    #[test]
+    fn silent_auth_drops_end_reconnect_loop() {
+        let mut state = test_state_with_token();
+        let (event_tx, channels) = test_channels();
+
+        for _ in 0..2 {
+            event_tx.send(WsEvent::Connected).unwrap();
+            event_tx.send(WsEvent::Disconnected).unwrap();
+        }
+        process_ws_events(&mut state, Some(&channels));
+        assert_eq!(state.ws_silent_auth_drops, 2);
+        assert!(state.auth_token.is_some(), "two drops must not log out yet");
+
+        event_tx.send(WsEvent::Connected).unwrap();
+        event_tx.send(WsEvent::Disconnected).unwrap();
+        process_ws_events(&mut state, Some(&channels));
+
+        assert!(state.auth_token.is_none(), "session must be cleared");
+        assert!(state.disconnect_requested, "worker must be torn down");
+        assert!(!state.pending_connect);
+        assert_eq!(state.screen, Screen::Login);
+        let err = state.auth_error.as_deref().expect("error must be shown");
+        assert!(err.contains("log in again"), "unexpected copy: {err}");
+    }
+
+    /// Any server message on a connection proves the drop wasn't an auth
+    /// rejection, so the streak resets and no logout happens.
+    #[test]
+    fn server_reply_resets_silent_drop_streak() {
+        let mut state = test_state_with_token();
+        let (event_tx, channels) = test_channels();
+
+        for _ in 0..5 {
+            event_tx.send(WsEvent::Connected).unwrap();
+            event_tx
+                .send(WsEvent::MessageReceived(ServerMessage::RoomList {
+                    rooms: Vec::new(),
+                }))
+                .unwrap();
+            event_tx.send(WsEvent::Disconnected).unwrap();
+        }
+        process_ws_events(&mut state, Some(&channels));
+
+        assert_eq!(state.ws_silent_auth_drops, 0);
+        assert!(state.auth_token.is_some());
+        assert!(!state.disconnect_requested);
+    }
+
+    /// Failed connects (no `Connected` event, e.g. server down) never count
+    /// toward the silent-drop streak — that path should keep retrying.
+    #[test]
+    fn failed_connects_do_not_count_as_auth_drops() {
+        let mut state = test_state_with_token();
+        let (event_tx, channels) = test_channels();
+
+        for _ in 0..5 {
+            event_tx.send(WsEvent::Disconnected).unwrap();
+        }
+        process_ws_events(&mut state, Some(&channels));
+
+        assert_eq!(state.ws_silent_auth_drops, 0);
+        assert!(state.auth_token.is_some());
     }
 }
