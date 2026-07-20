@@ -31,6 +31,8 @@ python/target/
 
 # AlphaZero training checkpoints/metrics (same convention as python/runs/)
 /alphazero/runs/
+/python/runs
+/runs/
 
 # Editor / OS
 .DS_Store
