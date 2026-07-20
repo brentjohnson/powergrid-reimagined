@@ -3100,6 +3100,7 @@ dependencies = [
  "crossbeam-channel",
  "powergrid-bot-strategy",
  "powergrid-core",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",

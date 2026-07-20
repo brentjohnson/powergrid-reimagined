@@ -1,12 +1,12 @@
 use crossbeam_channel::Sender;
 use powergrid_core::{
     actions::{Action, ClientMessage, ServerMessage},
-    types::{BotDifficulty, PlayerColor},
+    types::{BotDifficulty, Phase, PlayerColor},
 };
-use powergrid_session::{run_bot_pump, Session, Subscriber, MAX_PLAYERS};
+use powergrid_session::{build_report, run_bot_pump, GameReport, Session, Subscriber, MAX_PLAYERS};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{oneshot, Mutex};
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::ws::{WsChannels, WsEvent};
@@ -16,6 +16,17 @@ pub struct LocalConfig {
     pub human_color: PlayerColor,
     /// One entry per bot; length determines bot count (1–5).
     pub bots: Vec<BotDifficulty>,
+}
+
+/// Where (and as whom) to report a finished local game for metrics.
+///
+/// Submission is best-effort: the server attributes the result to the account
+/// behind `token`, or to `anonymous` if it's `None` or fails to validate.
+#[derive(Clone)]
+pub struct MetricsConfig {
+    pub server: String,
+    pub port: u16,
+    pub token: Option<String>,
 }
 
 /// Holds the background runtime thread for a local play session.
@@ -33,7 +44,7 @@ impl Drop for LocalHandle {
     }
 }
 
-pub fn start_local_session(cfg: LocalConfig) -> (WsChannels, LocalHandle) {
+pub fn start_local_session(cfg: LocalConfig, metrics: MetricsConfig) -> (WsChannels, LocalHandle) {
     let map = powergrid_core::default_map();
 
     let human_id = Uuid::new_v4();
@@ -120,6 +131,7 @@ pub fn start_local_session(cfg: LocalConfig) -> (WsChannels, LocalHandle) {
                     event_tx,
                     action_rx,
                     human_id,
+                    metrics,
                     shutdown_rx,
                 ));
         })
@@ -141,6 +153,7 @@ async fn local_session_driver(
     event_tx: Sender<WsEvent>,
     action_rx: crossbeam_channel::Receiver<ClientMessage>,
     human_id: uuid::Uuid,
+    metrics: MetricsConfig,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     let bot_delay = Duration::from_millis(
@@ -152,10 +165,14 @@ async fn local_session_driver(
 
     info!("Local session driver started");
 
+    // Guards the one-shot metrics submission when the game ends.
+    let mut submitted = false;
+
     // StartGame was applied synchronously in start_local_session; drive the
     // initial bot turns now so the game isn't stuck waiting on a bot before
     // the first human action arrives.
     drive_bots_with_forwarding(&session_arc, &state_rx, &event_tx, bot_delay).await;
+    maybe_submit_metrics(&session_arc, &metrics, &mut submitted).await;
 
     loop {
         // Forward any pending state updates from the session subscriber.
@@ -195,6 +212,7 @@ async fn local_session_driver(
         // Drive bots after any human action.
         if acted {
             drive_bots_with_forwarding(&session_arc, &state_rx, &event_tx, bot_delay).await;
+            maybe_submit_metrics(&session_arc, &metrics, &mut submitted).await;
         }
     }
 
@@ -228,4 +246,53 @@ async fn drive_bots_with_forwarding(
     for msg in state_rx.try_iter() {
         let _ = event_tx.send(WsEvent::MessageReceived(msg));
     }
+}
+
+/// If the game has ended and we haven't reported it yet, build the standings
+/// report and hand it to a background thread for submission. Sets `submitted`
+/// so this fires exactly once per game.
+async fn maybe_submit_metrics(
+    session_arc: &Arc<Mutex<Session>>,
+    metrics: &MetricsConfig,
+    submitted: &mut bool,
+) {
+    if *submitted {
+        return;
+    }
+    let report = {
+        let session = session_arc.lock().await;
+        if !matches!(session.game.phase, Phase::GameOver { .. }) {
+            return;
+        }
+        build_report(&session)
+    };
+    *submitted = true;
+    submit_report(metrics.clone(), report);
+}
+
+/// Fire-and-forget POST of a finished local game to the lobby's metrics
+/// endpoint. Runs on a detached thread with a blocking client so it never
+/// stalls the game loop; failures are logged and otherwise ignored.
+fn submit_report(metrics: MetricsConfig, report: GameReport) {
+    let url = format!("http://{}:{}/games/local", metrics.server, metrics.port);
+    std::thread::spawn(move || {
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to build metrics client: {e}");
+                return;
+            }
+        };
+        let mut req = client.post(&url).json(&report);
+        if let Some(token) = metrics.token {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        match req.send() {
+            Ok(resp) => info!("Local game metrics submitted ({})", resp.status()),
+            Err(e) => warn!("Failed to submit local game metrics: {e}"),
+        }
+    });
 }

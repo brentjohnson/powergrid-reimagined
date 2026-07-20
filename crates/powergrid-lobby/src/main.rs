@@ -3,6 +3,7 @@ mod admin_queries;
 mod auth;
 mod db;
 mod driver;
+mod game_ingest;
 mod hint_handler;
 mod lobby_handler;
 mod room_handler;
@@ -92,6 +93,7 @@ Options:
     let app = Router::new()
         .route("/health", get(health))
         .route("/rooms", get(list_rooms))
+        .route("/games/local", post(game_ingest::submit_local_game))
         .route("/ws", get(ws_handler))
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))

@@ -129,7 +129,14 @@ impl eframe::App for PowerGridApp {
         match action {
             UiAction::None => {}
             UiAction::StartLocal(cfg) => {
-                let (channels, handle) = local::start_local_session(cfg);
+                // Report the finished local game to the same server the client
+                // targets, attributed to the saved login (or anonymous).
+                let metrics = local::MetricsConfig {
+                    server: self.state.server_name.clone(),
+                    port: self.state.port,
+                    token: self.state.auth_token.clone(),
+                };
+                let (channels, handle) = local::start_local_session(cfg, metrics);
                 self.ws = Some(channels);
                 self.local = Some(handle);
             }

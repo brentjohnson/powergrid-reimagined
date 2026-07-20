@@ -42,47 +42,15 @@ fn generate_token() -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// A finished game and its final standings, ready to persist.
+/// A finished game and its final standings, ready to persist. The per-seat
+/// shape (`SeatReport`/`PlantReport`) is shared with the client via
+/// `powergrid_session`, so local play can build and submit the same record.
 pub struct GameRecord {
     pub room_name: String,
     pub map_name: String,
     pub started_at: Option<chrono::DateTime<Utc>>,
     pub rounds: i32,
-    pub seats: Vec<SeatRecord>,
-}
-
-/// One seat's final state in a finished game.
-pub struct SeatRecord {
-    pub user_id: Option<Uuid>,
-    pub player_name: String,
-    pub color: String,
-    pub is_bot: bool,
-    /// Difficulty for bot seats ("easy"|"normal"|"hard"|"expert"); None for humans.
-    pub bot_difficulty: Option<String>,
-    /// 1-based seat/turn order at game end.
-    pub turn_order: i16,
-    pub finish_position: i16,
-    pub cities: i16,
-    pub money: i32,
-    pub powered: i16,
-    pub plants: i16,
-    // Cumulative economic activity over the whole game (from `Player::stats`).
-    pub plants_bought: i32,
-    pub spent_on_plants: i32,
-    pub resources_bought: i32,
-    pub spent_on_resources: i32,
-    pub cities_bought: i32,
-    pub spent_on_cities: i32,
-    /// Every plant this seat still owned at game end.
-    pub plant_details: Vec<PlantRecord>,
-}
-
-/// One power plant held by a seat at game end.
-pub struct PlantRecord {
-    pub number: i16,
-    pub kind: String,
-    pub capacity: i16,
-    pub resource_cost: i16,
+    pub seats: Vec<powergrid_session::SeatReport>,
 }
 
 fn map_insert_error(e: sqlx::Error) -> AuthError {

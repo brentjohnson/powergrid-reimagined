@@ -1,12 +1,11 @@
 use crate::{
-    db::{Db, GameRecord, PlantRecord, SeatRecord},
+    db::{Db, GameRecord},
     driver::run_bot_pump,
     rooms::{Room, RoomManager},
     ws::ConnState,
 };
 use powergrid_core::{
     actions::{LobbyError, ServerMessage},
-    rules::finish_ranks,
     types::Phase,
     Action,
 };
@@ -98,55 +97,17 @@ async fn maybe_record_result(room_arc: &Arc<Mutex<Room>>, db: &Db) {
     }
 }
 
-/// Build a `GameRecord` from a finished room's game state.
+/// Build a `GameRecord` from a finished room's game state. The per-seat
+/// extraction is shared with local play via `powergrid_session::build_report`;
+/// only the room-level context (name, start time) is added here.
 fn build_game_record(room: &Room) -> GameRecord {
-    let game = &room.session.game;
-    let seats = finish_ranks(game)
-        .into_iter()
-        .filter_map(|(pid, position)| {
-            let seat_index = game.players.iter().position(|p| p.id == pid)?;
-            let player = &game.players[seat_index];
-            let bot = room.session.bots.iter().find(|b| b.id == pid);
-            let is_bot = bot.is_some();
-            let plant_details = player
-                .plants
-                .iter()
-                .map(|p| PlantRecord {
-                    number: p.number as i16,
-                    kind: format!("{:?}", p.kind).to_lowercase(),
-                    capacity: p.cities as i16,
-                    resource_cost: p.cost as i16,
-                })
-                .collect();
-            Some(SeatRecord {
-                user_id: (!is_bot).then_some(pid),
-                player_name: player.name.clone(),
-                color: format!("{:?}", player.color).to_lowercase(),
-                is_bot,
-                bot_difficulty: bot.map(|b| format!("{:?}", b.difficulty).to_lowercase()),
-                turn_order: (seat_index + 1) as i16,
-                finish_position: position as i16,
-                cities: game.player_city_count(pid) as i16,
-                money: player.money as i32,
-                powered: player.last_cities_powered as i16,
-                plants: player.plants.len() as i16,
-                plants_bought: player.stats.plants_bought as i32,
-                spent_on_plants: player.stats.spent_on_plants as i32,
-                resources_bought: player.stats.resources_bought as i32,
-                spent_on_resources: player.stats.spent_on_resources as i32,
-                cities_bought: player.stats.cities_bought as i32,
-                spent_on_cities: player.stats.spent_on_cities as i32,
-                plant_details,
-            })
-        })
-        .collect();
-
+    let report = powergrid_session::build_report(&room.session);
     GameRecord {
         room_name: room.name.clone(),
-        map_name: game.map.name.clone(),
+        map_name: report.map_name,
         started_at: room.started_at,
-        rounds: game.round as i32,
-        seats,
+        rounds: report.rounds,
+        seats: report.seats,
     }
 }
 

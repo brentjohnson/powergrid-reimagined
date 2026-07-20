@@ -11,6 +11,9 @@ use tracing::{info, warn};
 
 pub use powergrid_core::map::Map;
 
+mod report;
+pub use report::{build_report, GameReport, PlantReport, SeatReport};
+
 /// Maximum players allowed per session.
 pub const MAX_PLAYERS: u8 = 6;
 
