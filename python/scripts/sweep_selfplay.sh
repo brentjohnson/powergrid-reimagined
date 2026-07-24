@@ -18,10 +18,19 @@
 #     equilibrium, and one variant removes even that. Bots remain only as the
 #     *eval* yardstick (eval never feeds back into training).
 #
-# The knobs explored span four axes: exploration (--ent-coef), optimisation
-# (--learning-rate / --lr-final), terminal reward (--terminal-reward), and the
-# self-play opponent distribution (--league-mix / --league-past-k /
-# --snapshot-every / --no-league).
+# WAVE 2 (2026-07-24). Wave 1 (the original v1..v8) found that this converged
+# ~1B-step base policy only improves under *gentler* optimisation and is wrecked
+# by anything that adds churn: --ent-coef 0.10 (old v2/v8) collapsed it to ~9-13%
+# vs base, and a mostly-historical league (old v6) regressed it to ~15%. The only
+# two levers that didn't drop below base head-to-head were lr-decay (v5, kept) and
+# placement reward (v3, kept) — and note the *vs-bots* eval was actively
+# misleading (it ranked v5 a star and hid v6's collapse), so rank by --compare
+# only. Wave 2 keeps v3 + v5 and replaces the other six with a study of *which
+# form of gentle/stable update* helps (lr magnitude, decay-vs-constant, KL cap,
+# clip size, gradient variance), plus the two disproven directions flipped to
+# their opposites (entropy DOWN). The opponent-distribution axis is dropped: it
+# gave the only significant regression and nothing positive.
+#
 # The only thing that CANNOT be varied here is net width: --net-width is ignored
 # on --resume-from, since the architecture comes from the checkpoint. Every other
 # PPO hyperparameter (clip_range, gamma, gae_lambda, n_steps, batch_size,
@@ -87,19 +96,19 @@ COMMON=(
 )
 
 # name|seed|hypothesis|extra flags
+#
+# v3-placement and v5-lr-decay are UNCHANGED from wave 1 (same name -> same run
+# dir -> auto-resume from their own furthest checkpoint). The other six are wave-2
+# variants with NEW names, so they get fresh run dirs and start from the base.
 VARIANTS=(
-"v1-control|101|Reference point: unshaped self-play at the current hyperparameters.|"
-"v2-entropy|102|Plateau is entropy collapse — re-open exploration.|--ent-coef 0.10"
-"v3-placement|103|With shaping gone the terminal reward is the only signal; rank-shaped gives gradient between losing seats instead of one bit per game.|--terminal-reward placement"
-"v4-no-bots|104|Pure self-play: does even the 5% heuristic anchor hold the policy back?|--league-mix 0.5,0.5,0.0"
-"v5-lr-decay|105|A 1B-step policy is past the point where 3e-4 refines anything; decay the step size to settle it.|--learning-rate 1e-4 --lr-final 0"
-"v6-deep-league|106|Long-memory league: mostly-historical opponents, rarely refreshed, so the policy stops chasing its own latest quirks.|--league-past-k 24 --league-mix 0.20,0.75,0.05 --snapshot-every 250000"
-"v7-fast-latest|107|Opposite opponent regime from v6: fast-churning latest-snapshot-only self-play, no bots at all.|--no-league --bot-mix 0.0 --snapshot-every 25000"
-"v8-combo|108|Swing arm: the two changes most likely to help, together, to see whether they compose.|--ent-coef 0.10 --terminal-reward placement"
-# Extras — append to the array (they become variants 9, 10, ...) if there are
-# cores to spare. The 8 above were picked to cover one axis each.
-# "v9-entropy-high|109|Harder push on exploration if 0.10 is not enough to re-expand the policy.|--ent-coef 0.20"
-# "v10-target-kl|110|Cap destructive updates instead of shrinking every step.|--target-kl 0.02 --n-epochs 8"
+"w1-combo|109|The two surviving levers together: gentle lr-decay + placement reward. Old v8 combined the two DISPROVEN levers (ent-up + placement) and collapsed; this is the good-levers combo.|--learning-rate 1e-4 --lr-final 0 --terminal-reward placement"
+"w2-lr-const|110|v5 decays lr to 0 (freezes on a checkpoint). Test whether a CONSTANT small lr keeps genuinely refining instead of just settling.|--learning-rate 1e-4"
+"v3-placement|103|With shaping gone the terminal reward is the only signal; rank-shaped gives gradient between losing seats instead of one bit per game. KEPT from wave 1.|--terminal-reward placement"
+"w4-target-kl|111|Gentle updates by CAPPING KL per update instead of shrinking every step; extra epochs under the cap. Different mechanism from lr for the same 'settle the converged policy' goal.|--target-kl 0.02 --n-epochs 8"
+"v5-lr-decay|105|A 1B-step policy is past the point where 3e-4 refines anything; decay the step size to settle it. KEPT from wave 1.|--learning-rate 1e-4 --lr-final 0"
+"w6-tight-clip|112|Same gentle-update theme via a smaller PPO trust region (clip 0.2 -> 0.1): every update takes a smaller step.|--clip-range 0.1"
+"w7-ent-low|113|Entropy UP collapsed the policy (old v2/v8). Test the opposite: sharpen exploitation on the converged policy (default 0.03 -> 0.005).|--ent-coef 0.005"
+"w8-big-batch|114|Lower-variance gradients as a different route to stable updates: double the rollout and minibatch (512 -> 1024).|--n-steps 1024 --batch-size 1024"
 )
 
 variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
@@ -361,9 +370,9 @@ cat <<EOF
 
 Monitor:
   ./scripts/sweep_selfplay.sh --status
-  tail -f $SWEEP_DIR/v1-control/train.log
+  tail -f $SWEEP_DIR/w1-combo/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # rollout/entropy_loss, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/v2-entropy
+  $PY scripts/run_report.py $SWEEP_DIR/w1-combo
 Rank the variants (eval-vs-bots saturates; this is the real yardstick):
   ./scripts/sweep_selfplay.sh --compare
 Stop everything:
