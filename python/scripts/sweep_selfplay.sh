@@ -30,23 +30,33 @@
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
 #
+# Re-running is idempotent and self-healing: launching is the same command as
+# resuming. For each selected variant the script inspects its run dir and picks
+# up where it left off — resume from the furthest-along readable checkpoint (or
+# start fresh from the base if there is none) — but ONLY after confirming no
+# trainer is already running for that dir. The running-check verifies the
+# recorded PID is still a train_selfplay.py process for THIS run dir, so a stale
+# pidfile (e.g. a PID recycled across a reboot) can't block a resume or, worse,
+# let two trainers write the same dir. So the intended operational loop is
+# simply: run it, and if the box reboots or a variant crashes, run it again.
+#
 # Usage:
-#   ./scripts/sweep_selfplay.sh              # launch all 8 in the background
-#   ./scripts/sweep_selfplay.sh 2 5          # launch only variants 2 and 5
+#   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
+#   ./scripts/sweep_selfplay.sh 2 5          # launch/resume only variants 2 and 5
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # head-to-head: each variant vs the base model
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=200000000  additional timesteps per variant
+#   TOTAL_TIMESTEPS=200000000  target additional timesteps beyond the base model
 #   BASE_MODEL=runs/macro-selfplay2/best_model   checkpoint every variant starts from
 #   SWEEP_DIR=runs/sweep1      root for the per-variant run dirs
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
 #   THREADS=3                  torch/OMP threads per variant (8 x 3 = 24 of 28 cores)
 #   LEAGUE_SEED=120            past snapshots copied from the base run's league
 #                              (0 = start each league empty)
-#   NICE=10  STAGGER=15  DRY_RUN=1  RESUME=1
+#   NICE=10  STAGGER=15  DRY_RUN=1
 #
 set -euo pipefail
 
@@ -62,7 +72,6 @@ LEAGUE_SEED=${LEAGUE_SEED:-120}
 NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
-RESUME=${RESUME:-0}
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -95,6 +104,58 @@ VARIANTS=(
 
 variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
 
+# Echo the live trainer PID for a run dir, or nothing. Guards against a stale
+# pidfile whose PID has been recycled by an unrelated process (a reboot resets
+# the PID space): the recorded PID must still be alive AND be a
+# train_selfplay.py process whose command line names THIS run dir. Without the
+# command-line check we could either wrongly skip a resume (a recycled PID that
+# happens to be alive) or, if we launched anyway, end up with two trainers
+# writing the same dir.
+running_pid() {
+    local dir=$1 pidfile=$1/train.pid pid cmdline
+    [[ -f $pidfile ]] || return 0
+    pid=$(cat "$pidfile" 2>/dev/null) || return 0
+    [[ $pid =~ ^[0-9]+$ ]] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+    if [[ -r /proc/$pid/cmdline ]]; then
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline")
+    else
+        cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    fi
+    if [[ $cmdline == *train_selfplay.py* && $cmdline == *"--run-dir $dir"* ]]; then
+        echo "$pid"
+    fi
+    return 0
+}
+
+# Echo "<checkpoint-path-without-.zip> <num_timesteps>" for the furthest-along
+# *readable* checkpoint in a run dir, or nothing if there is none. Candidates
+# are tried highest-step-first; a checkpoint truncated by a kill mid-write fails
+# the zip read and is skipped in favour of the previous one, so an interrupted
+# run always resumes from a clean point. The step count comes from inside the
+# zip (num_timesteps), which the filename mirrors.
+latest_checkpoint() {
+    local dir=$1 zip stem steps
+    while IFS= read -r zip; do
+        [[ -n $zip ]] || continue
+        steps=$("$PY" - "$zip" <<'EOF' 2>/dev/null
+import json, sys, zipfile
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        print(json.loads(z.read("data"))["num_timesteps"])
+except Exception:
+    sys.exit(1)
+EOF
+        ) || continue
+        stem=${zip%.zip}
+        echo "$stem $steps"
+        return 0
+    done < <(ls "$dir"/ckpt_*_steps.zip 2>/dev/null \
+                | sed -E 's/.*ckpt_([0-9]+)_steps\.zip/\1 &/' \
+                | sort -k1,1nr | cut -d' ' -f2-)
+    return 0
+}
+
 list_variants() {
     printf '%-20s %-6s %s\n' NAME SEED FLAGS
     for i in "${!VARIANTS[@]}"; do
@@ -110,15 +171,18 @@ status() {
         local name dir pid state ckpt best
         name=$(variant_field "$i" 1); dir="$SWEEP_DIR/$name"
         [[ -d $dir ]] || continue
-        state="not running"
-        if [[ -f $dir/train.pid ]]; then
-            pid=$(cat "$dir/train.pid")
-            kill -0 "$pid" 2>/dev/null && state="running (pid $pid)" || state="exited"
+        pid=$(running_pid "$dir")
+        if [[ -n $pid ]]; then
+            state="running (pid $pid)"
+        elif [[ -f $dir/train.pid ]]; then
+            state="stopped"      # pidfile present but no live trainer
+        else
+            state="idle"
         fi
-        ckpt=$(ls -t "$dir"/ckpt_*.zip 2>/dev/null | head -1 || true)
-        ckpt=${ckpt:+$(basename "$ckpt")}
+        ckpt=$(ls "$dir"/ckpt_*_steps.zip 2>/dev/null \
+                 | sed -E 's/.*ckpt_([0-9]+)_steps\.zip/\1/' | sort -nr | head -1 || true)
         best=$( [[ -f $dir/best_mean_reward.json ]] && cat "$dir/best_mean_reward.json" || echo '-' )
-        printf '%-20s %-22s ckpt=%-28s best=%s\n' "$name" "$state" "${ckpt:--}" "$best"
+        printf '%-20s %-20s steps=%-13s best=%s\n' "$name" "$state" "${ckpt:--}" "$best"
     done
 }
 
@@ -150,11 +214,10 @@ compare() {
 
 stop_all() {
     for i in "${!VARIANTS[@]}"; do
-        local name pidfile pid
-        name=$(variant_field "$i" 1); pidfile="$SWEEP_DIR/$name/train.pid"
-        [[ -f $pidfile ]] || continue
-        pid=$(cat "$pidfile")
-        if kill -0 "$pid" 2>/dev/null; then
+        local name dir pid
+        name=$(variant_field "$i" 1); dir="$SWEEP_DIR/$name"
+        pid=$(running_pid "$dir")
+        if [[ -n $pid ]]; then
             echo "stopping $name (pid $pid)"
             kill "$pid"
         fi
@@ -208,25 +271,33 @@ for n in "${SELECTED[@]}"; do
     read -r -a extra <<< "$(variant_field "$i" 4)"
     dir="$SWEEP_DIR/$name"
 
-    # Already running? Never start a second writer on the same run dir.
-    if [[ -f $dir/train.pid ]] && kill -0 "$(cat "$dir/train.pid")" 2>/dev/null; then
-        echo "skip $name: already running (pid $(cat "$dir/train.pid"))"
+    # Already running? Never start a second writer on the same run dir. The
+    # check confirms the pidfile's PID is genuinely this variant's trainer, so
+    # a stale/recycled PID neither blocks a needed resume nor risks a duplicate.
+    live=$(running_pid "$dir")
+    if [[ -n $live ]]; then
+        echo "skip $name: already running (pid $live)"
         continue
     fi
 
+    # Auto-resume: inspect the run dir and continue from where it left off.
+    # SB3 counts timesteps cumulatively across resumes, so we ask each launch
+    # for only the steps still needed to reach TARGET_STEPS from the resumed
+    # checkpoint — re-running never overshoots the target.
     resume_from="$BASE_MODEL"
     steps="$TOTAL_TIMESTEPS"
-    newest=$(ls -t "$dir"/ckpt_*.zip 2>/dev/null | head -1 || true)
-    if [[ -n $newest ]]; then
-        if [[ $RESUME != 1 ]]; then
-            echo "skip $name: $dir already has checkpoints (set RESUME=1 to continue it)"
+    ckpt_stem=""; done_steps=""
+    read -r ckpt_stem done_steps < <(latest_checkpoint "$dir") || true
+    if [[ -n $ckpt_stem ]]; then
+        resume_from="$ckpt_stem"
+        steps=$(( TARGET_STEPS - done_steps ))
+        if (( steps <= 0 )); then
+            echo "skip $name: already at $done_steps >= target $TARGET_STEPS timesteps"
             continue
         fi
-        resume_from=${newest%.zip}
-        done_steps=$(basename "$newest" | sed -E 's/ckpt_([0-9]+)_steps\.zip/\1/')
-        steps=$(( TARGET_STEPS - done_steps ))
-        (( steps > 0 )) || { echo "skip $name: already at $done_steps >= $TARGET_STEPS"; continue; }
-        echo "resuming $name from $(basename "$newest") (+$steps remaining)"
+        echo "resuming $name from $(basename "$ckpt_stem").zip @ $done_steps (+$steps to $TARGET_STEPS)"
+    else
+        echo "starting $name fresh from base (+$TOTAL_TIMESTEPS)"
     fi
 
     mkdir -p "$dir"
