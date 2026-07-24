@@ -66,7 +66,7 @@ def main():
     parser.add_argument("--eval-freq", type=int, default=25_000,
                         help="Run an eval (win-rate) pass every N steps per env. 0 disables. "
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
-    parser.add_argument("--eval-episodes", type=int, default=20)
+    parser.add_argument("--eval-episodes", type=int, default=100)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round powered-cities bonus, granted when the learner's "
                              "powering resolves. Disable with --no-reward-shaping for pure "

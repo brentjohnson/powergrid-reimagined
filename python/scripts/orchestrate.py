@@ -419,7 +419,7 @@ class Orchestrator:
             "--terminal-reward", knobs["terminal_reward"],
             "--save-freq", str(self.args.save_freq),
             "--eval-freq", str(self.args.eval_freq),
-            "--eval-episodes", "40",
+            "--eval-episodes", "100",
         ]
         if resume:
             cmd += ["--resume-from", resume]

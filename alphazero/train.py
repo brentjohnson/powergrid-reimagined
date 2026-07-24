@@ -72,7 +72,7 @@ def main() -> None:
         default=0.3,
         help="Concentration of the root Dirichlet noise.",
     )
-    parser.add_argument("--eval-games", type=int, default=20)
+    parser.add_argument("--eval-games", type=int, default=100)
     parser.add_argument(
         "--eval-bot-difficulty", default="normal", choices=["easy", "normal", "hard"]
     )

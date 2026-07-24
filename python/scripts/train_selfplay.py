@@ -133,7 +133,7 @@ def main():
     parser.add_argument("--eval-freq", type=int, default=25_000,
                         help="Evaluate vs normal Rust bots every N steps per env. 0 disables. "
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
-    parser.add_argument("--eval-episodes", type=int, default=20)
+    parser.add_argument("--eval-episodes", type=int, default=100)
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round powered-cities bonus to the learner's step. "
                              "Eval is always unshaped.")

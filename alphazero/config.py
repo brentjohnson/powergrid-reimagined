@@ -70,7 +70,7 @@ class AZConfig:
     num_workers: int = 1
 
     # --- Eval / checkpoints -----------------------------------------------------
-    eval_games: int = 20
+    eval_games: int = 100
     eval_bot_difficulty: str = "normal"
     # Sims used for the win-rate eval. 0 = net-only greedy play, which is the
     # artifact actually exported to the Rust Expert bot (no search at deploy
