@@ -181,8 +181,16 @@ status() {
         fi
         ckpt=$(ls "$dir"/ckpt_*_steps.zip 2>/dev/null \
                  | sed -E 's/.*ckpt_([0-9]+)_steps\.zip/\1/' | sort -nr | head -1 || true)
-        best=$( [[ -f $dir/best_mean_reward.json ]] && cat "$dir/best_mean_reward.json" || echo '-' )
-        printf '%-20s %-20s steps=%-13s best=%s\n' "$name" "$state" "${ckpt:--}" "$best"
+        # The bar file is rewritten only when a new best is hit, so its mtime is
+        # when that best happened.
+        if [[ -f $dir/best_mean_reward.json ]]; then
+            best=$(cat "$dir/best_mean_reward.json")
+            when=$(date -r "$dir/best_mean_reward.json" '+%Y-%m-%d %H:%M' 2>/dev/null || echo '-')
+        else
+            best='-'; when='-'
+        fi
+        printf '%-20s %-20s steps=%-13s best=%-28s best@=%s\n' \
+            "$name" "$state" "${ckpt:--}" "$best" "$when"
     done
 }
 
