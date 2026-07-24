@@ -83,7 +83,7 @@ COMMON=(
     --league-mix 0.45,0.50,0.05 # 5% heuristic anchor; the rest is self-play
     --save-freq 250000          # ~2M timesteps per checkpoint at 8 envs
     --eval-freq 50000           # ~400k timesteps per eval pass
-    --eval-episodes 40          # 20 (the default) is too noisy to rank variants
+    --eval-episodes 200          # 20 (the default) is too noisy to rank variants
 )
 
 # name|seed|hypothesis|extra flags
