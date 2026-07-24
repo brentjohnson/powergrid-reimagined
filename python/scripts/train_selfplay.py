@@ -165,9 +165,41 @@ def main():
                         help="PPO entropy bonus coefficient. SB3's default is 0.0, which let "
                              "long runs collapse to a near-deterministic policy; even 0.01 "
                              "collapsed (entropy → ~0.15 nats by 20M steps), so the default "
-                             "is now 0.03 to keep exploration alive. Unlike other "
-                             "hyperparameters, this is applied on --resume-from too "
-                             "(overrides the checkpoint's value).")
+                             "is now 0.03 to keep exploration alive.")
+    # --- PPO hyperparameters -------------------------------------------------
+    # Defaults reproduce the CPU-tuned settings every current checkpoint was
+    # trained with, and ALL of them (like --ent-coef) are applied on
+    # --resume-from too, overriding the checkpoint's stored values — otherwise
+    # SB3 restores them from the zip and a sweep branching off one common
+    # ancestor could not vary them at all.
+    parser.add_argument("--learning-rate", type=float, default=3e-4,
+                        help="Adam step size. Lowering it (e.g. 1e-4) is the usual first "
+                             "move when a long run plateaus and starts oscillating.")
+    parser.add_argument("--lr-final", type=float, default=None,
+                        help="If set, anneal the learning rate linearly from --learning-rate "
+                             "to this value across THIS invocation's --total-timesteps "
+                             "(measured from the resumed checkpoint's step count, not from 0).")
+    parser.add_argument("--clip-range", type=float, default=0.2,
+                        help="PPO policy-ratio clip. Smaller = more conservative updates.")
+    parser.add_argument("--gamma", type=float, default=0.99,
+                        help="Discount factor. Games are ~50 macro-decisions long, so a "
+                             "lower value still reaches the terminal reward.")
+    parser.add_argument("--gae-lambda", type=float, default=0.95,
+                        help="GAE bias/variance trade-off.")
+    parser.add_argument("--n-steps", type=int, default=512,
+                        help="Rollout length per env; the PPO buffer is n_steps * num_envs.")
+    parser.add_argument("--batch-size", type=int, default=512,
+                        help="Mini-batch size for the PPO update. Should divide "
+                             "n_steps * num_envs.")
+    parser.add_argument("--n-epochs", type=int, default=4,
+                        help="Passes over each rollout buffer. More = more sample reuse "
+                             "per env step, at a higher risk of overfitting the batch.")
+    parser.add_argument("--vf-coef", type=float, default=0.5,
+                        help="Value-loss weight in the PPO objective.")
+    parser.add_argument("--target-kl", type=float, default=None,
+                        help="Early-stop a rollout's epochs once approximate KL exceeds this "
+                             "(SB3 default: no limit). A cheap guard against destructive "
+                             "updates on a plateaued policy.")
     parser.add_argument("--net-width", type=int, default=128,
                         help="Hidden width of the policy/value MLP (two equal-width hidden "
                              "layers) for a fresh run. Default 128. (SB3's own default and "
@@ -182,6 +214,9 @@ def main():
     if args.end_game_cities is not None and args.curriculum_start is not None:
         parser.error("--end-game-cities and --curriculum-start are mutually exclusive: "
                      "the curriculum would overwrite the fixed trigger at training start.")
+    if (args.n_steps * args.num_envs) % args.batch_size != 0:
+        parser.error(f"--batch-size {args.batch_size} must divide the rollout buffer "
+                     f"({args.n_steps} * {args.num_envs} = {args.n_steps * args.num_envs})")
 
     os.makedirs(args.run_dir, exist_ok=True)
 
@@ -192,35 +227,69 @@ def main():
                for i in range(args.num_envs)]
     vec_env = DummyVecEnv(env_fns)
 
+    # Filled in once the model exists: SB3's progress_remaining is computed
+    # against the *absolute* timestep count (1 - num_timesteps/total), so on a
+    # resume it starts partway through. The schedule below recovers the step
+    # count from it and measures progress across this invocation only.
+    segment = {"start": 0, "end": args.total_timesteps}
+
+    def lr_schedule(progress_remaining: float) -> float:
+        steps = segment["end"] * (1.0 - progress_remaining)
+        span = max(segment["end"] - segment["start"], 1)
+        frac = min(max((steps - segment["start"]) / span, 0.0), 1.0)
+        return args.learning_rate + frac * (args.lr_final - args.learning_rate)
+
+    # n_epochs/batch_size are the dominant cost on CPU. Default PPO
+    # (n_epochs=10, batch=64) does 1280 mini-batch updates per rollout; the
+    # defaults here do 64 (8192/512 * 4 epochs), giving ~3s/iter instead of
+    # ~18s/iter with no significant quality loss in practice.
+    hyperparams = dict(
+        learning_rate=args.learning_rate if args.lr_final is None else lr_schedule,
+        clip_range=args.clip_range,
+        ent_coef=args.ent_coef,
+        gamma=args.gamma,
+        gae_lambda=args.gae_lambda,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        n_epochs=args.n_epochs,
+        vf_coef=args.vf_coef,
+        target_kl=args.target_kl,
+        seed=args.seed,
+    )
+    hp_summary = ", ".join(f"{k}={v}" for k, v in hyperparams.items()
+                           if k not in ("learning_rate", "seed"))
+
     if args.resume_from:
-        model = MaskablePPO.load(args.resume_from, env=vec_env, device=args.device)
+        # custom_objects replaces the checkpoint's stored values at load time —
+        # before _setup_model() rebuilds the rollout buffer, the lr schedule and
+        # the clip-range schedule from them — so every flag above applies to a
+        # resumed run. (lr_schedule is nulled so a stale pickled closure from an
+        # earlier --lr-final run is never deserialized; _setup_lr_schedule
+        # replaces it immediately.)
+        model = MaskablePPO.load(args.resume_from, env=vec_env, device=args.device,
+                                 custom_objects={**hyperparams, "lr_schedule": None})
         model.tensorboard_log = os.path.join(args.run_dir, "tb")
-        model.ent_coef = args.ent_coef
+        segment["start"] = model.num_timesteps
+        segment["end"] = model.num_timesteps + args.total_timesteps
         print(f"Resumed from {args.resume_from} at {model.num_timesteps} timesteps "
-              f"(ent_coef={args.ent_coef}, "
+              f"(lr={args.learning_rate}"
+              f"{'' if args.lr_final is None else f'->{args.lr_final}'}, {hp_summary}, "
               f"shaping={'off' if not args.reward_shaping else args.shaping_mode})")
     else:
-        # n_epochs/batch_size are the dominant cost on CPU.
-        # Default PPO (n_epochs=10, batch=64) does 1280 mini-batch updates per
-        # rollout; these settings do 64 (8192/512 * 4 epochs), giving ~3s/iter
-        # instead of ~18s/iter with no significant quality loss in practice.
         model = MaskablePPO(
             "MlpPolicy",
             vec_env,
             verbose=1,
-            seed=args.seed,
             device=args.device,
-            n_steps=512,
-            batch_size=512,
-            n_epochs=4,
-            ent_coef=args.ent_coef,
             # Two equal-width hidden layers (dict form keeps the separate
             # policy_net/value_net heads the PGRLPOL1 exporter reads).
             policy_kwargs=dict(net_arch=dict(pi=[args.net_width, args.net_width],
                                              vf=[args.net_width, args.net_width])),
             tensorboard_log=os.path.join(args.run_dir, "tb"),
+            **hyperparams,
         )
-        print(f"Fresh model (ent_coef={args.ent_coef}, net_width={args.net_width}, "
+        print(f"Fresh model (net_width={args.net_width}, lr={args.learning_rate}"
+              f"{'' if args.lr_final is None else f'->{args.lr_final}'}, {hp_summary}, "
               f"shaping={'off' if not args.reward_shaping else args.shaping_mode})")
 
     # Seed the envs with an initial opponent snapshot before learn() resets

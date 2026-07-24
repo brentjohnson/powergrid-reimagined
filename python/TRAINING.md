@@ -148,6 +148,72 @@ PPO hyperparameters are CPU-tuned in both scripts (`n_steps=512`,
 than SB3 defaults, which is ~6× faster per iteration at no practical quality
 loss for this task.
 
+### PPO hyperparameter flags (self-play)
+
+`train_selfplay.py` exposes the PPO hyperparameters directly. The defaults
+reproduce the CPU-tuned settings above, i.e. the values every existing
+checkpoint was trained with.
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--learning-rate` | 3e-4 | Lowering it (1e-4) is the usual first move on a plateau |
+| `--lr-final` | — | Linearly anneal the lr to this value across *this* invocation's `--total-timesteps` |
+| `--clip-range` | 0.2 | Smaller = more conservative updates |
+| `--gamma` / `--gae-lambda` | 0.99 / 0.95 | |
+| `--n-steps` / `--batch-size` / `--n-epochs` | 512 / 512 / 4 | Buffer is `n_steps * num_envs`; batch size must divide it |
+| `--vf-coef` | 0.5 | |
+| `--target-kl` | — | Early-stop a rollout's epochs past this approximate KL |
+
+**All of these — plus `--ent-coef` — are applied on `--resume-from` too,**
+overriding the values stored in the checkpoint (SB3 otherwise restores them
+from the zip, which would make a hyperparameter sweep branching off one common
+ancestor impossible). `--net-width` is the exception: it is ignored on resume,
+because the architecture comes from the checkpoint.
+
+`--lr-final` accounts for the resume offset: SB3's internal progress fraction
+is computed against the absolute timestep count, so the schedule measures
+progress from the resumed checkpoint's step count rather than from zero.
+
+### Sweeping several variants at once
+
+`scripts/sweep_selfplay.sh` launches 8 self-play variants in parallel, all
+resuming from one common checkpoint and differing in a single knob each
+(entropy, learning rate, terminal reward, league composition):
+
+```bash
+./scripts/sweep_selfplay.sh --list         # variant table
+./scripts/sweep_selfplay.sh                # launch all 8 in the background
+./scripts/sweep_selfplay.sh --status       # progress / best eval per variant
+./scripts/sweep_selfplay.sh --compare      # head-to-head vs the base model
+./scripts/sweep_selfplay.sh --stop
+```
+
+Two things are held fixed across every variant, because the goal at this stage
+is beating *humans*, not bots:
+
+- **No reward shaping.** The powered-cities bonus is a proxy for winning; past
+  a competent policy it optimises the proxy. The terminal reward is the whole
+  signal.
+- **Minimal bot contact.** The base model already wins ~75% vs normal bots, so
+  heuristics are no longer a training target — the league keeps at most a 5%
+  bot weight as an anchor against degenerate equilibria, and one variant drops
+  even that. Bots remain only as the eval yardstick, which never feeds back
+  into training.
+
+For the same reason, `eval/mean_reward` (vs normal bots) is a *saturating*
+progress signal here — use `--compare`, which plays each variant's
+`best_model` in seat 0 against three copies of the base model via
+`evaluate_lineup.py`. It prints a base-vs-base row first: four copies of the
+base model score ~27.5% in seat 0 over 200 games (seat-0 advantage plus ±3pp
+noise), so that, not 25%, is the line a variant has to beat. `COMPARE_GAMES`
+and `COMPARE_SEED` override the defaults.
+
+Each variant gets its own run dir under `runs/sweep1/` (own league, tb log and
+`best_model.zip`); the base run dir is never written to. `RESUME=1` restarts
+interrupted variants from their newest checkpoint with the remaining step
+budget. See the header of the script for the env-var knobs (`BASE_MODEL`,
+`TOTAL_TIMESTEPS`, `THREADS`, …); the defaults are sized for a 28-core machine.
+
 ### End-game-cities curriculum
 
 If the policy never wins (eval reward pinned at −1.0), the win signal is too
