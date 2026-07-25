@@ -41,7 +41,7 @@ from powergrid_env.callbacks import (
     PersistentBestEvalCallback,
     ShapingAnnealCallback,
 )
-from powergrid_env.export import policy_state_dict_to_bytes
+from powergrid_env.export import policy_bytes_to_state_dict, policy_state_dict_to_bytes
 
 
 def make_env(num_players: int, seed: int, reward_shaping: bool,
@@ -65,12 +65,20 @@ def league_mix(value: str) -> tuple[float, float, float]:
     return parts
 
 
-def make_eval_env(num_players: int, seed: int, end_game_cities: int | None = None):
-    """Eval vs Rust bots — an external yardstick for self-play progress."""
+def make_eval_env(num_players: int, seed: int, end_game_cities: int | None = None,
+                  difficulty: str = "normal"):
+    """Eval vs Rust bots — an external yardstick for self-play progress.
+
+    `difficulty` matters for checkpoint selection, not just reporting: this metric
+    drives `best_model`. Against an opponent the learner already dominates the
+    score saturates and `best_model` starts tracking eval noise instead of skill,
+    so a warm-started run (which begins near the champion heuristic) should
+    evaluate against `hard`.
+    """
     def _init():
         env = PowerGridSingleAgentEnv(
             num_players=num_players,
-            bot_difficulty="normal",
+            bot_difficulty=difficulty,
             seed=seed,
             reward_shaping=False,
             end_game_cities=end_game_cities,
@@ -134,6 +142,12 @@ def main():
                         help="Evaluate vs normal Rust bots every N steps per env. 0 disables. "
                              "Logs eval/mean_reward to TensorBoard and keeps best_model.zip.")
     parser.add_argument("--eval-episodes", type=int, default=100)
+    parser.add_argument("--eval-difficulty", default="normal",
+                        choices=["easy", "normal", "hard"],
+                        help="Opponent difficulty for the eval passes. This metric selects "
+                             "best_model, so pick one the learner does NOT dominate — a "
+                             "saturated score makes best_model track noise. Use 'hard' for "
+                             "warm-started or already-strong runs.")
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round powered-cities bonus to the learner's step. "
                              "Eval is always unshaped.")
@@ -200,6 +214,13 @@ def main():
                         help="Early-stop a rollout's epochs once approximate KL exceeds this "
                              "(SB3 default: no limit). A cheap guard against destructive "
                              "updates on a plateaued policy.")
+    parser.add_argument("--init-policy-from", default=None,
+                        help="Warm-start a FRESH run from a behavior clone: path to a "
+                             "PGRLPOL2 .bin (as written by alphazero/export.py or "
+                             "scripts/export_policy.py). Loads the three policy layers "
+                             "and leaves the value head freshly initialised, so the "
+                             "first updates should use a small --learning-rate. "
+                             "Ignored with --resume-from, which already carries weights.")
     parser.add_argument("--net-width", type=int, default=128,
                         help="Hidden width of the policy/value MLP (two equal-width hidden "
                              "layers) for a fresh run. Default 128. (SB3's own default and "
@@ -288,9 +309,29 @@ def main():
             tensorboard_log=os.path.join(args.run_dir, "tb"),
             **hyperparams,
         )
+        if args.init_policy_from:
+            with open(args.init_policy_from, "rb") as f:
+                clone = policy_bytes_to_state_dict(f.read())
+            clone_width = clone["action_net.weight"].shape[1]
+            if clone_width != args.net_width:
+                raise SystemExit(
+                    f"--init-policy-from is {clone_width}-wide but --net-width is "
+                    f"{args.net_width}; they must match"
+                )
+            missing, unexpected = model.policy.load_state_dict(clone, strict=False)
+            if unexpected:
+                raise SystemExit(f"clone has keys sb3 does not: {unexpected}")
+            # The value head is deliberately among the "missing" keys: a behavior
+            # clone has no compatible critic, so it stays randomly initialised and
+            # the first updates ride on meaningless advantages. Keep the lr small
+            # until the critic catches up.
+            print(f"Warm-started policy from {args.init_policy_from} "
+                  f"({clone_width}-wide); value head left fresh "
+                  f"({len(missing)} keys not loaded)")
         print(f"Fresh model (net_width={args.net_width}, lr={args.learning_rate}"
               f"{'' if args.lr_final is None else f'->{args.lr_final}'}, {hp_summary}, "
-              f"shaping={'off' if not args.reward_shaping else args.shaping_mode})")
+              f"shaping={'off' if not args.reward_shaping else args.shaping_mode}"
+              f"{'' if not args.init_policy_from else ', warm-started'})")
 
     # Seed the envs with an initial opponent snapshot before learn() resets
     # them (SB3 resets envs before any callback fires); the callback keeps
@@ -327,7 +368,8 @@ def main():
         # eval/mean_reward in [-1, 1] maps directly to win rate vs bots:
         # win_rate = (mean_reward + 1) / 2.
         eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000,
-                                              args.end_game_cities)])
+                                              args.end_game_cities,
+                                              args.eval_difficulty)])
         eval_callback = PersistentBestEvalCallback(
             eval_env,
             eval_freq=args.eval_freq,

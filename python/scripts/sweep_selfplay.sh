@@ -1,40 +1,55 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — launch 8 parallel self-play variants from one base model.
+# sweep_selfplay.sh — launch 8 parallel self-play variants from one behavior clone.
 #
-# Every variant resumes from the SAME checkpoint (runs/macro-selfplay2/best_model
-# by default) and trains for the same number of *additional* timesteps, so the
-# only thing that differs between runs is the knob under test. Each variant gets
-# its own run dir, league, TensorBoard log and best_model.zip; the base run dir
-# is never written to.
+# WAVE 3 (2026-07-25) — FULL RESET. The macro action space was rebuilt (build and
+# buy are now quantity ladders, powering is auto-resolved, PGRLPOL1 -> PGRLPOL2),
+# so *every* prior checkpoint is invalid, including the wave-2 winners. There is
+# no common ancestor to resume from any more. The sweep now starts from a
+# BEHAVIOR CLONE of the champion heuristic and asks a different question:
 #
-# Two things are fixed across every variant, by design:
+#     Given a policy that already plays like the `hard` bot, what finetuning
+#     recipe improves it instead of destroying it?
 #
-#   * NO reward shaping (--no-reward-shaping). The powered-cities bonus is a
-#     proxy for winning, not winning; the terminal reward is the whole signal.
-#   * Minimal bot contact. The base model already wins ~75% vs normal bots, so
-#     bots are no longer a training target — the league keeps at most a 5%
-#     heuristic weight as an anchor against drifting into a degenerate
-#     equilibrium, and one variant removes even that. Bots remain only as the
-#     *eval* yardstick (eval never feeds back into training).
+# That is a genuinely different problem from wave 2, which was refining a
+# converged 1B-step policy. Some wave-2 findings carry over; several do not.
 #
-# WAVE 2 (2026-07-24). Wave 1 (the original v1..v8) found that this converged
-# ~1B-step base policy only improves under *gentler* optimisation and is wrecked
-# by anything that adds churn: --ent-coef 0.10 (old v2/v8) collapsed it to ~9-13%
-# vs base, and a mostly-historical league (old v6) regressed it to ~15%. The only
-# two levers that didn't drop below base head-to-head were lr-decay (v5, kept) and
-# placement reward (v3, kept) — and note the *vs-bots* eval was actively
-# misleading (it ranked v5 a star and hid v6's collapse), so rank by --compare
-# only. Wave 2 keeps v3 + v5 and replaces the other six with a study of *which
-# form of gentle/stable update* helps (lr magnitude, decay-vs-constant, KL cap,
-# clip size, gradient variance), plus the two disproven directions flipped to
-# their opposites (entropy DOWN). The opponent-distribution axis is dropped: it
-# gave the only significant regression and nothing positive.
+#   CARRIES OVER:
+#     * Low-variance updates win. Big batch (1024) beat base 39% vs 26%,
+#       constant small lr (1e-4) 34%, the two combined 34.5%. w1 uses both, and
+#       every arm inherits them so the sweep tests deviations from a known-good
+#       recipe rather than from SB3 defaults.
+#     * Entropy UP collapses a good policy (0.10 -> ~9-13%). No arm raises it
+#       above 0.01; w4 probes only a small amount, for a specific new reason.
+#     * A mostly-historical league regresses (15%). The opponent-distribution
+#       axis is probed once (w6), toward MORE bot contact, not less.
 #
-# The only thing that CANNOT be varied here is net width: --net-width is ignored
-# on --resume-from, since the architecture comes from the checkpoint. Every other
-# PPO hyperparameter (clip_range, gamma, gae_lambda, n_steps, batch_size,
-# n_epochs, vf_coef, target_kl) has a flag if you want to add a variant.
+#   DOES NOT CARRY OVER:
+#     * "Bots are no longer a training target." False now: the clone starts at
+#       roughly heuristic strength, so the hard bot is exactly the bar.
+#     * Eval vs *normal* bots. A clone of the hard bot saturates that instantly
+#       and best_model selection degenerates into tracking eval noise — every
+#       variant now evaluates against `hard` (--eval-difficulty).
+#     * "Shaping is dead." Worth one arm (w7) for a NEW reason: the warm start
+#       loads only the policy, so the critic is random and shaping gives it a
+#       dense early signal. That is a critic-bootstrap argument, not the
+#       policy-teaching argument that failed before.
+#
+# THE MAIN RISK this sweep is designed around: --init-policy-from loads the three
+# policy layers and leaves the VALUE HEAD randomly initialised. The first updates
+# therefore ride on meaningless advantages and can wreck a good clone before the
+# critic catches up. w1/w2/w3 are three different answers to that (gentle updates
+# / fast critic / near-frozen policy); w8 is the control that says whether the
+# warm start was load-bearing at all.
+#
+# PREREQUISITE — build the clone first (this script does not create it):
+#
+#   python/.venv/bin/python -m alphazero.pretrain \
+#       --games 400 --epochs 20 --net-width 128 \
+#       --run-dir alphazero/runs/clone_w3 \
+#       --export alphazero/runs/clone_w3/clone.bin
+#
+# `--net-width` there MUST match NET_WIDTH here; the loader refuses a mismatch.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -42,29 +57,29 @@
 # Re-running is idempotent and self-healing: launching is the same command as
 # resuming. For each selected variant the script inspects its run dir and picks
 # up where it left off — resume from the furthest-along readable checkpoint (or
-# start fresh from the base if there is none) — but ONLY after confirming no
-# trainer is already running for that dir. The running-check verifies the
-# recorded PID is still a train_selfplay.py process for THIS run dir, so a stale
-# pidfile (e.g. a PID recycled across a reboot) can't block a resume or, worse,
-# let two trainers write the same dir. So the intended operational loop is
-# simply: run it, and if the box reboots or a variant crashes, run it again.
+# start from the clone if there is none) — but ONLY after confirming no trainer
+# is already running for that dir. The running-check verifies the recorded PID is
+# still a train_selfplay.py process for THIS run dir, so a stale pidfile (e.g. a
+# PID recycled across a reboot) can't block a resume or, worse, let two trainers
+# write the same dir. So the intended operational loop is simply: run it, and if
+# the box reboots or a variant crashes, run it again.
 #
 # Usage:
 #   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
 #   ./scripts/sweep_selfplay.sh 2 5          # launch/resume only variants 2 and 5
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
-#   ./scripts/sweep_selfplay.sh --compare    # head-to-head: each variant vs the base model
+#   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the baseline arm
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=200000000  target additional timesteps beyond the base model
-#   BASE_MODEL=runs/macro-selfplay2/best_model   checkpoint every variant starts from
-#   SWEEP_DIR=runs/sweep1      root for the per-variant run dirs
+#   TOTAL_TIMESTEPS=50000000   timesteps per variant
+#   CLONE=../alphazero/runs/clone_w3/clone.bin   PGRLPOL2 warm-start weights
+#   SWEEP_DIR=runs/sweep3      root for the per-variant run dirs
+#   NET_WIDTH=128              must match the clone's width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
 #   THREADS=3                  torch/OMP threads per variant (8 x 3 = 24 of 28 cores)
-#   LEAGUE_SEED=120            past snapshots copied from the base run's league
-#                              (0 = start each league empty)
 #   NICE=10  STAGGER=15  DRY_RUN=1
 #
 set -euo pipefail
@@ -72,43 +87,51 @@ set -euo pipefail
 cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
-BASE_MODEL=${BASE_MODEL:-runs/macro-selfplay2/best_model}
-SWEEP_DIR=${SWEEP_DIR:-runs/sweep1}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-200000000}
+CLONE=${CLONE:-../alphazero/runs/clone_w3/clone.bin}
+SWEEP_DIR=${SWEEP_DIR:-runs/sweep3}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-50000000}
+NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
-LEAGUE_SEED=${LEAGUE_SEED:-120}
 NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
+# The reference arm every other variant is a single-knob deviation from, and the
+# opponent for --h2h.
+BASELINE=w1-clone-anchor
+
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
-# flag there (e.g. --league-mix) overrides the value set here.
+# flag there (e.g. --ent-coef) overrides the value set here.
 COMMON=(
     --num-players 4
     --num-envs "$NUM_ENVS"
-    --no-reward-shaping         # terminal reward only, for every variant
+    --net-width "$NET_WIDTH"
+    --no-reward-shaping         # terminal reward only (w7 turns it back on)
     --league-mix 0.45,0.50,0.05 # 5% heuristic anchor; the rest is self-play
+    --eval-difficulty hard      # NOT normal: a clone saturates normal instantly
     --save-freq 250000          # ~2M timesteps per checkpoint at 8 envs
     --eval-freq 50000           # ~400k timesteps per eval pass
-    --eval-episodes 200          # 20 (the default) is too noisy to rank variants
+    --eval-episodes 200         # 20 (the default) is too noisy to rank variants
+    # Wave-2's winning low-variance recipe, inherited by every arm.
+    --n-steps 1024
+    --batch-size 1024
+    --learning-rate 1e-4
 )
 
-# name|seed|hypothesis|extra flags
+# name|seed|init|hypothesis|extra flags
 #
-# v3-placement and v5-lr-decay are UNCHANGED from wave 1 (same name -> same run
-# dir -> auto-resume from their own furthest checkpoint). The other six are wave-2
-# variants with NEW names, so they get fresh run dirs and start from the base.
+# `init` is "clone" (warm-start from $CLONE) or "scratch" (no warm start).
 VARIANTS=(
-"w1-combo|109|The two surviving levers together: gentle lr-decay + placement reward. Old v8 combined the two DISPROVEN levers (ent-up + placement) and collapsed; this is the good-levers combo.|--learning-rate 1e-4 --lr-final 0 --terminal-reward placement"
-"w2-lr-const|110|v5 decays lr to 0 (freezes on a checkpoint). Test whether a CONSTANT small lr keeps genuinely refining instead of just settling.|--learning-rate 1e-4"
-"v3-placement|103|With shaping gone the terminal reward is the only signal; rank-shaped gives gradient between losing seats instead of one bit per game. KEPT from wave 1.|--terminal-reward placement"
-"w4-target-kl|111|Gentle updates by CAPPING KL per update instead of shrinking every step; extra epochs under the cap. Different mechanism from lr for the same 'settle the converged policy' goal.|--target-kl 0.02 --n-epochs 8"
-"v5-lr-decay|105|A 1B-step policy is past the point where 3e-4 refines anything; decay the step size to settle it. KEPT from wave 1.|--learning-rate 1e-4 --lr-final 0"
-"w6-tight-clip|112|Same gentle-update theme via a smaller PPO trust region (clip 0.2 -> 0.1): every update takes a smaller step.|--clip-range 0.1"
-"w7-ent-low|113|Entropy UP collapsed the policy (old v2/v8). Test the opposite: sharpen exploitation on the converged policy (default 0.03 -> 0.005).|--ent-coef 0.005"
-"w8-big-batch|114|Lower-variance gradients as a different route to stable updates: double the rollout and minibatch (512 -> 1024).|--n-steps 1024 --batch-size 1024"
+"w1-clone-anchor|201|clone|BASELINE. The clone plus everything wave 2 proved: big batch (1024), constant small lr (1e-4), no shaping, terminal reward only. Every other arm is this with ONE knob moved, so any difference is attributable.|--terminal-reward placement"
+"w2-vf-warmup|202|clone|The warm start leaves the CRITIC RANDOM, so early advantages are noise that can wreck a good clone. Let the critic catch up fast (vf-coef 0.5 -> 1.0) while the policy barely moves (n-epochs 4 -> 2).|--terminal-reward placement --vf-coef 1.0 --n-epochs 2"
+"w3-tiny-lr|203|clone|Same risk, blunter answer: make the policy nearly immovable (lr 1e-4 -> 3e-5) until the critic means something. If w3 >> w1 the clone is being damaged at 1e-4; if w3 ~= w1 it is not, and w1's larger steps are free.|--terminal-reward placement --learning-rate 3e-5"
+"w4-explore|204|clone|A clone of a deterministic teacher is peaked, so it may NEVER sample the ladder rungs the action-space rebuild added (SET+-1/2, FILL, BUILD_n). Entropy 0.03 -> 0.01: enough to try them, far below the 0.10 that collapsed wave 2.|--terminal-reward placement --ent-coef 0.01"
+"w5-winloss|205|clone|Isolates the reward shape. Wave 2 could not separate placement from win/loss on a converged policy (29% vs 26% base, inside noise). With a fresh critic the denser rank signal should matter more — this is the control that proves or kills it.|--terminal-reward winloss"
+"w6-bot-anchor|206|clone|A clone self-playing is mostly playing the teacher, so early self-play may add little. Weight the league toward the heuristic (0.45/0.50/0.05 -> 0.30/0.30/0.40) to keep the learner honest against the bar it is scored on.|--terminal-reward placement --league-mix 0.30,0.30,0.40"
+"w7-shaped-start|207|clone|The one arm that reintroduces shaping, for a NEW reason: the critic is random at step 0 and the powered-cities bonus is a dense signal to bootstrap it. Annealed to 0 over the first fifth so it cannot distort the converged policy.|--terminal-reward placement --reward-shaping --shaping-mode absolute --anneal-shaping-steps 10000000"
+"w8-scratch|208|scratch|CONTROL: identical to w1 but with NO warm start. Answers 'is the behavior clone load-bearing?' and would catch a silently broken --init-policy-from. History says from-scratch PPO fails on this game; if w8 keeps up, suspect the clone.|--terminal-reward placement"
 )
 
 variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
@@ -166,18 +189,19 @@ EOF
 }
 
 list_variants() {
-    printf '%-20s %-6s %s\n' NAME SEED FLAGS
+    printf '%-20s %-6s %-8s %s\n' NAME SEED INIT FLAGS
     for i in "${!VARIANTS[@]}"; do
-        printf '%-20s %-6s %s\n' \
+        printf '%-20s %-6s %-8s %s\n' \
             "$(( i + 1 )). $(variant_field "$i" 1)" \
             "$(variant_field "$i" 2)" \
-            "$(variant_field "$i" 4)"
+            "$(variant_field "$i" 3)" \
+            "$(variant_field "$i" 5)"
     done
 }
 
 status() {
     for i in "${!VARIANTS[@]}"; do
-        local name dir pid state ckpt best
+        local name dir pid state ckpt best when
         name=$(variant_field "$i" 1); dir="$SWEEP_DIR/$name"
         [[ -d $dir ]] || continue
         pid=$(running_pid "$dir")
@@ -203,29 +227,48 @@ status() {
     done
 }
 
-# Head-to-head vs the common ancestor. eval/mean_reward measures play against
-# *normal bots*, which the base model already beats ~75% of the time — it will
-# saturate long before the interesting differences appear. This is the yardstick
-# that actually tracks "got better at beating strong opponents": each variant's
-# best_model takes seat 0 against three copies of the base model. The base-vs-
-# base row gives seat 0's own baseline, so read every variant against that, not
-# against 25%.
+# ABSOLUTE yardstick: each variant's best_model in seat 0 against three `hard`
+# bots — the bar the whole project aims at. The all-bots row gives seat 0's
+# structural share (~25% plus seat bias), so read a variant against that, not
+# against 0. Unlike wave 2's vs-normal eval this does not saturate: a behavior
+# clone starts at roughly the bots' own level, so there is headroom in both
+# directions and the metric stays informative for the whole run.
 compare() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
-    [[ -f ${BASE_MODEL}.zip ]] || { echo "base model ${BASE_MODEL}.zip not found" >&2; exit 1; }
-    echo "=== baseline: base model in all four seats ($games games) ==="
+    echo "=== baseline: 4x hard bots ($games games) — seat 0's structural share ==="
     "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
-        --player "$BASE_MODEL" --player "$BASE_MODEL" \
-        --player "$BASE_MODEL" --player "$BASE_MODEL"
+        --player hard --player hard --player hard --player hard
     for i in "${!VARIANTS[@]}"; do
         local name model
         name=$(variant_field "$i" 1); model="$SWEEP_DIR/$name/best_model"
         [[ -f ${model}.zip ]] || continue
         echo
-        echo "=== $name (seat 0) vs 3x base ($games games) ==="
+        echo "=== $name (seat 0) vs 3x hard ($games games) ==="
         "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
-            --player "$model" --player "$BASE_MODEL" \
-            --player "$BASE_MODEL" --player "$BASE_MODEL"
+            --player "$model" --player hard --player hard --player hard
+    done
+}
+
+# RELATIVE ranking: each variant in seat 0 against three copies of the baseline
+# arm. Once several arms clear the bot bar, beating strong opposition is the
+# finer signal — this is wave 2's --compare, retargeted now that the common
+# ancestor is a clone rather than a checkpoint.
+h2h() {
+    local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
+    local base="$SWEEP_DIR/$BASELINE/best_model"
+    [[ -f ${base}.zip ]] || { echo "baseline $BASELINE has no best_model yet" >&2; exit 1; }
+    echo "=== self-baseline: 4x $BASELINE ($games games) ==="
+    "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
+        --player "$base" --player "$base" --player "$base" --player "$base"
+    for i in "${!VARIANTS[@]}"; do
+        local name model
+        name=$(variant_field "$i" 1); model="$SWEEP_DIR/$name/best_model"
+        [[ $name == "$BASELINE" ]] && continue
+        [[ -f ${model}.zip ]] || continue
+        echo
+        echo "=== $name (seat 0) vs 3x $BASELINE ($games games) ==="
+        "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
+            --player "$model" --player "$base" --player "$base" --player "$base"
     done
 }
 
@@ -246,6 +289,7 @@ case "${1:-}" in
     --status)  status;        exit 0 ;;
     --stop)    stop_all;      exit 0 ;;
     --compare) compare;       exit 0 ;;
+    --h2h)     h2h;           exit 0 ;;
 esac
 
 # Which variants to launch (1-based indices; default all).
@@ -255,25 +299,30 @@ else
     SELECTED=($(seq 1 ${#VARIANTS[@]}))
 fi
 
-[[ -x $PY ]]                || { echo "no interpreter at $PY (run 'make develop' first)" >&2; exit 1; }
-[[ -f ${BASE_MODEL}.zip ]]  || { echo "base model ${BASE_MODEL}.zip not found" >&2; exit 1; }
+[[ -x $PY ]] || { echo "no interpreter at $PY (run 'make develop' first)" >&2; exit 1; }
+if [[ ! -f $CLONE ]]; then
+    cat >&2 <<EOF
+behavior clone not found at: $CLONE
 
-# Timesteps are cumulative in SB3 when resuming: learn() adds the checkpoint's
-# num_timesteps to --total-timesteps. Read the base count so a RESUME=1 restart
-# can ask for only the *remaining* steps and still stop at the same target.
-BASE_STEPS=$("$PY" - "$BASE_MODEL" <<'EOF'
-import json, sys, zipfile
-with zipfile.ZipFile(sys.argv[1] + ".zip") as z:
-    print(json.loads(z.read("data"))["num_timesteps"])
+Build it first (see the header of this script):
+  python/.venv/bin/python -m alphazero.pretrain \\
+      --games 400 --epochs 20 --net-width $NET_WIDTH \\
+      --run-dir alphazero/runs/clone_w3 \\
+      --export alphazero/runs/clone_w3/clone.bin
+
+Run that from the repo root. Or set CLONE=/path/to/clone.bin.
+Only variant 8 (w8-scratch) can run without it.
 EOF
-)
-TARGET_STEPS=$(( BASE_STEPS + TOTAL_TIMESTEPS ))
-BASE_LEAGUE=$(dirname "$BASE_MODEL")/league
+    exit 1
+fi
 
-echo "base model     : $BASE_MODEL (at $BASE_STEPS timesteps)"
-echo "target         : +$TOTAL_TIMESTEPS -> $TARGET_STEPS timesteps per variant"
+echo "clone          : $CLONE (net-width $NET_WIDTH)"
+echo "target         : $TOTAL_TIMESTEPS timesteps per variant"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
+echo
+echo "NOTE: no league seeding. Snapshots from earlier waves are PGRLPOL1 files"
+echo "      from a dead layout epoch and are rejected on load, by design."
 echo
 
 mkdir -p "$SWEEP_DIR"
@@ -284,8 +333,9 @@ for n in "${SELECTED[@]}"; do
 
     name=$(variant_field "$i" 1)
     seed=$(variant_field "$i" 2)
-    why=$(variant_field "$i" 3)
-    read -r -a extra <<< "$(variant_field "$i" 4)"
+    init=$(variant_field "$i" 3)
+    why=$(variant_field "$i" 4)
+    read -r -a extra <<< "$(variant_field "$i" 5)"
     dir="$SWEEP_DIR/$name"
 
     # Already running? Never start a second writer on the same run dir. The
@@ -298,55 +348,43 @@ for n in "${SELECTED[@]}"; do
     fi
 
     # Auto-resume: inspect the run dir and continue from where it left off.
-    # SB3 counts timesteps cumulatively across resumes, so we ask each launch
-    # for only the steps still needed to reach TARGET_STEPS from the resumed
-    # checkpoint — re-running never overshoots the target.
-    resume_from="$BASE_MODEL"
+    # SB3 counts timesteps cumulatively across resumes, so we ask each launch for
+    # only the steps still needed to reach TOTAL_TIMESTEPS — re-running never
+    # overshoots. A resumed checkpoint already carries trained weights, so the
+    # warm start applies only to the very first launch.
+    start_args=()
     steps="$TOTAL_TIMESTEPS"
     ckpt_stem=""; done_steps=""
     read -r ckpt_stem done_steps < <(latest_checkpoint "$dir") || true
     if [[ -n $ckpt_stem ]]; then
-        resume_from="$ckpt_stem"
-        steps=$(( TARGET_STEPS - done_steps ))
+        steps=$(( TOTAL_TIMESTEPS - done_steps ))
         if (( steps <= 0 )); then
-            echo "skip $name: already at $done_steps >= target $TARGET_STEPS timesteps"
+            echo "skip $name: already at $done_steps >= target $TOTAL_TIMESTEPS timesteps"
             continue
         fi
-        echo "resuming $name from $(basename "$ckpt_stem").zip @ $done_steps (+$steps to $TARGET_STEPS)"
+        start_args=(--resume-from "$ckpt_stem")
+        echo "resuming $name from $(basename "$ckpt_stem").zip @ $done_steps (+$steps)"
+    elif [[ $init == clone ]]; then
+        start_args=(--init-policy-from "$CLONE")
+        echo "starting $name from the clone (+$TOTAL_TIMESTEPS)"
     else
-        echo "starting $name fresh from base (+$TOTAL_TIMESTEPS)"
+        echo "starting $name from scratch, no warm start (+$TOTAL_TIMESTEPS)"
     fi
 
     mkdir -p "$dir"
 
-    # Seed a fresh league with a spread of the base run's snapshots, so
-    # --league-past-k has real history to sample from at step 0 instead of
-    # four copies of the model it just resumed from.
-    if [[ $LEAGUE_SEED -gt 0 && ! -d $dir/league && -d $BASE_LEAGUE ]]; then
-        mkdir -p "$dir/league"
-        mapfile -t snaps < <(ls "$BASE_LEAGUE"/snap_*.bin 2>/dev/null | sort -V)
-        if (( ${#snaps[@]} )); then
-            stride=$(( (${#snaps[@]} + LEAGUE_SEED - 1) / LEAGUE_SEED ))
-            (( stride > 0 )) || stride=1
-            for ((s = 0; s < ${#snaps[@]}; s += stride)); do
-                cp "${snaps[$s]}" "$dir/league/"
-            done
-            echo "  seeded league with $(ls "$dir/league" | wc -l) snapshots"
-        fi
-    fi
-
     cmd=("$PY" scripts/train_selfplay.py
          "${COMMON[@]}"
          --run-dir "$dir"
-         --resume-from "$resume_from"
          --total-timesteps "$steps"
          --seed "$seed"
+         "${start_args[@]}"
          "${extra[@]}")
 
     {
         echo "# $name — $why"
         echo "# launched: $(date -Is)"
-        echo "# base: $BASE_MODEL @ $BASE_STEPS  target: $TARGET_STEPS"
+        echo "# init: $init  clone: $CLONE  target: $TOTAL_TIMESTEPS"
         printf '%q ' "${cmd[@]}"; echo
     } > "$dir/variant.txt"
 
@@ -370,11 +408,12 @@ cat <<EOF
 
 Monitor:
   ./scripts/sweep_selfplay.sh --status
-  tail -f $SWEEP_DIR/w1-combo/train.log
+  tail -f $SWEEP_DIR/$BASELINE/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # rollout/entropy_loss, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/w1-combo
-Rank the variants (eval-vs-bots saturates; this is the real yardstick):
-  ./scripts/sweep_selfplay.sh --compare
+  $PY scripts/run_report.py $SWEEP_DIR/$BASELINE
+Rank the variants:
+  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (the project bar)
+  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x $BASELINE
 Stop everything:
   ./scripts/sweep_selfplay.sh --stop
 EOF

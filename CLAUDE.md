@@ -42,7 +42,7 @@ make develop                                     # build PyO3 crate + install Py
 pytest tests/                                    # run Python tests
 python scripts/train_vs_bots.py                  # MaskablePPO vs Rust bots
 python scripts/train_selfplay.py                 # self-play (vs frozen snapshots of own policy)
-./scripts/sweep_selfplay.sh                      # 8 parallel self-play variants from one base checkpoint (--list/--status/--stop)
+./scripts/sweep_selfplay.sh                      # 8 parallel self-play variants from one behavior clone (--list/--status/--compare/--h2h/--stop)
 python scripts/train_selfplay.py --curriculum-start 3   # end-game-cities curriculum (trigger 3 → rulebook, +2 per --curriculum-every steps)
 python scripts/orchestrate.py                    # forever-training orchestrator: train → eval → adapt loop; state + reasoning journal in runs/orch/ (see TRAINING.md §8)
 python scripts/evaluate.py --model runs/vs_bots/best_model  # win-rate vs bots

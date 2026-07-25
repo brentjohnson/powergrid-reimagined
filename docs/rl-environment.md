@@ -352,7 +352,7 @@ make test
 | `python/src/powergrid_env/encoding.py` | `encode_observation` — the Python reference obs implementation used by the parity tests (includes the routing Dijkstra) |
 | `python/src/powergrid_env/env.py` | `PowerGridAECEnv` (PettingZoo AEC) |
 | `python/src/powergrid_env/single_agent.py` | `PowerGridSingleAgentEnv` (Gymnasium, vs Rust bots or frozen policy snapshots, native fast path) |
-| `python/src/powergrid_env/export.py` | `policy_state_dict_to_bytes` — PGRLPOL2 policy serialization (export script + self-play snapshots) |
+| `python/src/powergrid_env/export.py` | `policy_state_dict_to_bytes` / `policy_bytes_to_state_dict` — PGRLPOL2 policy (de)serialization: export script, self-play snapshots, and the behavior-clone warm start (`train_selfplay.py --init-policy-from`) |
 | `python/src/powergrid_env/policies/` | `RandomPolicy`, `RustBotPolicy` |
 | `python/scripts/train_selfplay.py` | Frozen-opponent self-play MaskablePPO training |
 | `python/scripts/train_vs_bots.py` | Single-agent MaskablePPO vs Rust bots |

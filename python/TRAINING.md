@@ -176,43 +176,78 @@ progress from the resumed checkpoint's step count rather than from zero.
 
 ### Sweeping several variants at once
 
-`scripts/sweep_selfplay.sh` launches 8 self-play variants in parallel, all
-resuming from one common checkpoint and differing in a single knob each
-(entropy, learning rate, terminal reward, league composition):
+`scripts/sweep_selfplay.sh` launches 8 self-play variants in parallel, each
+differing from a baseline arm in a single knob.
+
+**Wave 3 (2026-07-25) is a full reset.** The macro action space was rebuilt
+(build and buy are quantity ladders, powering is auto-resolved, `PGRLPOL1` →
+`PGRLPOL2`), so every prior checkpoint is invalid and there is no common
+ancestor left to resume from. The sweep now starts from a **behavior clone** of
+the champion heuristic and asks a different question: *given a policy that
+already plays like the `hard` bot, what finetuning recipe improves it instead of
+destroying it?*
+
+Build the clone first — the script does not create it:
+
+```bash
+python/.venv/bin/python -m alphazero.pretrain \
+    --games 400 --epochs 20 --net-width 128 \
+    --run-dir alphazero/runs/clone_w3 \
+    --export alphazero/runs/clone_w3/clone.bin
+```
+
+Then:
 
 ```bash
 ./scripts/sweep_selfplay.sh --list         # variant table
 ./scripts/sweep_selfplay.sh                # launch all 8 in the background
 ./scripts/sweep_selfplay.sh --status       # progress / best eval per variant
-./scripts/sweep_selfplay.sh --compare      # head-to-head vs the base model
+./scripts/sweep_selfplay.sh --compare      # ABSOLUTE: each variant vs 3x hard bots
+./scripts/sweep_selfplay.sh --h2h          # RELATIVE: each variant vs 3x the baseline arm
 ./scripts/sweep_selfplay.sh --stop
 ```
 
-Two things are held fixed across every variant, because the goal at this stage
-is beating *humans*, not bots:
+**The risk the sweep is designed around.** `--init-policy-from` loads only the
+three policy layers; the **value head stays randomly initialised**, so the first
+updates ride on meaningless advantages and can wreck a good clone before the
+critic catches up. Three arms are three different answers to that (gentle
+updates / fast critic / near-frozen policy), and one arm is a no-warm-start
+control that says whether the clone was load-bearing at all.
 
-- **No reward shaping.** The powered-cities bonus is a proxy for winning; past
-  a competent policy it optimises the proxy. The terminal reward is the whole
-  signal.
-- **Minimal bot contact.** The base model already wins ~75% vs normal bots, so
-  heuristics are no longer a training target — the league keeps at most a 5%
-  bot weight as an anchor against degenerate equilibria, and one variant drops
-  even that. Bots remain only as the eval yardstick, which never feeds back
-  into training.
+**What carried over from wave 2:** low-variance updates win (big batch 1024 and
+a constant 1e-4 lr, both inherited by every arm); entropy *up* collapses a good
+policy, so no arm exceeds 0.01; a mostly-historical league regresses, so the
+opponent axis is probed once, toward *more* bot contact.
 
-For the same reason, `eval/mean_reward` (vs normal bots) is a *saturating*
-progress signal here — use `--compare`, which plays each variant's
-`best_model` in seat 0 against three copies of the base model via
-`evaluate_lineup.py`. It prints a base-vs-base row first: four copies of the
-base model score ~27.5% in seat 0 over 200 games (seat-0 advantage plus ±3pp
-noise), so that, not 25%, is the line a variant has to beat. `COMPARE_GAMES`
-and `COMPARE_SEED` override the defaults.
+**What did not:** "bots are no longer a training target" is false now — a clone
+starts at roughly heuristic strength, so the `hard` bot is exactly the bar. That
+also means eval must run against `hard`, not `normal`: `--eval-difficulty`
+selects the eval opponent, and it matters beyond reporting because this metric
+picks `best_model`. Against an opponent the learner dominates, the score
+saturates and `best_model` degenerates into tracking eval noise — the wave-2
+"vs-bots eval misleads" finding, at its root.
 
-Each variant gets its own run dir under `runs/sweep1/` (own league, tb log and
-`best_model.zip`); the base run dir is never written to. `RESUME=1` restarts
-interrupted variants from their newest checkpoint with the remaining step
-budget. See the header of the script for the env-var knobs (`BASE_MODEL`,
-`TOTAL_TIMESTEPS`, `THREADS`, …); the defaults are sized for a 28-core machine.
+Two ranking commands, because they answer different questions:
+
+- `--compare` is the **absolute** yardstick: each variant's `best_model` in seat
+  0 against three `hard` bots, the bar the project aims at. It prints an
+  all-bots row first — four `hard` bots score seat 0's structural share (~25%
+  plus seat bias), so that, not 0, is the line to read against. Unlike wave 2's
+  vs-normal eval it does not saturate, because a clone starts near the bots' own
+  level.
+- `--h2h` is the **relative** ranking: each variant in seat 0 against three
+  copies of the baseline arm, for once several arms clear the bot bar.
+
+`COMPARE_GAMES` and `COMPARE_SEED` override the defaults for both.
+
+Each variant gets its own run dir under `runs/sweep3/` (own league, tb log and
+`best_model.zip`). Re-running is idempotent: launching is the same command as
+resuming, and each variant picks up from its own furthest readable checkpoint
+with the remaining step budget. **No league seeding** — snapshots from earlier
+waves are `PGRLPOL1` files from a dead layout epoch and are rejected on load, by
+design. See the header of the script for the env-var knobs (`CLONE`,
+`TOTAL_TIMESTEPS`, `NET_WIDTH`, `THREADS`, …); the defaults are sized for a
+28-core machine.
 
 ### End-game-cities curriculum
 

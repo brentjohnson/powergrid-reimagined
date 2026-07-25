@@ -72,6 +72,56 @@ def policy_state_dict_to_bytes(state_dict) -> bytes:
     return bytes(out)
 
 
+def policy_bytes_to_state_dict(blob: bytes) -> dict:
+    """Inverse of :func:`policy_state_dict_to_bytes` — read a PGRLPOL2 file back
+    into sb3 MaskablePPO policy-path keys.
+
+    Used to warm-start PPO from a behavior clone: the clone is trained outside
+    sb3 (``alphazero/pretrain.py``) but exports through this same format, so the
+    ``.bin`` is the interchange rather than a cross-package torch import. Only
+    the three policy layers are returned; the caller loads them with
+    ``strict=False`` and leaves the value head freshly initialised.
+
+    Raises ``ValueError`` on a stale layout epoch (wrong magic) or on dimensions
+    that do not match the encoding this build was compiled against — the same
+    guards ``MlpPolicy::from_bytes`` applies on the Rust side.
+    """
+    import numpy as np
+    import torch
+
+    header = 8 + 3 * 4
+    if len(blob) < header or blob[:8] != MAGIC:
+        raise ValueError(
+            f"not a {MAGIC.decode()} policy file (magic {blob[:8]!r}). A stale layout "
+            "epoch cannot be loaded: macro ids may have been renumbered under it."
+        )
+    obs_size, hidden, n_actions = struct.unpack("<III", blob[8:header])
+    if obs_size != OBS_SIZE or n_actions != N_ACTIONS:
+        raise ValueError(
+            f"policy is {obs_size}->{hidden}->{n_actions}, this build expects "
+            f"{OBS_SIZE}->*->{N_ACTIONS}"
+        )
+    shapes = [
+        ("mlp_extractor.policy_net.0.weight", (hidden, obs_size)),
+        ("mlp_extractor.policy_net.0.bias", (hidden,)),
+        ("mlp_extractor.policy_net.2.weight", (hidden, hidden)),
+        ("mlp_extractor.policy_net.2.bias", (hidden,)),
+        ("action_net.weight", (n_actions, hidden)),
+        ("action_net.bias", (n_actions,)),
+    ]
+    expected = header + sum(int(np.prod(sh)) for _, sh in shapes) * 4
+    if len(blob) != expected:
+        raise ValueError(f"policy file is {len(blob)} bytes, expected {expected}")
+
+    out, cursor = {}, header
+    for key, shape in shapes:
+        count = int(np.prod(shape))
+        arr = np.frombuffer(blob[cursor:cursor + count * 4], dtype="<f4").reshape(shape)
+        out[key] = torch.from_numpy(arr.astype("float32").copy())
+        cursor += count * 4
+    return out
+
+
 def _value_hidden_size(state_dict) -> int:
     return int(state_dict["mlp_extractor.value_net.0.weight"].shape[0])
 
