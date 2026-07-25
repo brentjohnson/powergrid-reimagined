@@ -44,7 +44,7 @@ SingleAgentEnv.reset()     ──►   Game.advance_bots(learner, diff)      (no
                                  Game.load_opponent_policy(bytes)      ("policy" mode)
 AECEnv.step()              ──►   Game.apply_action_id(actor, macro_id)
 AECEnv.observe()           ──►   Game.state_json(viewer) → GameStateView JSON
-AECEnv._mask()             ──►   Game.action_mask(actor) → np.uint8[26]
+AECEnv._mask()             ──►   Game.action_mask(actor) → np.uint8[29]
 RustBotPolicy.act()        ──►   Game.bot_decide_id(actor, difficulty)
 ```
 
@@ -95,7 +95,7 @@ for agent in env.agent_iter():
     if terminated or truncated:
         action = None
     else:
-        mask = info["action_mask"]          # np.ndarray of shape (26,), dtype int8
+        mask = info["action_mask"]          # np.ndarray of shape (29,), dtype int8
         action = env.action_space(agent).sample(mask)
     env.step(action)
 ```
@@ -112,15 +112,15 @@ for agent in env.agent_iter():
 
 **Spaces:**
 - `observation_space` → `Box(0.0, 1.0, (582,), float32)` — flat normalised feature vector
-- `action_space` → `Discrete(26)` — macro actions, see table below
+- `action_space` → `Discrete(29)` — macro actions, see table below
 
 **Rewards:** sparse — `+1.0` to winner, `-1.0` to all others at game end; `0.0` every other step.
 
 ---
 
-## Action encoding — macro actions (N = 26)
+## Action encoding — macro actions (N = 29)
 
-The policy does **not** choose primitive game moves. It chooses one complete **phase-plan per turn** from a fixed menu of 26 macros; each expands natively into a short primitive sequence the engine already accepts as a whole-turn batch (`BuildCities`, `BuyResourceBatch`). A game is ~50 macro decisions instead of ~600 primitive ones, which removes the compounding-error tax that capped every earlier learner.
+The policy does **not** choose primitive game moves. It chooses one complete **phase-plan per turn** from a fixed menu of 29 macros; each expands natively into a short primitive sequence the engine already accepts as a whole-turn batch (`BuildCities`, `BuyResourceBatch`). A game is ~50 macro decisions instead of ~600 primitive ones, which removes the compounding-error tax that capped every earlier learner.
 
 > **History:** until the Phase-2 rebuild this was a 94-id *primitive* space (`BuildCity` per city, `BuyResources` per unit, etc.). It was removed, not extended. Any policy trained against it is incompatible.
 
@@ -131,13 +131,11 @@ The policy does **not** choose primitive game moves. It chooses one complete **p
 | 7 | `AUCTION_RAISE` | Raise +1 over the standing bid (English-auction convention). No jump bids — self-play with a ±50 raise range learned large non-strategic jumps |
 | 8–14 | `BUILD_COUNT_BASE + n`, n = 0…6 | Build the **n cheapest** reachable cities you can pay for. `n = 0` is `DoneBuilding`. Cash is the only limit — no reserve is withheld |
 | 15 | `BUILD_DEFAULT` | Whatever the champion `hard` heuristic would build, **bit-exactly** (Gate 0). Last id so dedup prefers the explicit count; in practice a count always reproduces it, so this is dead weight kept as a safety valve for >6-city plans |
-| 16 | `BUY_NOTHING` | `DoneBuying` |
-| 17 | `BUY_DEFAULT` | The heuristic's resource batch, bit-exactly |
-| 18–19 | `BUY_STOCKPILE2/3` | The heuristic with `stockpile_rounds` forced to 2 / 3 rounds of fuel |
-| 20 | `BUY_DENIAL` | Buy out the resource with the highest forward price, to deny it to opponents |
-| 21–23 | `DISCARD_PLANT` slot 0–2 | Index into the player's plants sorted by number; forced when winning a 4th plant |
-| 24 | `POWER_OPTIMAL` | The heuristic's optimal firing subset |
-| 25 | `POWER_NOTHING` | Power no cities (earn minimum income) |
+| 16–22 | `BUY_COUNT_BASE + n`, n = 0…6 | Buy **n units of fuel**: the rack's firing needs first (the heuristic's own fill order), then a cheapest-burnable stockpile. `n = 0` is an empty batch. Cash is the only limit |
+| 23 | `BUY_DEFAULT` | The heuristic's resource batch, bit-exactly. Last id so dedup prefers the count; in practice it survives only for the >6-unit tail |
+| 24–26 | `DISCARD_PLANT` slot 0–2 | Index into the player's plants sorted by number; forced when winning a 4th plant |
+| 27 | `POWER_OPTIMAL` | The heuristic's optimal firing subset |
+| 28 | `POWER_NOTHING` | Power no cities (earn minimum income) |
 
 **Auto-resolved phases.** `PowerCitiesFuel` (hybrid gas/oil split) and `DiscardResource` (hybrid-slot overflow) are minor tactical steps with no strategic content, so `macro_actions::resolve_auto_phases` settles them with the heuristic. They never consume a policy decision and have no macro ids.
 
@@ -157,10 +155,10 @@ What the policy actually gets to decide, per phase, and how much of the menu is 
 
 | Phase | Decisions / game (4 seats) | Live options (avg) | Menu size |
 |---|---:|---:|---:|
-| Auction — nominate | 37.4 | **5.01** | 7 |
+| Auction — nominate | 37.4 | 5.01 | 7 |
 | Auction — bidding | 45.2 | 2.00 | 2 |
-| BuyResources | 37.4 | 2.39 | 5 |
-| BuildCities | 37.4 | **2.99** | 8 |
+| BuyResources | 37.4 | **6.04** | 8 |
+| BuildCities | 37.4 | 2.99 | 8 |
 | Bureaucracy (power) | 37.4 | 2.00 | 2 |
 | DiscardPlant | 12.8 | not sampled | 3 |
 
@@ -192,21 +190,23 @@ Two consequences worth knowing before training on this:
 
 There is also a structural split: *which plant to nominate* and *how much it is worth* are separate decisions, made at different times, with other players' turns in between. The policy cannot express "nominate slot 3, willing to go to 25."
 
-### Resources — nominally 5 options, effectively binary
+### Resources — a quantity ladder (post-rewrite)
 
-| | BUY_NOTHING | BUY_DEFAULT | STOCKPILE2 | STOCKPILE3 | DENIAL |
-|---|---:|---:|---:|---:|---:|
-| legal | 100% | 100% | 2.1% | 0.1% | 36.4% |
-| teacher picks | 0.0% | **100%** | 0.0% | 0.0% | 0.0% |
+| | BUY_0 | BUY_1 | BUY_2 | BUY_3 | BUY_4 | BUY_5 | BUY_6 | DEFAULT |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| legal | 100% | 98.1% | 95.9% | 88.8% | 84.4% | 69.7% | 62.6% | 4.5% |
+| teacher picks | 5.7% | 14.4% | 18.6% | **21.1%** | 17.9% | 11.4% | 6.3% | 4.5% |
 
-The teacher plays `BUY_DEFAULT` in **every single** buy decision across all 748 samples. The three alternatives contribute almost nothing:
+At **6.04 live options** this is now the widest menu in the game, ahead of nominating. The rungs walk the heuristic's own fill order (`strategy::plan_essential_buys` with a unit cap — shared code, not a reimplementation), so the teacher's label reproduces bit-exactly and its distribution matches the heuristic's measured unit histogram term for term. `BUY_DEFAULT` survives dedup in exactly the 4.5% of decisions where the heuristic buys 7–8 units, which is precisely the safety-valve role intended for it.
 
-- **`STOCKPILE2/3` are near-dead by construction.** Plant storage caps at 2× firing cost, so "hold more rounds of fuel" usually *cannot* differ from the default buy — you physically can't store it. Measured: `STOCKPILE2`'s expansion differs from `BUY_DEFAULT` in only **2.1%** of decisions, `STOCKPILE3` in 0.1%.
-- **`BUY_DENIAL` is structurally broken.** It differs from the default in 99.9% of decisions but is legal in only 36.4%. Cause: it targets the resource with the highest expected unit price, which is **uranium 59.4%** of the time, and the actor cannot store *any* of the chosen target in **61.8%** of decisions — so it produces `DoneBuying` and is deduped against `BUY_NOTHING`. More fundamentally, denial is weak in Power Grid by design: you can only hoard fuel you can burn, so you cannot starve a rival of a resource your own rack doesn't use.
+Two rules make the ladder work, both mirroring the build ladder:
 
-This is the same disease the build menu had before the count-ladder rewrite: a menu whose alternatives are unreachable, leaving nothing-or-heuristic.
+- **Cash is the only limit.** No reserve is withheld. The heuristic's own stockpile pass sits behind a `city_reserve + safety_buffer` gate — 140 Elektro for the champion profile — which is why the *n*>essential rungs are reachable here and were not before.
+- **Only burnable fuel is bought.** Fuel the rack cannot fire is strictly wasted money, and hoarding to starve opponents is structurally weak in Power Grid anyway: storage caps at 2× firing cost, so you cannot deny a resource your own plants don't use.
 
-**What the menu is missing.** `BuyResources` runs *before* `BuildCities` in the round, so this is where the cash split between fuel and cities is actually decided — and there is no way to express it. The teacher's actual buys are small and varied (avg 9.4 Elektro, 0–8 units, mode 3), which is a real distribution the current five ids cannot span. The step-2 treatment applied here would be a **quantity ladder** — buy fuel for n rounds of firing, or spend up to n/k of cash — replacing all three alternatives.
+This is where the round's cash split is actually decided — `BuyResources` runs *before* `BuildCities`, so every Elektro spent on fuel is one unavailable for cities. The ladder is the first encoding that lets the policy express that tradeoff.
+
+> **What was replaced.** The previous menu — `BUY_NOTHING`, `BUY_DEFAULT`, `BUY_STOCKPILE2/3`, `BUY_DENIAL` — offered 2.39 live options and the teacher chose `BUY_DEFAULT` in **100%** of 748 decisions. `STOCKPILE2/3` could differ from the default in only 2.1% / 0.1% of decisions (storage caps at 2× firing cost, so "more rounds of fuel" is usually unstorable). `BUY_DENIAL` differed 99.9% of the time but was legal only 36.4%: it targeted the priciest fuel, uranium 59.4% of the time, which the actor could not store *at all* in 61.8% of decisions — collapsing to a no-op that deduped against `BUY_NOTHING`.
 
 ### Cities — a clean count ladder (post-rewrite)
 
@@ -236,11 +236,13 @@ The count is the strategic axis for two reasons the observation can support: mor
 |---|---|---:|
 | Auction — nominate | (spread across 7) | 33.8% |
 | **Auction — bidding** | `AUCTION_PASS` | **99.7%** |
-| **BuyResources** | `BUY_DEFAULT` | **100%** |
+| BuyResources | (spread across 8) | 21.1% |
 | BuildCities | (spread across 6) | 42.8% |
 | **Bureaucracy** | `POWER_OPTIMAL` | **100%** |
 
-Behavior cloning and DAgger can only teach the two phases with a varied label — nominating and building. For bidding, buying, and powering, the teacher is a constant function, so a clone learns a constant and every deviation must come from self-play against a prior that is maximally confident and wrong-by-omission. Ranked by expected value, the open work is: (1) give the buy phase a real ladder, (2) make contested bidding representable in fewer decisions, (3) allow partial powering.
+Behavior cloning and DAgger can only teach a phase whose label actually varies. Three now do — nominating, buying, and building — after the build and buy ladders converted two constant labels into real distributions.
+
+Two remain constant. For bidding and powering the teacher is a constant function, so a clone learns that constant and every deviation must come from self-play against a prior that is maximally confident and wrong-by-omission. The open work, in order: (1) make contested bidding representable in fewer decisions, (2) allow partial powering.
 
 ---
 
@@ -330,7 +332,7 @@ make test
 |---|---|
 | `crates/powergrid-py/Cargo.toml` | PyO3 crate manifest (pyo3 0.28, cdylib) |
 | `crates/powergrid-py/src/lib.rs` | `Game` class: native obs/mask/step methods (`observation`, `action_mask`, `apply_action_id`, `step_vs_bots`), `bot_decide_id`, `copy`, etc. |
-| `crates/powergrid-bot-strategy/src/macro_actions.rs` | The 26-macro action space: expansion, legality + dedup, teacher labels |
+| `crates/powergrid-bot-strategy/src/macro_actions.rs` | The 29-macro action space: expansion, legality + dedup, teacher labels |
 | `python/pyproject.toml` | Python package metadata (hatchling build backend) |
 | `python/Makefile` | `make develop` = build Rust + install Python |
 | `python/TRAINING.md` | Step-by-step training runbook |

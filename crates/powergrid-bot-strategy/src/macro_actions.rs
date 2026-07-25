@@ -24,10 +24,10 @@ use std::sync::OnceLock;
 use powergrid_core::{
     actions::{Action, ActionError},
     state::GameState,
-    types::{connection_cost, Phase, PlayerColor, PlayerId},
+    types::{connection_cost, Phase, PlantKind, Player, PlayerColor, PlayerId, Resource},
 };
 
-use crate::{embedded_registry, features, strategy, Bot, BotProfile};
+use crate::{embedded_registry, strategy, Bot, BotProfile};
 
 // ---------------------------------------------------------------------------
 // Macro id layout (flat, masked per phase)
@@ -64,20 +64,37 @@ pub const N_BUILD_COUNT: u16 = 7;
 /// a future profile whose ordering isn't plain cheapest-first).
 pub const BUILD_DEFAULT: u16 = 15;
 
-pub const BUY_NOTHING: u16 = 16;
-pub const BUY_DEFAULT: u16 = 17;
-pub const BUY_STOCKPILE2: u16 = 18;
-pub const BUY_STOCKPILE3: u16 = 19;
-pub const BUY_DENIAL: u16 = 20;
+/// Buy `n` units of fuel, `n = id - BUY_COUNT_BASE` in `0..=6`. `n = 0` is an
+/// empty batch (the same primitive the heuristic emits when it buys nothing).
+///
+/// The quantity ladder, mirroring [`BUILD_COUNT_BASE`]. *Which* units to buy is
+/// near-forced — the rack's plants dictate the fuel types, and within that the
+/// heuristic's canonical fill order applies — so **how many** is the decision.
+/// It is also where the round's cash split is actually made: `BuyResources` runs
+/// *before* `BuildCities`, so every Elektro spent on fuel is one unavailable for
+/// cities, and the old menu had no way to express that tradeoff.
+///
+/// Replaces `BUY_NOTHING`/`BUY_STOCKPILE2`/`BUY_STOCKPILE3`/`BUY_DENIAL`, which
+/// measured near-dead: the teacher chose `BUY_DEFAULT` in **100%** of 748 sampled
+/// decisions. `STOCKPILE2/3` could rarely differ from the default at all (2.1% /
+/// 0.1%) because plant storage caps at 2× firing cost and the heuristic's
+/// stockpile pass sits behind a 140-Elektro reserve; `DENIAL` targeted the
+/// priciest fuel — uranium 59.4% of the time — which the actor could not store at
+/// all in 61.8% of decisions, so it collapsed to a no-op and was deduped away.
+pub const BUY_COUNT_BASE: u16 = 16;
+pub const N_BUY_COUNT: u16 = 7;
+/// Buy exactly what the champion heuristic would. Last buy id for the same
+/// reason as [`BUILD_DEFAULT`]: dedup then prefers the explicit count.
+pub const BUY_DEFAULT: u16 = 23;
 
 /// Discard one owned plant (when a 4th was just bought): slot 0..=2 by number.
-pub const DISCARD_PLANT_BASE: u16 = 21;
+pub const DISCARD_PLANT_BASE: u16 = 24;
 pub const N_DISCARD_PLANT: u16 = 3;
 
-pub const POWER_OPTIMAL: u16 = 24;
-pub const POWER_NOTHING: u16 = 25;
+pub const POWER_OPTIMAL: u16 = 27;
+pub const POWER_NOTHING: u16 = 28;
 
-pub const N_MACROS: usize = 26;
+pub const N_MACROS: usize = 29;
 
 // ---------------------------------------------------------------------------
 // Canonical expansion profile
@@ -98,13 +115,6 @@ fn expansion_profile() -> &'static BotProfile {
 
 fn expansion_bot(actor: PlayerId) -> Bot {
     let profile = expansion_profile().clone();
-    Bot::new(actor, "expand".into(), PlayerColor::Red, profile, 0)
-}
-
-/// A profile clone with a specific stockpile setting (for the buy variants).
-fn stockpile_bot(actor: PlayerId, rounds: f32) -> Bot {
-    let mut profile = expansion_profile().clone();
-    profile.buy.stockpile_rounds = rounds;
     Bot::new(actor, "expand".into(), PlayerColor::Red, profile, 0)
 }
 
@@ -227,15 +237,20 @@ fn build_from_ids(ids: Vec<String>) -> Option<Vec<Action>> {
 }
 
 fn expand_buy(state: &GameState, actor: PlayerId, macro_id: u16) -> Option<Vec<Action>> {
-    let action = match macro_id {
-        BUY_NOTHING => return Some(vec![Action::DoneBuying]),
-        BUY_DEFAULT => heuristic_action(state, actor)?,
-        BUY_STOCKPILE2 => strategy::decide_with_bot(state, &mut stockpile_bot(actor, 2.0))?,
-        BUY_STOCKPILE3 => strategy::decide_with_bot(state, &mut stockpile_bot(actor, 3.0))?,
-        BUY_DENIAL => return Some(vec![denial_buy(state, actor)]),
-        _ => return None,
-    };
-    Some(vec![action])
+    if macro_id == BUY_DEFAULT {
+        return Some(vec![heuristic_action(state, actor)?]);
+    }
+    if (BUY_COUNT_BASE..BUY_COUNT_BASE + N_BUY_COUNT).contains(&macro_id) {
+        let n = (macro_id - BUY_COUNT_BASE) as usize;
+        // Always a batch, never `DoneBuying`: the engine treats an empty batch as
+        // "skip buying", and it is the exact primitive the heuristic emits when it
+        // buys nothing — so `BUY_0` dedups cleanly against that instead of sitting
+        // beside it as a second, bit-different way to say the same thing.
+        return Some(vec![Action::BuyResourceBatch {
+            purchases: buy_units(state, actor, n),
+        }]);
+    }
+    None
 }
 
 fn expand_discard(state: &GameState, actor: PlayerId, macro_id: u16) -> Option<Vec<Action>> {
@@ -356,60 +371,101 @@ fn cheapest_cities(state: &GameState, actor: PlayerId, n: usize) -> Vec<String> 
 }
 
 // ---------------------------------------------------------------------------
-// Alternative buy plan: denial
+// Buy quantity ladder
 // ---------------------------------------------------------------------------
 
-/// Buy out as much as affordable of the resource with the highest forward price
-/// (the most contested / depleting fuel), to deny it to opponents. Falls back to
-/// the default buy if nothing is contested.
-fn denial_buy(state: &GameState, actor: PlayerId) -> Action {
-    use powergrid_core::types::Resource;
-    let Some(player) = state.player(actor) else {
-        return Action::DoneBuying;
-    };
-    let resources = [
-        Resource::Coal,
-        Resource::Oil,
-        Resource::Gas,
-        Resource::Uranium,
-    ];
-    let target = resources
-        .into_iter()
-        .max_by(|&a, &b| {
-            features::expected_unit_price(a, state)
-                .partial_cmp(&features::expected_unit_price(b, state))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .unwrap_or(Resource::Coal);
+/// True if the rack can actually burn `r` — hybrids burn both gas and oil.
+fn burnable(player: &Player, r: Resource) -> bool {
+    player.plants.iter().any(|p| {
+        matches!(
+            (p.kind, r),
+            (PlantKind::Coal, Resource::Coal)
+                | (PlantKind::Oil, Resource::Oil)
+                | (PlantKind::Gas, Resource::Gas)
+                | (PlantKind::Uranium, Resource::Uranium)
+                | (PlantKind::GasOrOil, Resource::Gas | Resource::Oil)
+        )
+    })
+}
 
-    // Buy as many units of `target` as money/availability/storage allow, one at
-    // a time, simulating the market + player on clones (same primitives the
-    // heuristic's `try_buy` uses). Collapsed into one (target, count) batch.
+/// The `n` fuel units to buy, walking the heuristic's own ordering.
+///
+/// Two segments, in order:
+/// 1. **Essential** — the rack's needs for the coming firing, via
+///    `strategy::plan_essential_buys` with a unit cap. Shared with the heuristic
+///    rather than re-derived, so the ladder's low rungs cannot drift from the
+///    teacher's cumulative hybrid-pool bookkeeping.
+/// 2. **Stockpile** — if `n` exceeds the essential need, keep buying the cheapest
+///    single unit the rack can *burn* and store, one at a time so the rising
+///    price track is respected.
+///
+/// Cash is the only limit, exactly as in [`greedy_pick`]: no reserve is withheld,
+/// because the count is the policy's decision. (The heuristic's own stockpile pass
+/// is gated behind `city_reserve + safety_buffer`, 140 Elektro for the champion
+/// profile — which is why `BUY_STOCKPILE2/3` could almost never differ from the
+/// default and had to go.) Fuel the rack cannot burn is never bought: it can never
+/// be fired, so it is strictly wasted money, and hoarding to deny opponents is
+/// structurally weak here because storage caps at 2x firing cost.
+fn buy_units(state: &GameState, actor: PlayerId, n: usize) -> Vec<(Resource, u8)> {
+    let Some(player) = state.player(actor) else {
+        return Vec::new();
+    };
+    if n == 0 {
+        return Vec::new();
+    }
+    let n = n.min(u8::MAX as usize) as u8;
+
+    let mut purchases: Vec<(Resource, u8)> = Vec::new();
     let mut sim_market = state.resources.clone();
     let mut sim_player = player.clone();
     let mut budget = player.money;
-    let mut count: u8 = 0;
-    for _ in 0..24 {
-        if sim_market.available(target) == 0 || !sim_player.can_add_resource(target, 1) {
-            break;
+
+    strategy::plan_essential_buys(
+        &mut sim_market,
+        &mut sim_player,
+        &mut budget,
+        &mut purchases,
+        Some(n),
+    );
+
+    let bought: u8 = purchases.iter().map(|(_, c)| *c).sum();
+    let mut remaining = n.saturating_sub(bought);
+
+    while remaining > 0 {
+        // Cheapest next unit among burnable, storable, affordable fuels. Fixed
+        // resource order + strict `<` makes ties resolve deterministically.
+        let mut best: Option<(Resource, u32)> = None;
+        for r in [
+            Resource::Coal,
+            Resource::Oil,
+            Resource::Gas,
+            Resource::Uranium,
+        ] {
+            if !burnable(&sim_player, r)
+                || sim_market.available(r) == 0
+                || !sim_player.can_add_resource(r, 1)
+            {
+                continue;
+            }
+            let Some(price) = sim_market.price(r, 1) else {
+                continue;
+            };
+            if price > budget {
+                continue;
+            }
+            if best.is_none_or(|(_, p)| price < p) {
+                best = Some((r, price));
+            }
         }
-        let Some(cost) = sim_market.price(target, 1) else {
-            break;
-        };
-        if cost > budget {
-            break;
-        }
-        sim_market.take(target, 1);
-        sim_player.resources.add(target, 1);
-        budget -= cost;
-        count += 1;
+        let Some((r, price)) = best else { break };
+        sim_market.take(r, 1);
+        sim_player.resources.add(r, 1);
+        budget -= price;
+        purchases.push((r, 1));
+        remaining -= 1;
     }
-    if count == 0 {
-        return Action::DoneBuying;
-    }
-    Action::BuyResourceBatch {
-        purchases: vec![(target, count)],
-    }
+
+    purchases
 }
 
 // ---------------------------------------------------------------------------
@@ -503,14 +559,17 @@ pub fn teacher_macro_id(state: &GameState, actor: PlayerId) -> Option<u16> {
                 .find(|&id| expand_macro(state, actor, id).as_ref() == Some(&expected))
                 .unwrap_or(BUILD_DEFAULT)
         }
-        Phase::BuyResources { .. } => match &action {
-            Action::DoneBuying => BUY_NOTHING,
-            // Empty or non-empty batch: BUY_DEFAULT expands to this exact action
-            // (an empty batch is bit-different from DoneBuying, so it must NOT map
-            // to BUY_NOTHING).
-            Action::BuyResourceBatch { .. } | Action::BuyResources { .. } => BUY_DEFAULT,
-            _ => return None,
-        },
+        // Buy: same dedup-aware scan as the build ladder. The count rungs walk the
+        // heuristic's own fill order (`plan_essential_buys`), so whenever the
+        // teacher's batch is `n` units a rung reproduces it exactly and shadows
+        // `BUY_DEFAULT`; `BUY_DEFAULT` remains the label only when the heuristic
+        // buys more than 6 units or reaches its stockpile pass.
+        Phase::BuyResources { .. } => {
+            let expected = vec![action.clone()];
+            (BUY_COUNT_BASE..BUY_COUNT_BASE + N_BUY_COUNT)
+                .find(|&id| expand_macro(state, actor, id).as_ref() == Some(&expected))
+                .unwrap_or(BUY_DEFAULT)
+        }
         Phase::DiscardPlant { .. } => match &action {
             Action::DiscardPlant { plant_number } => {
                 let player = state.player(actor)?;

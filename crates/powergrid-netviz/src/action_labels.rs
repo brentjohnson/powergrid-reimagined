@@ -2,9 +2,9 @@
 //! (`powergrid_bot_strategy::macro_actions`), used by the netviz output panel.
 
 use powergrid_bot_strategy::macro_actions::{
-    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_DEFAULT, BUY_DENIAL,
-    BUY_NOTHING, BUY_STOCKPILE2, BUY_STOCKPILE3, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT,
-    N_DISCARD_PLANT, N_NOMINATE, POWER_NOTHING, POWER_OPTIMAL,
+    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_COUNT_BASE, BUY_DEFAULT,
+    DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT, N_BUY_COUNT, N_DISCARD_PLANT, N_NOMINATE,
+    POWER_NOTHING, POWER_OPTIMAL,
 };
 
 /// Human-readable label for macro id `id` (0..N_ACTIONS).
@@ -23,11 +23,13 @@ pub fn action_label(id: usize) -> String {
                 n => format!("Build:{n} cheapest"),
             }
         }
-        BUY_NOTHING => "Buy:Nothing".to_string(),
         BUY_DEFAULT => "Buy:Default".to_string(),
-        BUY_STOCKPILE2 => "Buy:Stockpile2".to_string(),
-        BUY_STOCKPILE3 => "Buy:Stockpile3".to_string(),
-        BUY_DENIAL => "Buy:Denial".to_string(),
+        i if (BUY_COUNT_BASE..BUY_COUNT_BASE + N_BUY_COUNT).contains(&i) => {
+            match i - BUY_COUNT_BASE {
+                0 => "Buy:Nothing".to_string(),
+                n => format!("Buy:{n} units"),
+            }
+        }
         i if (DISCARD_PLANT_BASE..DISCARD_PLANT_BASE + N_DISCARD_PLANT).contains(&i) => {
             format!("DiscardPlant[slot {}]", i - DISCARD_PLANT_BASE)
         }

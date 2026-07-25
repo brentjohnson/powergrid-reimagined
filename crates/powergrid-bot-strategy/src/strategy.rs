@@ -396,8 +396,68 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
     let mut sim_player = player.clone();
     let mut budget = player.money;
 
+    plan_essential_buys(
+        &mut sim_market,
+        &mut sim_player,
+        &mut budget,
+        &mut purchases,
+        None,
+    );
+
+    // Pass 3: stockpile cheap fuel ahead of future dearness. The essential
+    // passes above cover only the coming firing; this spends *surplus* cash
+    // (above a city-build reserve) to pre-buy fuel that is currently cheaper
+    // than its forward-expected price, up to `stockpile_rounds` of storage.
+    let stockpile_rounds = bot.profile.buy.stockpile_rounds;
+    if stockpile_rounds > 1.0 {
+        let reserve =
+            bot.profile.auction.city_reserve as u32 + bot.profile.auction.safety_buffer as u32;
+        stockpile_cheap_fuel(
+            state,
+            &mut sim_player,
+            &mut sim_market,
+            &mut budget,
+            &mut purchases,
+            reserve,
+            stockpile_rounds,
+        );
+    }
+
+    if purchases.is_empty() {
+        info!("Buy resources: nothing to buy, done");
+    } else {
+        let total = state.resources.batch_price(&purchases).unwrap_or(0);
+        info!(
+            "Buy resources: {:?} for ~{} elektro (have {})",
+            purchases, total, player.money
+        );
+    }
+
+    Some(Action::BuyResourceBatch { purchases })
+}
+
+/// The heuristic's **essential** fuel plan: buy exactly what the rack needs for
+/// the coming firing, in the canonical order (passes 1 and 2 of
+/// [`decide_buy_resources`]). Factored out so the macro layer's buy-quantity
+/// ladder can walk the *same* ordering and stop early, instead of re-deriving
+/// the cumulative hybrid-pool bookkeeping and drifting from it.
+///
+/// `max_units` caps the total units purchased; `None` (what the heuristic passes)
+/// means uncapped, and reproduces the previous behaviour exactly.
+pub(crate) fn plan_essential_buys(
+    sim_market: &mut ResourceMarket,
+    sim_player: &mut Player,
+    budget: &mut u32,
+    purchases: &mut Vec<(Resource, u8)>,
+    max_units: Option<u8>,
+) {
+    let mut unit_budget = max_units;
+    if unit_budget == Some(0) {
+        return;
+    }
+
     // Most cities first; break ties by plant number (smaller = cheaper to fuel).
-    let mut plants = player.plants.clone();
+    let mut plants = sim_player.plants.clone();
     plants.sort_by(|a, b| b.cities.cmp(&a.cities).then(a.number.cmp(&b.number)));
 
     // `buy_for_plant` raises a *shared* fuel pool up to `target` total units, so the
@@ -438,10 +498,11 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
         buy_for_plant(
             plant,
             target,
-            &mut sim_market,
-            &mut sim_player,
-            &mut budget,
-            &mut purchases,
+            sim_market,
+            sim_player,
+            budget,
+            purchases,
+            &mut unit_budget,
         );
     }
 
@@ -452,46 +513,17 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
         buy_for_plant(
             plant,
             gasoil_combined_target,
-            &mut sim_market,
-            &mut sim_player,
-            &mut budget,
-            &mut purchases,
+            sim_market,
+            sim_player,
+            budget,
+            purchases,
+            &mut unit_budget,
         );
     }
-
-    // Pass 3: stockpile cheap fuel ahead of future dearness. The essential
-    // passes above cover only the coming firing; this spends *surplus* cash
-    // (above a city-build reserve) to pre-buy fuel that is currently cheaper
-    // than its forward-expected price, up to `stockpile_rounds` of storage.
-    let stockpile_rounds = bot.profile.buy.stockpile_rounds;
-    if stockpile_rounds > 1.0 {
-        let reserve =
-            bot.profile.auction.city_reserve as u32 + bot.profile.auction.safety_buffer as u32;
-        stockpile_cheap_fuel(
-            state,
-            &mut sim_player,
-            &mut sim_market,
-            &mut budget,
-            &mut purchases,
-            reserve,
-            stockpile_rounds,
-        );
-    }
-
-    if purchases.is_empty() {
-        info!("Buy resources: nothing to buy, done");
-    } else {
-        let total = state.resources.batch_price(&purchases).unwrap_or(0);
-        info!(
-            "Buy resources: {:?} for ~{} elektro (have {})",
-            purchases, total, player.money
-        );
-    }
-
-    Some(Action::BuyResourceBatch { purchases })
 }
 
 /// Bring `plant`'s fuel level up to `target` by purchasing from the simulated market.
+#[allow(clippy::too_many_arguments)]
 fn buy_for_plant(
     plant: &PowerPlant,
     target: u8,
@@ -499,18 +531,38 @@ fn buy_for_plant(
     player: &mut Player,
     budget: &mut u32,
     purchases: &mut Vec<(Resource, u8)>,
+    unit_budget: &mut Option<u8>,
 ) {
+    if *unit_budget == Some(0) {
+        return;
+    }
     match plant.kind {
         PlantKind::Coal => {
             let want = target.saturating_sub(player.resources.coal);
             if want > 0 {
-                try_buy(Resource::Coal, want, market, player, budget, purchases);
+                try_buy(
+                    Resource::Coal,
+                    want,
+                    market,
+                    player,
+                    budget,
+                    purchases,
+                    unit_budget,
+                );
             }
         }
         PlantKind::Oil => {
             let want = target.saturating_sub(player.resources.oil);
             if want > 0 {
-                try_buy(Resource::Oil, want, market, player, budget, purchases);
+                try_buy(
+                    Resource::Oil,
+                    want,
+                    market,
+                    player,
+                    budget,
+                    purchases,
+                    unit_budget,
+                );
             }
         }
         PlantKind::GasOrOil => {
@@ -526,23 +578,47 @@ fn buy_for_plant(
             } else {
                 (Resource::Gas, Resource::Oil)
             };
-            try_buy(first, want, market, player, budget, purchases);
+            try_buy(first, want, market, player, budget, purchases, unit_budget);
             let combined = player.resources.gas.saturating_add(player.resources.oil);
             let remaining = target.saturating_sub(combined);
             if remaining > 0 {
-                try_buy(second, remaining, market, player, budget, purchases);
+                try_buy(
+                    second,
+                    remaining,
+                    market,
+                    player,
+                    budget,
+                    purchases,
+                    unit_budget,
+                );
             }
         }
         PlantKind::Gas => {
             let want = target.saturating_sub(player.resources.gas);
             if want > 0 {
-                try_buy(Resource::Gas, want, market, player, budget, purchases);
+                try_buy(
+                    Resource::Gas,
+                    want,
+                    market,
+                    player,
+                    budget,
+                    purchases,
+                    unit_budget,
+                );
             }
         }
         PlantKind::Uranium => {
             let want = target.saturating_sub(player.resources.uranium);
             if want > 0 {
-                try_buy(Resource::Uranium, want, market, player, budget, purchases);
+                try_buy(
+                    Resource::Uranium,
+                    want,
+                    market,
+                    player,
+                    budget,
+                    purchases,
+                    unit_budget,
+                );
             }
         }
         PlantKind::Wind => {}
@@ -550,6 +626,7 @@ fn buy_for_plant(
 }
 
 /// Attempt to purchase up to `want` units, degrading gracefully on budget/storage limits.
+#[allow(clippy::too_many_arguments)]
 fn try_buy(
     resource: Resource,
     want: u8,
@@ -557,7 +634,13 @@ fn try_buy(
     player: &mut Player,
     budget: &mut u32,
     purchases: &mut Vec<(Resource, u8)>,
+    unit_budget: &mut Option<u8>,
 ) {
+    // A capped walk stops mid-plan; `None` (the heuristic) is uncapped.
+    let want = match unit_budget {
+        Some(u) => want.min(*u),
+        None => want,
+    };
     // Keep buying chunks until `want` is satisfied or nothing more can be bought —
     // a single chunk can fall short of `want` under budget/storage pressure (e.g. the
     // largest affordable chunk is smaller than `want`), and settling for that first
@@ -582,6 +665,9 @@ fn try_buy(
                     player.resources.add(resource, n);
                     *budget -= cost;
                     remaining -= n;
+                    if let Some(u) = unit_budget {
+                        *u = u.saturating_sub(n);
+                    }
                     bought = true;
                     break;
                 }
@@ -964,6 +1050,7 @@ mod tests {
             &mut player,
             &mut budget,
             &mut purchases,
+            &mut None,
         );
 
         let coal_bought: u8 = purchases
@@ -999,6 +1086,7 @@ mod tests {
             &mut player,
             &mut budget,
             &mut purchases,
+            &mut None,
         );
 
         let gas_bought: u8 = purchases
@@ -1031,6 +1119,7 @@ mod tests {
             &mut player,
             &mut budget,
             &mut purchases,
+            &mut None,
         );
 
         let coal_bought: u8 = purchases
@@ -1063,6 +1152,7 @@ mod tests {
             &mut player,
             &mut budget,
             &mut purchases,
+            &mut None,
         );
 
         let gas_bought: u8 = purchases
@@ -1357,6 +1447,7 @@ mod tests {
             &mut player,
             &mut budget,
             &mut purchases,
+            &mut None,
         );
 
         let coal_bought: u8 = purchases

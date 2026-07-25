@@ -76,16 +76,19 @@ BUILD_COUNT_BASE = 8
 N_BUILD_COUNT   = 7   # n in 0..=6
 BUILD_NOTHING   = BUILD_COUNT_BASE      # alias: n = 0
 BUILD_DEFAULT   = 15
-BUY_NOTHING     = 16
-BUY_DEFAULT     = 17
-BUY_STOCKPILE2  = 18
-BUY_STOCKPILE3  = 19
-BUY_DENIAL      = 20
-DISCARD_PLANT_BASE = 21  # 21..23: discard owned plant slot 0..2 (by number)
+# Buy: the same quantity-ladder shape as build — "how many units of fuel".
+# BUY_COUNT_BASE + n buys exactly n units, walking the heuristic's own fill
+# order (rack needs first, then cheapest burnable stockpile); n = 0 is an empty
+# batch. BUY_DEFAULT is the heuristic's own plan, last so dedup prefers the count.
+BUY_COUNT_BASE  = 16
+N_BUY_COUNT     = 7   # n in 0..=6
+BUY_NOTHING     = BUY_COUNT_BASE        # alias: n = 0
+BUY_DEFAULT     = 23
+DISCARD_PLANT_BASE = 24  # 24..26: discard owned plant slot 0..2 (by number)
 N_DISCARD_PLANT = 3
-POWER_OPTIMAL   = 24
-POWER_NOTHING   = 25
-N_ACTIONS       = 26
+POWER_OPTIMAL   = 27
+POWER_NOTHING   = 28
+N_ACTIONS       = 29
 
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +
