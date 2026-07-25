@@ -168,6 +168,32 @@ fn begin_auction(state: &mut GameState) {
     };
 }
 
+/// Build the bidding rotation for a freshly nominated plant.
+///
+/// Nominating a plant follows turn order (`state.player_order`), but the bidding
+/// itself goes *clockwise around the table* — the fixed seating order, which is
+/// the join order captured in `state.players`. The rotation therefore starts with
+/// the player seated after the nominator and wraps back around so the nominator
+/// (the standing high bidder) sits at the end; they only act again once everyone
+/// still in has had a chance to raise.
+///
+/// Players who already bought a plant or passed this round are skipped. The
+/// returned queue always contains the nominator, so its length is 1 exactly when
+/// nobody else can bid.
+fn seat_bid_rotation(
+    state: &GameState,
+    nominator: PlayerId,
+    bought: &[PlayerId],
+    passed: &[PlayerId],
+) -> Vec<PlayerId> {
+    let seats: Vec<PlayerId> = state.players.iter().map(|p| p.id).collect();
+    let start = seats.iter().position(|&id| id == nominator).unwrap_or(0);
+    (1..=seats.len())
+        .map(|offset| seats[(start + offset) % seats.len()])
+        .filter(|id| *id == nominator || (!bought.contains(id) && !passed.contains(id)))
+        .collect()
+}
+
 fn handle_select_plant(
     state: &mut GameState,
     actor: PlayerId,
@@ -209,17 +235,12 @@ fn handle_select_plant(
     }
 
     // Start bid at the plant's effective minimum bid (1 if discounted, else plant number).
-    // The selector has implicitly bid the minimum by selecting; exclude them so
-    // other players respond first. They re-enter the rotation if outbid.
-    let remaining_bidders: Vec<PlayerId> = state
-        .player_order
-        .iter()
-        .filter(|&&id| !bought.contains(&id) && !passed.contains(&id) && id != actor)
-        .cloned()
-        .collect();
+    // The selector has implicitly bid the minimum by selecting; the rotation runs
+    // clockwise from the seat after them and wraps back around to them.
+    let remaining_bidders = seat_bid_rotation(state, actor, &bought, &passed);
 
     // If no other players remain to bid, the selector wins at minimum bid immediately.
-    if remaining_bidders.is_empty() {
+    if remaining_bidders.len() <= 1 {
         return award_plant(state, actor, plant_number, min_bid, bought, passed);
     }
 
@@ -278,17 +299,24 @@ fn handle_place_bid(
         return Err(ActionError::CannotAfford);
     }
 
-    let old_highest = bid.highest_bidder;
     bid.highest_bidder = actor;
     bid.amount = amount;
+    // Turn passes clockwise: the raiser goes to the back of the rotation and only
+    // acts again once every other player still in has had a chance to respond.
     bid.remaining_bidders.remove(0);
-    // Move this player to the end — they bid again only if others raise.
     bid.remaining_bidders.push(actor);
-    // Give the previous highest bidder a chance to counter-bid,
-    // but only after all other players who haven't bid yet get their turn.
-    if old_highest != actor && !bid.remaining_bidders.contains(&old_highest) {
-        let insert_pos = bid.remaining_bidders.len() - 1;
-        bid.remaining_bidders.insert(insert_pos, old_highest);
+
+    // If the turn has come all the way back around to the high bidder, nobody else
+    // is left to raise and the auction is over.
+    if bid.remaining_bidders.first() == Some(&bid.highest_bidder) {
+        return award_plant(
+            state,
+            bid.highest_bidder,
+            bid.plant_number,
+            bid.amount,
+            bought,
+            passed,
+        );
     }
 
     state.phase = Phase::Auction {
@@ -327,9 +355,14 @@ fn handle_pass_auction(state: &mut GameState, actor: PlayerId) -> Result<(), Act
             return Err(ActionError::NotYourTurn);
         }
 
+        // Passing drops the player out of this plant's auction entirely.
         bid.remaining_bidders.remove(0);
 
-        if bid.remaining_bidders.is_empty() || bid.remaining_bidders == vec![bid.highest_bidder] {
+        if bid
+            .remaining_bidders
+            .first()
+            .is_none_or(|&id| id == bid.highest_bidder)
+        {
             // Auction resolved — winner buys the plant.
             award_plant(
                 state,
@@ -1880,51 +1913,116 @@ mod tests {
         (state, p1, p2)
     }
 
+    /// The current bidding rotation, front = whose turn it is.
+    fn bidders(state: &GameState) -> Vec<PlayerId> {
+        let Phase::Auction { active_bid, .. } = &state.phase else {
+            panic!("expected Auction phase");
+        };
+        active_bid
+            .as_ref()
+            .expect("should have an active bid")
+            .remaining_bidders
+            .clone()
+    }
+
     #[test]
-    fn test_bid_order_after_overbid() {
-        // Scenario: the first player selects a plant, the second overbids.
-        // The next bidder should be the third player, not the first.
+    fn test_bid_order_is_clockwise_seat_order() {
+        // Nominating a plant follows turn order, but the bidding itself runs
+        // clockwise around the table (the fixed seating order = join order),
+        // starting with the player seated after the nominator.
         let (mut state, p1, p2, p3) = three_player_game();
         apply_action(&mut state, p1, Action::StartGame).unwrap();
 
-        // Derive the seeded turn order rather than assuming insertion order.
-        let first = state.player_order[0];
-        let second = state.player_order[1];
-        let third = state.player_order[2];
+        let seats = [p1, p2, p3];
+        let nominator = state.player_order[0];
+        let seat = seats.iter().position(|&id| id == nominator).unwrap();
+        let left = seats[(seat + 1) % 3];
+        let across = seats[(seat + 2) % 3];
 
-        // First player selects the lowest-numbered plant in the actual market.
-        let plant_number = {
-            let Phase::Auction { .. } = &state.phase else {
-                panic!("expected Auction phase");
-            };
-            state.market.actual[0].number
-        };
+        let plant_number = state.market.actual[0].number;
         let min_bid = plant_number as u32;
 
-        apply_action(&mut state, first, Action::SelectPlant { plant_number }).unwrap();
+        apply_action(&mut state, nominator, Action::SelectPlant { plant_number }).unwrap();
 
-        // Second player overbids.
+        // Bidding opens to the nominator's left and wraps back around to them.
+        assert_eq!(
+            bidders(&state),
+            vec![left, across, nominator],
+            "bidding must open clockwise from the nominator's seat"
+        );
+
         apply_action(
             &mut state,
-            second,
+            left,
             Action::PlaceBid {
                 amount: min_bid + 1,
             },
         )
         .unwrap();
 
-        // Next bidder in remaining_bidders must be the third player.
-        let Phase::Auction { active_bid, .. } = &state.phase else {
-            panic!("expected Auction phase after second bid");
-        };
-        let bid = active_bid.as_ref().expect("should have active bid");
+        // The raiser goes to the back; the turn moves clockwise to the next seat.
         assert_eq!(
-            bid.remaining_bidders[0], third,
-            "third player should bid next"
+            bidders(&state),
+            vec![across, nominator, left],
+            "turn must pass clockwise after a raise"
         );
 
-        // Suppress unused variable warnings — all three player ids are needed for the game setup.
-        let _ = (p1, p2, p3);
+        // Passing drops that seat out of this plant's auction for good.
+        apply_action(&mut state, across, Action::PassAuction).unwrap();
+        assert_eq!(bidders(&state), vec![nominator, left]);
+    }
+
+    #[test]
+    fn test_bid_order_independent_of_turn_order() {
+        // Force a turn order that is the reverse of the seating order: nominating
+        // follows turn order, but the bid rotation must still be seat-based.
+        let (mut state, p1, p2, p3) = three_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+        state.player_order = vec![p3, p2, p1];
+
+        let plant_number = state.market.actual[0].number;
+        apply_action(&mut state, p3, Action::SelectPlant { plant_number }).unwrap();
+
+        // Seating is p1, p2, p3 — clockwise from p3 that is p1, then p2.
+        assert_eq!(
+            bidders(&state),
+            vec![p1, p2, p3],
+            "bid rotation must follow seating, not the reversed turn order"
+        );
+    }
+
+    #[test]
+    fn test_auction_ends_when_turn_returns_to_high_bidder() {
+        let (mut state, p1, p2, p3) = three_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        let nominator = state.player_order[0];
+        let plant_number = state.market.actual[0].number;
+        let min_bid = plant_number as u32;
+
+        apply_action(&mut state, nominator, Action::SelectPlant { plant_number }).unwrap();
+
+        let left = bidders(&state)[0];
+        apply_action(
+            &mut state,
+            left,
+            Action::PlaceBid {
+                amount: min_bid + 1,
+            },
+        )
+        .unwrap();
+
+        // The two remaining players decline; the rotation comes back to the high
+        // bidder, which resolves the auction in their favour.
+        for _ in 0..2 {
+            let actor = bidders(&state)[0];
+            apply_action(&mut state, actor, Action::PassAuction).unwrap();
+        }
+
+        let winner = state.player(left).unwrap();
+        assert_eq!(winner.plants.len(), 1, "high bidder should own the plant");
+        assert_eq!(winner.plants[0].number, plant_number);
+        let _ = (p2, p3);
     }
 
     #[test]

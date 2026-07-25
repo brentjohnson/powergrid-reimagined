@@ -541,7 +541,8 @@ pub enum Phase {
     Lobby,
     /// Determine player order for this round.
     PlayerOrder,
-    /// Auction phase: players bid on power plants in reverse order.
+    /// Auction phase: players nominate plants in turn order; bidding on a
+    /// nominated plant then goes clockwise around the table (seating order).
     Auction {
         /// Index into `game.player_order` — whose turn to select a plant.
         current_bidder_idx: usize,
@@ -607,7 +608,10 @@ pub struct ActiveBid {
     pub plant_number: u8,
     pub highest_bidder: PlayerId,
     pub amount: u32,
-    /// Players still in the bidding (haven't passed on this plant).
+    /// Players still in the bidding (haven't passed on this plant), as a rotation
+    /// in clockwise *seating* order — `first()` is whose turn it is to act. The
+    /// current `highest_bidder` stays in the list at the back; when the rotation
+    /// comes back around to them, the auction is over and they win.
     pub remaining_bidders: Vec<PlayerId>,
 }
 
