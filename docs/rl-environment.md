@@ -42,11 +42,13 @@ Python (powergrid_env)            Rust (powergrid-py PyO3 crate)
 SingleAgentEnv.step()      ──►   Game.step_vs_bots(learner, id, diff)  (no JSON)
 SingleAgentEnv.reset()     ──►   Game.advance_bots(learner, diff)      (no JSON)
                                  Game.load_opponent_policy(bytes)      ("policy" mode)
-AECEnv.step()              ──►   Game.apply(actor, action_json)
+AECEnv.step()              ──►   Game.apply_action_id(actor, macro_id)
 AECEnv.observe()           ──►   Game.state_json(viewer) → GameStateView JSON
-AECEnv._mask()             ──►   Game.legal_move_info(actor) → JSON
-RustBotPolicy.act()        ──►   Game.bot_decide(actor, difficulty)
+AECEnv._mask()             ──►   Game.action_mask(actor) → np.uint8[26]
+RustBotPolicy.act()        ──►   Game.bot_decide_id(actor, difficulty)
 ```
+
+Macro legality, expansion, and teacher labelling all live natively in `crates/powergrid-bot-strategy/src/macro_actions.rs` — Python never re-derives game rules. (`Game.apply(actor, action_json)` and `Game.legal_move_info(actor)` still exist for primitive-level debugging, but no env uses them.)
 
 The PyO3 crate (`crates/powergrid-py`) depends only on `powergrid-core` and `powergrid-bot-strategy`. There is no network, lobby, or server involved — every game step is a direct Rust function call.
 
@@ -93,7 +95,7 @@ for agent in env.agent_iter():
     if terminated or truncated:
         action = None
     else:
-        mask = info["action_mask"]          # np.ndarray of shape (94,), dtype int8
+        mask = info["action_mask"]          # np.ndarray of shape (26,), dtype int8
         action = env.action_space(agent).sample(mask)
     env.step(action)
 ```
@@ -110,29 +112,44 @@ for agent in env.agent_iter():
 
 **Spaces:**
 - `observation_space` → `Box(0.0, 1.0, (582,), float32)` — flat normalised feature vector
-- `action_space` → `Discrete(94)` — see action encoding table below
+- `action_space` → `Discrete(26)` — macro actions, see table below
 
 **Rewards:** sparse — `+1.0` to winner, `-1.0` to all others at game end; `0.0` every other step.
 
 ---
 
-## Action encoding (N = 94)
+## Action encoding — macro actions (N = 26)
 
-Each integer maps to one game action. The mask in `info["action_mask"]` is `1` only for legal actions in the current state. City actions cover the 49 cities of the default USA map (`assets/maps/usa.toml`), sorted alphabetically.
+The policy does **not** choose primitive game moves. It chooses one complete **phase-plan per turn** from a fixed menu of 26 macros; each expands natively into a short primitive sequence the engine already accepts as a whole-turn batch (`BuildCities`, `BuyResourceBatch`). A game is ~50 macro decisions instead of ~600 primitive ones, which removes the compounding-error tax that capped every earlier learner.
 
-| Range | Action | Notes |
+> **History:** until the Phase-2 rebuild this was a 94-id *primitive* space (`BuildCity` per city, `BuyResources` per unit, etc.). It was removed, not extended. Any policy trained against it is incompatible.
+
+| Id | Macro | Notes |
 |---|---|---|
-| 0 | `PassAuction` | Forbidden in round 1 before buying a plant |
-| 1 | `DoneBuying` | Always legal during BuyResources |
-| 2 | `DoneBuilding` | Always legal during BuildCities |
-| 3–10 | `SelectPlant` slot 0–7 | Only `actual` market plants (up to 6 in Step 3); future market not selectable |
-| 11 | `PlaceBid` | English-auction style: the only raise is +1 over the standing bid (`active_bid.amount + 1`); masked out once the player can't afford it. No jump bids — `PassAuction` (0) covers dropping out. (Before 2026-06-24 this was a 50-action range, offset 0–49, allowing arbitrary jump bids up to the player's money; self-play exploited it with large, non-strategic raises, so it was collapsed to a single +1 action.) |
-| 12–14 | `DiscardPlant` slot 0–2 | Index into player's plants sorted by number; forced when winning a 4th plant |
-| 15–63 | `BuildCity` city 0–48 | Sorted alphabetically; see constants.py for order |
-| 64–67 | `BuyResources` coal/oil/gas/uranium | Additive: buys +1 unit and does *not* end the buy phase (mirrors `BuildCity`/`DoneBuilding`) — sequence several before `DoneBuying`. Masked per-unit if market empty, player over capacity (hybrid-aware), or unaffordable |
-| 68–75 | `PowerCities` bitmask 0–7 | Bitmask over player's first 3 plants sorted by number; 0 = power nothing |
-| 76–84 | `DiscardResource` gas\_drop 0–8 | `oil_drop = drop_total − gas_drop`; forced on hybrid-slot overflow |
-| 85–93 | `PowerCitiesFuel` gas 0–8 | `oil = hybrid_cost − gas`; forced when hybrid fuel split is ambiguous |
+| 0–5 | `NOMINATE` market slot 0–5 | Auction with no standing bid: nominate an `actual` market plant |
+| 6 | `AUCTION_PASS` | Drop out of / decline the auction (both auction sub-phases) |
+| 7 | `AUCTION_RAISE` | Raise +1 over the standing bid (English-auction convention). No jump bids — self-play with a ±50 raise range learned large non-strategic jumps |
+| 8 | `BUILD_NOTHING` | `DoneBuilding` |
+| 9 | `BUILD_DEFAULT` | Whatever the champion `hard` heuristic would build, **bit-exactly** (Gate 0) |
+| 10–12 | `BUILD_CHEAPEST_1/2/3` | The 1 / 2 / 3 cheapest affordable cities |
+| 13 | `BUILD_MAX` | Greedy cheapest up to `end_game_cities − owned` |
+| 14 | `BUILD_BLOCK` | Most-contested cities first (most existing owners), then cheapest; limit 3 |
+| 15 | `BUILD_RACE` | Exactly enough to hit the end-game trigger this turn, or nothing (all-or-nothing) |
+| 16 | `BUY_NOTHING` | `DoneBuying` |
+| 17 | `BUY_DEFAULT` | The heuristic's resource batch, bit-exactly |
+| 18–19 | `BUY_STOCKPILE2/3` | The heuristic with `stockpile_rounds` forced to 2 / 3 rounds of fuel |
+| 20 | `BUY_DENIAL` | Buy out the resource with the highest forward price, to deny it to opponents |
+| 21–23 | `DISCARD_PLANT` slot 0–2 | Index into the player's plants sorted by number; forced when winning a 4th plant |
+| 24 | `POWER_OPTIMAL` | The heuristic's optimal firing subset |
+| 25 | `POWER_NOTHING` | Power no cities (earn minimum income) |
+
+**Auto-resolved phases.** `PowerCitiesFuel` (hybrid gas/oil split) and `DiscardResource` (hybrid-slot overflow) are minor tactical steps with no strategic content, so `macro_actions::resolve_auto_phases` settles them with the heuristic. They never consume a policy decision and have no macro ids.
+
+**Masking and dedup.** `info["action_mask"]` comes from `macro_actions::legal_macros`, which validates each macro by trial application on a cloned state **and drops duplicates** — a macro whose primitive expansion equals a lower-id macro's is marked illegal. So `BUILD_CHEAPEST_3` collapses onto `CHEAPEST_2` when only two cities are affordable, and `BUILD_MAX` is nearly always deduped against `BUILD_DEFAULT` (greedy-cheapest-to-the-cap *is* what the heuristic computes). Expect roughly 3 live build options per decision, not 8.
+
+**Alternative-plan cash rule.** The `CHEAPEST_*`/`MAX`/`BLOCK` build plans price cities exactly as the heuristic does: **all** of the player's money is available for cities the rack can power, and only *overbuild* past powering headroom is gated behind the fuel + auction reserve. Building is the last spend of the round (`BuyResources` runs before it, Bureaucracy income lands right after), so cash held back at build time cannot buy fuel this round. `BUILD_RACE` waives the reserve entirely, since reaching the trigger ends the game.
+
+**Imitation labels.** `Game.bot_decide_id(actor, difficulty)` returns the macro id the champion heuristic would play (`macro_actions::teacher_macro_id`) — always a `*_DEFAULT`/matching macro whose expansion is the heuristic's action bit-for-bit, so a policy that copies the teacher reproduces the heuristic exactly. This is the behavior-cloning / DAgger target.
 
 ---
 
@@ -180,7 +197,7 @@ Two reference policies live in `python/src/powergrid_env/policies/`:
 
 **`RandomPolicy`** — samples uniformly from the legal action mask. Useful as a baseline and in random-rollout tests.
 
-**`RustBotPolicy`** — delegates to the Rust strategy bot at a chosen difficulty via `game.bot_decide()`. The bot is re-consulted every step, so its batch decisions (multi-city builds, multi-resource buys) aren't lost — they're realized incrementally as repeated single-unit/single-city ids (`BuildCity`×N + `DoneBuilding`; `BuyResources`×N + `DoneBuying`) until the bot itself returns the `Done*` action, exactly mirroring a real turn.
+**`RustBotPolicy`** — delegates to the Rust strategy bot via `game.bot_decide_id()`, which returns the heuristic's move as a single macro id. Because a macro *is* a whole-turn plan, the bot's batch decisions (multi-city builds, multi-resource buys) survive intact — no incremental replay is needed, unlike the primitive encoding this replaced.
 
 ---
 
@@ -207,11 +224,12 @@ make test
 
 | Test file | What it checks |
 |---|---|
-| `test_encoding.py` | Action roundtrip (id ↔ JSON), observation shape/range, city id ordering |
+| `test_encoding.py` | Observation shape/range, city id ordering, macro mask shape + non-empty at start, teacher macro is always legal |
 | `test_env.py` | `pettingzoo.test.api_test` conformance, seed determinism, mask non-empty at every step |
 | `test_random_play.py` | Random games complete (reach `game_over`), no invalid actions slip through the mask |
 | `test_native_bridge.py` | Rust-native obs/mask/step parity vs the Python reference implementations |
 | `test_reseeding.py` | Consecutive resets play different games; same seed reproduces the same sequence |
+| `test_league_and_rewards.py` | Opponent-pool validation/sampling/weights, shaping scale + anneal schedule, placement reward matches finish rank, league pool construction |
 
 ---
 
@@ -220,12 +238,13 @@ make test
 | Path | Purpose |
 |---|---|
 | `crates/powergrid-py/Cargo.toml` | PyO3 crate manifest (pyo3 0.28, cdylib) |
-| `crates/powergrid-py/src/lib.rs` | `Game` class: native obs/mask/step methods, `apply`, `bot_decide`, `legal_move_info`, etc. |
+| `crates/powergrid-py/src/lib.rs` | `Game` class: native obs/mask/step methods (`observation`, `action_mask`, `apply_action_id`, `step_vs_bots`), `bot_decide_id`, `copy`, etc. |
+| `crates/powergrid-bot-strategy/src/macro_actions.rs` | The 26-macro action space: expansion, legality + dedup, teacher labels |
 | `python/pyproject.toml` | Python package metadata (hatchling build backend) |
 | `python/Makefile` | `make develop` = build Rust + install Python |
 | `python/TRAINING.md` | Step-by-step training runbook |
-| `python/src/powergrid_env/constants.py` | Action layout constants, CITY_IDS, normalisation denominators |
-| `python/src/powergrid_env/encoding.py` | `mask_from_info`, `id_to_action_json`, `action_json_to_id`, `encode_observation` |
+| `python/src/powergrid_env/constants.py` | Macro id constants (mirrors `macro_actions`), CITY_IDS, normalisation denominators |
+| `python/src/powergrid_env/encoding.py` | `encode_observation` — the Python reference obs implementation used by the parity tests (includes the routing Dijkstra) |
 | `python/src/powergrid_env/env.py` | `PowerGridAECEnv` (PettingZoo AEC) |
 | `python/src/powergrid_env/single_agent.py` | `PowerGridSingleAgentEnv` (Gymnasium, vs Rust bots or frozen policy snapshots, native fast path) |
 | `python/src/powergrid_env/export.py` | `policy_state_dict_to_bytes` — PGRLPOL1 policy serialization (export script + self-play snapshots) |

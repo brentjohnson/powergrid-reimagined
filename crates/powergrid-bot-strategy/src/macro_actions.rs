@@ -279,18 +279,61 @@ fn buildable(state: &GameState, actor: PlayerId) -> Vec<(String, u32)> {
     out
 }
 
-/// Greedily pick cities from `sorted` while the cumulative cost (re-simulated as
-/// the network grows) stays within `budget`, up to `limit`. Returns owned ids.
+/// The cash rules for building, mirroring `strategy::decide_build_cities`:
+/// **all** of the player's money is available for cities they can actually power,
+/// and only *overbuild* past powering headroom is gated behind a reserve.
+///
+/// Building is the last spend of the round (`BuyResources` runs before it and
+/// Bureaucracy income lands right after), so cash held back at build time cannot
+/// buy fuel this round. Reserving it up front — as this code used to, by capping
+/// the whole city budget at `money - fuel_reserve` — starved every alternative
+/// build plan: with the champion `hard` profile's `fuel_reserve_multiplier` of
+/// 10, the budget was 0 in ~85% of real build decisions, so `CHEAPEST_*`/`MAX`/
+/// `BLOCK`/`RACE` all collapsed onto `BUILD_NOTHING` and were deduped out of the
+/// legal mask. The policy's build menu was effectively just nothing-or-heuristic.
+struct BuildBudget {
+    /// Total cash available.
+    money: u32,
+    /// Cities buildable this turn that the rack can actually power. The first
+    /// `headroom` picks spend freely.
+    headroom: usize,
+    /// Surplus that must remain after each pick *beyond* `headroom`, since those
+    /// cities earn no income this round and only count toward the end trigger.
+    overbuild_reserve: u32,
+}
+
+fn build_budget(state: &GameState, actor: PlayerId) -> BuildBudget {
+    let Some(player) = state.player(actor) else {
+        return BuildBudget {
+            money: 0,
+            headroom: 0,
+            overbuild_reserve: 0,
+        };
+    };
+    let profile = expansion_profile();
+    let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
+    let owned = state.player_city_count(actor) as u8;
+    BuildBudget {
+        money: player.money,
+        headroom: powerable.saturating_sub(owned) as usize,
+        overbuild_reserve: features::fuel_reserve(player, &profile.buy, Some(&state.resources))
+            + profile.auction.city_reserve as u32
+            + profile.auction.safety_buffer as u32,
+    }
+}
+
+/// Greedily pick cities from `sorted` while affordable under `budget` (cost
+/// re-simulated as the network grows), up to `limit`. Returns owned ids.
 fn greedy_pick(
     state: &GameState,
     actor: PlayerId,
     sorted: &[(String, u32)],
-    budget: u32,
+    budget: &BuildBudget,
     limit: usize,
 ) -> Vec<String> {
     let mut owned = state.player_cities(actor);
     let mut chosen = Vec::new();
-    let mut spent = 0u32;
+    let mut cash = budget.money;
     for (id, _) in sorted {
         if chosen.len() >= limit {
             break;
@@ -306,39 +349,34 @@ fn greedy_pick(
             .map(|c| connection_cost(c.owners.len()))
             .unwrap_or(0);
         let cost = route + slot;
-        if spent + cost > budget {
+        if cost > cash {
             continue;
         }
-        spent += cost;
+        // Past powering headroom the city earns nothing this round, so it comes
+        // out of surplus only — the heuristic's `overbuild_ok` rule.
+        if chosen.len() >= budget.headroom && cash - cost < budget.overbuild_reserve {
+            continue;
+        }
+        cash -= cost;
         owned.push(id.clone());
         chosen.push(id.clone());
     }
     chosen
 }
 
-fn player_budget_for_cities(state: &GameState, actor: PlayerId) -> u32 {
-    let Some(player) = state.player(actor) else {
-        return 0;
-    };
-    // Keep a fuel reserve aside (same notion the heuristic uses); the rest is
-    // available for cities.
-    let reserve = features::fuel_reserve(player, &expansion_profile().buy, Some(&state.resources));
-    player.money.saturating_sub(reserve)
-}
-
 fn cheapest_cities(state: &GameState, actor: PlayerId, k: usize) -> Vec<String> {
     let sorted = buildable(state, actor);
-    let budget = player_budget_for_cities(state, actor);
-    greedy_pick(state, actor, &sorted, budget, k)
+    let budget = build_budget(state, actor);
+    greedy_pick(state, actor, &sorted, &budget, k)
 }
 
 fn max_expansion(state: &GameState, actor: PlayerId) -> Vec<String> {
     let sorted = buildable(state, actor);
-    let budget = player_budget_for_cities(state, actor);
+    let budget = build_budget(state, actor);
     let cap = state
         .end_game_cities
         .saturating_sub(state.player_city_count(actor) as u8) as usize;
-    greedy_pick(state, actor, &sorted, budget, cap)
+    greedy_pick(state, actor, &sorted, &budget, cap)
 }
 
 /// Build most-contested cities first (occupied by opponents), then cheapest.
@@ -360,9 +398,9 @@ fn block_cities(state: &GameState, actor: PlayerId) -> Vec<String> {
             .unwrap_or(0);
         ob.cmp(&oa).then(a.1.cmp(&b.1)).then_with(|| a.0.cmp(&b.0))
     });
-    let budget = player_budget_for_cities(state, actor);
+    let budget = build_budget(state, actor);
     // Only worthwhile if a contested city exists; otherwise let dedup drop it.
-    greedy_pick(state, actor, &sorted, budget, 3)
+    greedy_pick(state, actor, &sorted, &budget, 3)
 }
 
 /// Build up to the end-game trigger this turn if affordable (race to end).
@@ -373,8 +411,12 @@ fn race_to_trigger(state: &GameState, actor: PlayerId) -> Vec<String> {
         return Vec::new();
     }
     let sorted = buildable(state, actor);
-    let budget = player_budget_for_cities(state, actor);
-    let chosen = greedy_pick(state, actor, &sorted, budget, need);
+    // Reaching the trigger ends the game at Bureaucracy, so there is no next
+    // round to reserve auction/fuel cash for — spend it all. (Leftover money is
+    // only the second tiebreak behind powered cities in `finish_ranks`.)
+    let mut budget = build_budget(state, actor);
+    budget.overbuild_reserve = 0;
+    let chosen = greedy_pick(state, actor, &sorted, &budget, need);
     // Only a "race" if it actually reaches the trigger; else empty (deduped away).
     if chosen.len() == need {
         chosen
