@@ -2,9 +2,9 @@
 //! (`powergrid_bot_strategy::macro_actions`), used by the netviz output panel.
 
 use powergrid_bot_strategy::macro_actions::{
-    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_COUNT_BASE, BUY_DEFAULT,
-    DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT, N_BUY_COUNT, N_DISCARD_PLANT, N_NOMINATE,
-    POWER_NOTHING, POWER_OPTIMAL,
+    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_DEFAULT, BUY_EXTRA_1,
+    BUY_EXTRA_2, BUY_FILL, BUY_NOTHING, BUY_SHORT_1, BUY_SHORT_2, DISCARD_PLANT_BASE,
+    NOMINATE_BASE, N_BUILD_COUNT, N_DISCARD_PLANT, N_NOMINATE,
 };
 
 /// Human-readable label for macro id `id` (0..N_ACTIONS).
@@ -23,18 +23,16 @@ pub fn action_label(id: usize) -> String {
                 n => format!("Build:{n} cheapest"),
             }
         }
-        BUY_DEFAULT => "Buy:Default".to_string(),
-        i if (BUY_COUNT_BASE..BUY_COUNT_BASE + N_BUY_COUNT).contains(&i) => {
-            match i - BUY_COUNT_BASE {
-                0 => "Buy:Nothing".to_string(),
-                n => format!("Buy:{n} units"),
-            }
-        }
+        BUY_NOTHING => "Buy:Nothing".to_string(),
+        BUY_DEFAULT => "Buy:Full set".to_string(),
+        BUY_SHORT_1 => "Buy:Set-1".to_string(),
+        BUY_SHORT_2 => "Buy:Set-2".to_string(),
+        BUY_EXTRA_1 => "Buy:Set+1".to_string(),
+        BUY_EXTRA_2 => "Buy:Set+2".to_string(),
+        BUY_FILL => "Buy:Fill storage".to_string(),
         i if (DISCARD_PLANT_BASE..DISCARD_PLANT_BASE + N_DISCARD_PLANT).contains(&i) => {
             format!("DiscardPlant[slot {}]", i - DISCARD_PLANT_BASE)
         }
-        POWER_OPTIMAL => "Power:Optimal".to_string(),
-        POWER_NOTHING => "Power:Nothing".to_string(),
         _ => format!("unknown[{id}]"),
     }
 }

@@ -216,13 +216,14 @@ def test_step_vs_bots_obs_matches_observation():
 @pytest.mark.parametrize("shaping_mode", ["absolute", "relative"])
 def test_reward_shaping_only_on_powering(shaping_mode):
     from powergrid_env import PowerGridSingleAgentEnv
-    from powergrid_env.constants import POWER_OPTIMAL, POWER_NOTHING, POWER_SHAPING_COEF
+    from powergrid_env.constants import POWER_SHAPING_COEF
 
     env = PowerGridSingleAgentEnv(
         num_players=4, seed=3, reward_shaping=True, shaping_mode=shaping_mode
     )
     rng = np.random.default_rng(3)
     shaped_steps = 0
+    total_steps = 0
     saw_negative = False
     for _ in range(3):
         obs, info = env.reset()
@@ -233,13 +234,10 @@ def test_reward_shaping_only_on_powering(shaping_mode):
             action = int(rng.choice(np.where(mask)[0]))
             obs, reward, terminated, truncated, info = env.step(action)
             steps += 1
+            total_steps += 1
             if terminated or reward == 0.0:
                 continue
             shaped_steps += 1
-            is_power_action = action in (POWER_OPTIMAL, POWER_NOTHING)
-            assert is_power_action, (
-                f"nonzero non-terminal reward {reward} on non-power macro {action}"
-            )
             # Both modes yield a whole multiple of the coefficient. Absolute
             # (own powered) is always ≥ 0; relative (own − best opponent) may
             # go negative.
@@ -251,6 +249,12 @@ def test_reward_shaping_only_on_powering(shaping_mode):
                 assert k >= 0, f"absolute shaping produced negative reward {reward}"
             saw_negative = saw_negative or k < 0
     assert shaped_steps > 0, "no shaped rewards observed in 3 games"
+    # Powering has no macro of its own — it is auto-resolved, and the shaping gate
+    # is "the round rolled over during this step". So the bonus must fire about
+    # once per round, not on every step.
+    assert shaped_steps <= total_steps // 2, (
+        f"shaping fired on {shaped_steps}/{total_steps} steps; gate should be once per round"
+    )
     if shaping_mode == "relative":
         # Random play trails the heuristic bots, so the lead term goes negative.
         assert saw_negative, "relative shaping never produced a negative reward"

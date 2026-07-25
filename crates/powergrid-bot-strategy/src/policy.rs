@@ -17,7 +17,12 @@ use tracing::warn;
 
 use crate::encoding::{N_ACTIONS, OBS_SIZE};
 
-const MAGIC: &[u8; 8] = b"PGRLPOL1";
+// Bumped to ...2 when the macro action space was reorganised (2026-07-25). The
+// id COUNT stayed 26 across that change while the id MEANINGS moved, so a dim
+// check alone would have let a stale policy load and silently play a scrambled
+// action map. The magic is the layout epoch: bump it whenever macro ids are
+// renumbered, even if `N_ACTIONS` is unchanged.
+const MAGIC: &[u8; 8] = b"PGRLPOL2";
 const HEADER_LEN: usize = 8 + 3 * 4;
 
 const EMBEDDED_POLICY: &[u8] = include_bytes!("../../../assets/policies/expert.bin");
@@ -430,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "embedded expert.bin is a 26-action export; the buy-quantity ladder moved N_ACTIONS to 29, so it fails the dim check. Un-ignore once a 29-macro policy is trained and re-exported (python/scripts/export_policy.py)."]
+    #[ignore = "embedded expert.bin is a PGRLPOL1 file from the pre-ladder macro layout; the magic bump rejects it (its dims still match, which is exactly why the epoch check exists). Un-ignore once a PGRLPOL2 policy is trained and re-exported."]
     fn embedded_policy_matches_torch_golden_logits() {
         #[derive(serde::Deserialize)]
         struct Golden {

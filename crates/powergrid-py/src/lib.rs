@@ -6,9 +6,7 @@ use powergrid_bot_strategy::encoding::{
     build_action_mask, build_observation, compute_legal_move_info, current_actor_id, N_ACTIONS,
     OBS_SIZE,
 };
-use powergrid_bot_strategy::macro_actions::{
-    apply_macro, teacher_macro_id, POWER_NOTHING, POWER_OPTIMAL,
-};
+use powergrid_bot_strategy::macro_actions::{apply_macro, resolve_auto_phases, teacher_macro_id};
 use powergrid_bot_strategy::policy::MlpPolicy;
 use powergrid_bot_strategy::{default_registry, Bot};
 use powergrid_core::{
@@ -62,7 +60,7 @@ impl Game {
         })
     }
 
-    /// Load a frozen policy snapshot (PGRLPOL1 bytes, as written by
+    /// Load a frozen policy snapshot (PGRLPOL2 bytes, as written by
     /// `export_policy.py` / `policy_state_dict_to_bytes`) to drive opponent
     /// seats when `step_vs_bots`/`advance_bots` are called with
     /// difficulty `"policy"`.
@@ -320,16 +318,31 @@ impl Game {
             Uuid::parse_str(learner).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mode = self.opponent_mode(difficulty)?;
 
-        // A POWER macro resolves the learner's powering for the round. With
-        // macros, `apply_macro` also auto-resolves the trailing hybrid fuel
-        // split in the same call, so powering is fully settled below (no
-        // separate pending-fuel step to wait for).
-        let was_power_action = action_id == POWER_OPTIMAL || action_id == POWER_NOTHING;
+        // Powering has no macro of its own — `Bureaucracy` is auto-resolved with
+        // the heuristic (the teacher fired the optimal subset in 100% of sampled
+        // decisions, and the only alternative the menu offered was a strictly
+        // dominated "power nothing"). So the shaping terms can no longer be gated
+        // on the learner having *chosen* a POWER macro: powering now lands
+        // whenever the build phase ends, inside whichever `apply_macro` or bot
+        // turn closes it. `rules.rs` bumps `state.round` at the end of
+        // Bureaucracy, so a round advance across this call is exactly "everyone's
+        // powering resolved" — and at most one can occur per step, since the
+        // learner always has an auction/buy/build decision within a round.
+        let round_before = self.state.round;
 
         apply_macro(&mut self.state, learner_id, action_id)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        let powered_now = if was_power_action {
+        if !matches!(self.state.phase, Phase::GameOver { .. }) {
+            self.drive_bots(learner_id, &mode)?;
+        }
+
+        let powering_resolved =
+            self.state.round != round_before || matches!(self.state.phase, Phase::GameOver { .. });
+
+        // Both terms are read after the bots have acted, so they describe the same
+        // round, and are 0 off-round so shaping only fires once per round.
+        let powered_now = if powering_resolved {
             self.state
                 .player(learner_id)
                 .map(|p| p.last_cities_powered as u32)
@@ -337,15 +350,7 @@ impl Game {
         } else {
             0
         };
-
-        if !matches!(self.state.phase, Phase::GameOver { .. }) {
-            self.drive_bots(learner_id, &mode)?;
-        }
-
-        // Best opponent powering this round, read after the bots have acted so
-        // it reflects the same round the learner just resolved. Gated to the
-        // same steps as `powered_now` so the relative term is 0 off-round.
-        let opp_powered_max = if was_power_action {
+        let opp_powered_max = if powering_resolved {
             self.state
                 .players
                 .iter()
@@ -439,6 +444,13 @@ impl Game {
     fn drive_bots(&mut self, learner: Uuid, mode: &OpponentMode) -> PyResult<()> {
         let registry = default_registry();
         for _ in 0..500 {
+            if matches!(self.state.phase, Phase::GameOver { .. }) {
+                return Ok(());
+            }
+            // Settle powering / fuel-split / resource-discard for every seat.
+            // These are not macro decisions, so the learner has an empty mask in
+            // them — stopping here would hand Python an unplayable position.
+            resolve_auto_phases(&mut self.state);
             if matches!(self.state.phase, Phase::GameOver { .. }) {
                 return Ok(());
             }

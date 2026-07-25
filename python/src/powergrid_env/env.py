@@ -24,7 +24,6 @@ import powergrid_py  # type: ignore[import]  # built by maturin
 
 from .constants import (
     COLORS, MAX_PLAYERS, N_ACTIONS, OBS_SIZE,
-    POWER_OPTIMAL, POWER_NOTHING,
     POWER_SHAPING_COEF,
 )
 from .encoding import encode_observation
@@ -149,9 +148,15 @@ class PowerGridAECEnv(AECEnv):
             legal = np.flatnonzero(self.game.action_mask(uuid))
             action = int(legal[0]) if len(legal) else 0
 
+        # Powering is auto-resolved (no macro), so it lands inside whichever
+        # macro ends the build phase. The engine bumps `round` at the end of
+        # Bureaucracy, so a round advance across this step is exactly "everyone's
+        # powering resolved" — that is the shaping gate.
+        round_before = (self._state_cache or {}).get("round", 0)
+
         try:
             # Apply the chosen MACRO natively (expands to its primitive action and
-            # auto-resolves any trailing fuel/discard split).
+            # auto-resolves any trailing fuel/discard split, and powering).
             self.game.apply_action_id(uuid, int(action))
         except ValueError:
             # Invalid action: penalise and terminate.
@@ -170,7 +175,7 @@ class PowerGridAECEnv(AECEnv):
                 self.rewards[a] = 1.0 if a == winner else -1.0
                 self.terminations[a] = True
         elif self.reward_shaping:
-            self._shape_rewards(agent, uuid, int(action))
+            self._shape_rewards(round_before)
 
         self._accumulate_rewards()
         self.agent_selection = self._next_agent()
@@ -225,30 +230,25 @@ class PowerGridAECEnv(AECEnv):
         # Native macro mask (length N_ACTIONS) — the single source of truth.
         return self.game.action_mask(uuid).astype(np.int8)
 
-    def _shape_rewards(self, agent: str, uuid: str, action: int) -> None:
-        """Per-round powered-cities bonus, granted when the acting agent's
-        powering resolves. `shaping_mode="absolute"` adds its own powered count
-        (always ≥ 0); `"relative"` adds its lead over the best opponent (rewards
-        out-powering the field, the win condition, and can go negative)."""
-        # A POWER macro resolves the agent's powering for the round. `apply_macro`
-        # auto-resolves the trailing hybrid fuel split in the same call, so
-        # powering is fully settled here (no pending-fuel step to wait for).
-        was_power_action = action in (POWER_OPTIMAL, POWER_NOTHING)
-        if not was_power_action:
-            return
+    def _shape_rewards(self, round_before: int) -> None:
+        """Per-round powered-cities bonus, granted to every seat on the step that
+        rolls the round over — powering is auto-resolved for all seats at once, so
+        one step settles the whole table. `shaping_mode="absolute"` adds a seat's
+        own powered count (always ≥ 0); `"relative"` adds its lead over the best
+        opponent (rewards out-powering the field, the win condition, and can go
+        negative)."""
         state = self._state_cache
-        if state is None:
+        if state is None or state.get("round", 0) == round_before:
             return
-        mine = 0
-        opp_max = 0
-        for p in state.get("players", []):
-            powered = p.get("last_cities_powered", 0)
-            if p["id"] == uuid:
-                mine = powered
-            else:
-                opp_max = max(opp_max, powered)
-        shaped = mine - opp_max if self.shaping_mode == "relative" else mine
-        self.rewards[agent] += shaped * POWER_SHAPING_COEF
+        powered = {
+            p["id"]: p.get("last_cities_powered", 0) for p in state.get("players", [])
+        }
+        for a in self.agents:
+            uid = self._id_to_uuid.get(a, a)
+            mine = powered.get(uid, 0)
+            opp_max = max((v for k, v in powered.items() if k != uid), default=0)
+            shaped = mine - opp_max if self.shaping_mode == "relative" else mine
+            self.rewards[a] += shaped * POWER_SHAPING_COEF
 
 
 def _render_ansi(state: dict) -> str:

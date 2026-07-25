@@ -126,6 +126,13 @@ impl GameDriver {
             if matches!(self.state.phase, Phase::GameOver { .. }) {
                 return;
             }
+            // Powering / fuel-split / resource-discard phases carry no macro
+            // decision — settle them the same way `apply_macro` does, for the
+            // inspected seat and the bots alike.
+            powergrid_bot_strategy::macro_actions::resolve_auto_phases(&mut self.state);
+            if matches!(self.state.phase, Phase::GameOver { .. }) {
+                return;
+            }
             let Some(actor_id) = current_actor_id(&self.state) else {
                 return;
             };
@@ -170,8 +177,12 @@ impl GameDriver {
         build_action_mask(&self.state, self.inspected)
     }
 
+    /// True when the inspected seat owes a *macro* decision. Auto-resolved
+    /// phases (powering, fuel split, resource discard) are not decision points,
+    /// so this is stricter than `current_actor_id`.
     pub fn is_inspected_turn(&self) -> bool {
-        current_actor_id(&self.state) == Some(self.inspected)
+        powergrid_bot_strategy::macro_actions::macro_current_actor(&self.state)
+            == Some(self.inspected)
     }
 
     pub fn winner_name(&self) -> Option<String> {

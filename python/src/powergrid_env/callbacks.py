@@ -111,7 +111,7 @@ class LeagueSnapshotCallback(BaseCallback):
     equilibria (see TRAINING-SUGGESTION.md / TRAINING-NEXT-STEPS.md).
 
     Every ``snapshot_every`` timesteps the current policy is serialized to
-    ``league_dir/snap_<timesteps>.bin`` (PGRLPOL1) and the envs' opponent pool
+    ``league_dir/snap_<timesteps>.bin`` (PGRLPOL2) and the envs' opponent pool
     is rebuilt via ``env_method("set_opponent_pool", ...)``:
 
       - the latest snapshot, weight ``mix[0]``

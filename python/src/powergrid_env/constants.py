@@ -76,19 +76,23 @@ BUILD_COUNT_BASE = 8
 N_BUILD_COUNT   = 7   # n in 0..=6
 BUILD_NOTHING   = BUILD_COUNT_BASE      # alias: n = 0
 BUILD_DEFAULT   = 15
-# Buy: the same quantity-ladder shape as build — "how many units of fuel".
-# BUY_COUNT_BASE + n buys exactly n units, walking the heuristic's own fill
-# order (rack needs first, then cheapest burnable stockpile); n = 0 is an empty
-# batch. BUY_DEFAULT is the heuristic's own plan, last so dedup prefers the count.
-BUY_COUNT_BASE  = 16
-N_BUY_COUNT     = 7   # n in 0..=6
-BUY_NOTHING     = BUY_COUNT_BASE        # alias: n = 0
-BUY_DEFAULT     = 23
-DISCARD_PLANT_BASE = 24  # 24..26: discard owned plant slot 0..2 (by number)
+# Buy: a ladder relative to ONE COMPLETE SET of fuel for the rack, not an
+# absolute unit count — fuel units aren't interchangeable, so "a full set, ± a
+# bit" is the decision, and a relative id means the same thing at every rack
+# size. BUY_DEFAULT is the complete set (== the heuristic, Gate 0).
+BUY_NOTHING     = 16
+BUY_DEFAULT     = 17  # one complete set
+BUY_SHORT_1     = 18
+BUY_SHORT_2     = 19
+BUY_EXTRA_1     = 20
+BUY_EXTRA_2     = 21
+BUY_FILL        = 22  # top all burnable fuel to the storage cap
+DISCARD_PLANT_BASE = 23  # 23..25: discard owned plant slot 0..2 (by number)
 N_DISCARD_PLANT = 3
-POWER_OPTIMAL   = 27
-POWER_NOTHING   = 28
-N_ACTIONS       = 29
+# Powering has no macro: Bureaucracy is auto-resolved with the heuristic (the
+# teacher fired the optimal subset 100% of the time and "power nothing" was
+# legal everywhere and correct nowhere).
+N_ACTIONS       = 26
 
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +

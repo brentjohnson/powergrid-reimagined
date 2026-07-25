@@ -44,7 +44,7 @@ SingleAgentEnv.reset()     ──►   Game.advance_bots(learner, diff)      (no
                                  Game.load_opponent_policy(bytes)      ("policy" mode)
 AECEnv.step()              ──►   Game.apply_action_id(actor, macro_id)
 AECEnv.observe()           ──►   Game.state_json(viewer) → GameStateView JSON
-AECEnv._mask()             ──►   Game.action_mask(actor) → np.uint8[29]
+AECEnv._mask()             ──►   Game.action_mask(actor) → np.uint8[26]
 RustBotPolicy.act()        ──►   Game.bot_decide_id(actor, difficulty)
 ```
 
@@ -76,7 +76,7 @@ obs, info = env.reset()
 obs, reward, terminated, truncated, info = env.step(action)
 ```
 
-**Frozen-opponent self-play** (`scripts/train_selfplay.py`): the env is created with `bot_difficulty="policy"`; `OpponentSnapshotCallback` periodically serializes the current policy network (`powergrid_env.export.policy_state_dict_to_bytes`, the same `PGRLPOL1` format the Rust Expert bot consumes) and pushes it to the envs via `set_opponent_policy(bytes)`. Each env loads the snapshot into Rust at its next reset, so opponents improve alongside the learner while rewards stay correctly attributed to the learner's own moves. Until the first snapshot arrives (and, with `bot_mix=p`, for a random share of episodes) the env falls back to `"hard"` heuristic bots.
+**Frozen-opponent self-play** (`scripts/train_selfplay.py`): the env is created with `bot_difficulty="policy"`; `OpponentSnapshotCallback` periodically serializes the current policy network (`powergrid_env.export.policy_state_dict_to_bytes`, the same `PGRLPOL2` format the Rust Expert bot consumes) and pushes it to the envs via `set_opponent_policy(bytes)`. Each env loads the snapshot into Rust at its next reset, so opponents improve alongside the learner while rewards stay correctly attributed to the learner's own moves. Until the first snapshot arrives (and, with `bot_mix=p`, for a random share of episodes) the env falls back to `"hard"` heuristic bots.
 
 **League self-play** (the default for `train_selfplay.py`): instead of a single snapshot, `LeagueSnapshotCallback` persists every snapshot to `<run-dir>/league/snap_<steps>.bin` and pushes a weighted pool via `set_opponent_pool([(kind, payload, weight), ...])` — `("policy", pgrlpol1_bytes, w)` or `("bots", difficulty, w)` entries, sampled independently at each reset. The pool overrides `set_opponent_policy`/`bot_mix` while set. Two more `env_method` hooks support training schedules: `set_shaping_scale(f)` (multiplier on the powered-cities bonus, driven by `ShapingAnnealCallback` to anneal shaping away) and `set_end_game_cities(n)` (curriculum). See [python/TRAINING.md](../python/TRAINING.md) for the flags and `scripts/orchestrate.py` for the hands-off train → evaluate → adapt loop built on top.
 
@@ -95,7 +95,7 @@ for agent in env.agent_iter():
     if terminated or truncated:
         action = None
     else:
-        mask = info["action_mask"]          # np.ndarray of shape (29,), dtype int8
+        mask = info["action_mask"]          # np.ndarray of shape (26,), dtype int8
         action = env.action_space(agent).sample(mask)
     env.step(action)
 ```
@@ -112,15 +112,15 @@ for agent in env.agent_iter():
 
 **Spaces:**
 - `observation_space` → `Box(0.0, 1.0, (582,), float32)` — flat normalised feature vector
-- `action_space` → `Discrete(29)` — macro actions, see table below
+- `action_space` → `Discrete(26)` — macro actions, see table below
 
 **Rewards:** sparse — `+1.0` to winner, `-1.0` to all others at game end; `0.0` every other step.
 
 ---
 
-## Action encoding — macro actions (N = 29)
+## Action encoding — macro actions (N = 26)
 
-The policy does **not** choose primitive game moves. It chooses one complete **phase-plan per turn** from a fixed menu of 29 macros; each expands natively into a short primitive sequence the engine already accepts as a whole-turn batch (`BuildCities`, `BuyResourceBatch`). A game is ~50 macro decisions instead of ~600 primitive ones, which removes the compounding-error tax that capped every earlier learner.
+The policy does **not** choose primitive game moves. It chooses one complete **phase-plan per turn** from a fixed menu of 26 macros; each expands natively into a short primitive sequence the engine already accepts as a whole-turn batch (`BuildCities`, `BuyResourceBatch`). A game is ~50 macro decisions instead of ~600 primitive ones, which removes the compounding-error tax that capped every earlier learner.
 
 > **History:** until the Phase-2 rebuild this was a 94-id *primitive* space (`BuildCity` per city, `BuyResources` per unit, etc.). It was removed, not extended. Any policy trained against it is incompatible.
 
@@ -131,13 +131,16 @@ The policy does **not** choose primitive game moves. It chooses one complete **p
 | 7 | `AUCTION_RAISE` | Raise +1 over the standing bid (English-auction convention). No jump bids — self-play with a ±50 raise range learned large non-strategic jumps |
 | 8–14 | `BUILD_COUNT_BASE + n`, n = 0…6 | Build the **n cheapest** reachable cities you can pay for. `n = 0` is `DoneBuilding`. Cash is the only limit — no reserve is withheld |
 | 15 | `BUILD_DEFAULT` | Whatever the champion `hard` heuristic would build, **bit-exactly** (Gate 0). Last id so dedup prefers the explicit count; in practice a count always reproduces it, so this is dead weight kept as a safety valve for >6-city plans |
-| 16–22 | `BUY_COUNT_BASE + n`, n = 0…6 | Buy **n units of fuel**: the rack's firing needs first (the heuristic's own fill order), then a cheapest-burnable stockpile. `n = 0` is an empty batch. Cash is the only limit |
-| 23 | `BUY_DEFAULT` | The heuristic's resource batch, bit-exactly. Last id so dedup prefers the count; in practice it survives only for the >6-unit tail |
-| 24–26 | `DISCARD_PLANT` slot 0–2 | Index into the player's plants sorted by number; forced when winning a 4th plant |
-| 27 | `POWER_OPTIMAL` | The heuristic's optimal firing subset |
-| 28 | `POWER_NOTHING` | Power no cities (earn minimum income) |
+| 16 | `BUY_NOTHING` | Buy no fuel at all — the extreme "spend it all on cities" play |
+| 17 | `BUY_DEFAULT` | **One complete set** of fuel for the rack — the heuristic's batch, bit-exactly (Gate 0). The right move in the large majority of positions |
+| 18–19 | `BUY_SHORT_1` / `BUY_SHORT_2` | A complete set minus 1 / 2 units: keep the cash, leave part of the rack unfired |
+| 20–21 | `BUY_EXTRA_1` / `BUY_EXTRA_2` | A complete set plus 1 / 2 units of the cheapest burnable fuel: stockpile against a rising price track or a rival's demand |
+| 22 | `BUY_FILL` | Top every burnable fuel to the rack's storage cap, cash permitting — the maximal hoard |
+| 23–25 | `DISCARD_PLANT` slot 0–2 | Index into the player's plants sorted by number; forced when winning a 4th plant |
 
-**Auto-resolved phases.** `PowerCitiesFuel` (hybrid gas/oil split) and `DiscardResource` (hybrid-slot overflow) are minor tactical steps with no strategic content, so `macro_actions::resolve_auto_phases` settles them with the heuristic. They never consume a policy decision and have no macro ids.
+**The two ladders are shaped differently on purpose.** Cities are interchangeable — one more city is one more income step wherever it is — so the build menu is an *absolute* count. Fuel units are not: the rack dictates which fuels are useful and how many of each, so the buy menu is *relative to one complete set*. Under an absolute unit count the same id would mean different things to different racks ("buy 3" is a full set for a small rack, a half-fill for a large one), forcing the net to spend capacity on rack arithmetic it can already read off the observation and making a mis-picked id catastrophic rather than marginal.
+
+**Auto-resolved phases.** Powering (`Bureaucracy`), the hybrid gas/oil split (`PowerCitiesFuel`) and hybrid-slot overflow (`DiscardResource`) carry no strategic content the menu could express, so `macro_actions::resolve_auto_phases` settles them with the heuristic. They never consume a policy decision and have no macro ids. Powering was measured out: the teacher fired the optimal subset in **100%** of decisions and the only alternative the menu ever offered ("power nothing") was legal everywhere and correct nowhere — a trap that also cost ~9 of a seat's ~52 decisions per game.
 
 **Masking and dedup.** `info["action_mask"]` comes from `macro_actions::legal_macros`, which validates each macro by trial application on a cloned state **and drops duplicates** — a macro whose primitive expansion equals a lower-id macro's is marked illegal. So `BUILD_3` collapses onto `BUILD_2` when only two cities are affordable. Dedup is why id ordering matters: counts sit *below* `BUILD_DEFAULT` so that "build 2" is always id 10, never sometimes-10-sometimes-15 depending on whether the heuristic happened to agree.
 
@@ -149,20 +152,19 @@ The policy does **not** choose primitive game moves. It chooses one complete **p
 
 What the policy actually gets to decide, per phase, and how much of the menu is live in real play.
 
-> **Method.** All figures below are measured over 20 seeded 4-player games between champion `hard` heuristic bots (4,150 macro decisions), sampling `legal_macros` and `teacher_macro_id` at every decision point. Measured 2026-07-25. Two caveats: (1) "legal %" is a property of the *state distribution the heuristic generates* — a differently-behaved policy visits different states and would see different numbers; (2) "teacher %" describes the heuristic, which is the behavior-cloning target, not a ceiling on good play.
+> **Method.** All figures below are measured over 20 seeded 4-player games between champion `hard` heuristic bots (3,402 macro decisions), sampling `legal_macros` and `teacher_macro_id` at every decision point. Measured 2026-07-25, on the final action space. Two caveats: (1) "legal %" is a property of the *state distribution the heuristic generates* — a differently-behaved policy visits different states and would see different numbers; (2) "teacher %" describes the heuristic, which is the behavior-cloning target, not a ceiling on good play.
 
 ### Decision budget
 
 | Phase | Decisions / game (4 seats) | Live options (avg) | Menu size |
 |---|---:|---:|---:|
 | Auction — nominate | 37.4 | 5.01 | 7 |
-| Auction — bidding | 45.2 | 2.00 | 2 |
-| BuyResources | 37.4 | **6.04** | 8 |
+| Auction — bidding | 45.1 | 2.00 | 2 |
+| BuyResources | 37.4 | **5.89** | 7 |
 | BuildCities | 37.4 | 2.99 | 8 |
-| Bureaucracy (power) | 37.4 | 2.00 | 2 |
-| DiscardPlant | 12.8 | not sampled | 3 |
+| DiscardPlant | 12.8 | 3.00 | 3 |
 
-**≈208 macro decisions per game, ≈52 per seat** — one learner episode is ~52 steps over ~9 rounds. (The "~50 decisions" figure quoted elsewhere is per seat; ~600 was the old primitive count, also per seat.)
+**≈170 macro decisions per game, ≈43 per seat** — one learner episode is ~43 steps over ~9 rounds. (~600 was the old primitive count, per seat.) Powering used to add ~9 more steps per seat with one real option; auto-resolving it shortened every episode by ~18% and tightened credit assignment on the decisions that remain.
 
 ### Auction — the richest decision, split awkwardly in two
 
@@ -186,29 +188,35 @@ The teacher's spread here is healthy — it declines a third of the time and oth
 Two consequences worth knowing before training on this:
 
 1. **Behavior cloning teaches "never raise."** With a constant label on 99.7% of bidding states, a clone learns pass as its bidding policy, and self-play must discover contested bidding entirely on its own — starting from a maximally biased prior. This is a plausible contributor to the end-game weakness: a policy that cannot win a plant fight cannot build the capacity to close a game.
-2. **The +1 ladder reintroduces the compounding-error shape the macro rebuild removed.** Bidding 10 over base costs 10 sequential policy calls, each an independent chance to deviate. The rest of the action space is one-decision-per-turn; the auction is not. The +1 convention is deliberate (a ±50 jump-bid range was removed for producing large non-strategic raises — see the History note above), but the cost is real and currently unpriced.
+2. **It is the one phase that is not one-decision-per-turn.** Bidding 10 over base costs 10 sequential policy calls. That is a faithful English auction — each call really is "am I still willing at this price?" — and the alternative was measured worse (a ±50 jump-bid range taught large, non-strategic raises), so it is kept deliberately. But the cost is real, and it compounds with the constant teacher above.
 
 There is also a structural split: *which plant to nominate* and *how much it is worth* are separate decisions, made at different times, with other players' turns in between. The policy cannot express "nominate slot 3, willing to go to 25."
 
-### Resources — a quantity ladder (post-rewrite)
+### Resources — a ladder around one complete set
 
-| | BUY_0 | BUY_1 | BUY_2 | BUY_3 | BUY_4 | BUY_5 | BUY_6 | DEFAULT |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| legal | 100% | 98.1% | 95.9% | 88.8% | 84.4% | 69.7% | 62.6% | 4.5% |
-| teacher picks | 5.7% | 14.4% | 18.6% | **21.1%** | 17.9% | 11.4% | 6.3% | 4.5% |
+| | NOTHING | **SET** | SET−1 | SET−2 | SET+1 | SET+2 | FILL |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| legal | 100% | 94.3% | 79.8% | 61.2% | 95.6% | 86.5% | 71.4% |
+| teacher picks | 5.7% | **94.3%** | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
 
-At **6.04 live options** this is now the widest menu in the game, ahead of nominating. The rungs walk the heuristic's own fill order (`strategy::plan_essential_buys` with a unit cap — shared code, not a reimplementation), so the teacher's label reproduces bit-exactly and its distribution matches the heuristic's measured unit histogram term for term. `BUY_DEFAULT` survives dedup in exactly the 4.5% of decisions where the heuristic buys 7–8 units, which is precisely the safety-valve role intended for it.
+**5.89 live options** — the widest menu in the game. The teacher buys a complete set in 94.3% of decisions and nothing in the other 5.7%, which is the correct prior: filling the rack is the right move in the large majority of positions. Deviating is worth it in three situations the net must learn to recognise from the observation, none of them encoded here:
 
-Two rules make the ladder work, both mirroring the build ladder:
+- **more** (`SET+1`, `SET+2`, `FILL`) when a fuel is going scarce — the price track is climbing, or opponents' demand (an obs segment) is about to strip the market;
+- **less** (`SET−1`, `SET−2`) when the rack has far more capacity than the cities to use it, and the cash buys a better city;
+- **nothing** when the rack is already full.
 
-- **Cash is the only limit.** No reserve is withheld. The heuristic's own stockpile pass sits behind a `city_reserve + safety_buffer` gate — 140 Elektro for the champion profile — which is why the *n*>essential rungs are reachable here and were not before.
+Note this is *not* the same as the old constant-teacher problem. Then, the alternatives were unreachable — legal 0.1–36% and semantically broken. Now all five deviations are legal 61–96% of the time and each is one coherent strategic intent, so exploration has somewhere sane to go from a strong default.
+
+Two rules make the ladder work:
+
+- **Cash is the only limit.** No reserve is withheld, as in the build ladder. The heuristic's own stockpile pass sits behind a `city_reserve + safety_buffer` gate — 140 Elektro for the champion profile — which is why the "extra" rungs are reachable here and were not before.
 - **Only burnable fuel is bought.** Fuel the rack cannot fire is strictly wasted money, and hoarding to starve opponents is structurally weak in Power Grid anyway: storage caps at 2× firing cost, so you cannot deny a resource your own plants don't use.
 
-This is where the round's cash split is actually decided — `BuyResources` runs *before* `BuildCities`, so every Elektro spent on fuel is one unavailable for cities. The ladder is the first encoding that lets the policy express that tradeoff.
+Because `BuyResources` runs *before* `BuildCities`, this is also where the round's cash split is made — every Elektro spent on fuel is one unavailable for cities.
 
-> **What was replaced.** The previous menu — `BUY_NOTHING`, `BUY_DEFAULT`, `BUY_STOCKPILE2/3`, `BUY_DENIAL` — offered 2.39 live options and the teacher chose `BUY_DEFAULT` in **100%** of 748 decisions. `STOCKPILE2/3` could differ from the default in only 2.1% / 0.1% of decisions (storage caps at 2× firing cost, so "more rounds of fuel" is usually unstorable). `BUY_DENIAL` differed 99.9% of the time but was legal only 36.4%: it targeted the priciest fuel, uranium 59.4% of the time, which the actor could not store *at all* in 61.8% of decisions — collapsing to a no-op that deduped against `BUY_NOTHING`.
+> **What was replaced, twice.** The original menu (`BUY_NOTHING`, `BUY_DEFAULT`, `BUY_STOCKPILE2/3`, `BUY_DENIAL`) offered 2.39 live options and a *constant* teacher label. `STOCKPILE2/3` could differ from the default in only 2.1% / 0.1% of decisions (storage caps at 2× firing cost). `BUY_DENIAL` differed 99.9% of the time but was legal only 36.4%: it targeted the priciest fuel, uranium 59.4% of the time, which the actor could not store *at all* in 61.8% of decisions. An absolute unit ladder (`BUY_n`, n = 0…6) fixed reachability — 6.04 live options — but tied id meaning to rack size, and was replaced by the relative form above.
 
-### Cities — a clean count ladder (post-rewrite)
+### Cities — an absolute count ladder
 
 | | BUILD_0 | BUILD_1 | BUILD_2 | BUILD_3 | BUILD_4 | BUILD_5 | BUILD_6 | DEFAULT |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -221,30 +229,34 @@ The count is the strategic axis for two reasons the observation can support: mor
 
 **Accepted limitation:** *which* cities is not a decision. Greedy cheapest-first can expand in a strategically poor direction (into a corner, or away from a region that opens up in Step 2), and blocking is unavailable. `BUILD_BLOCK` was dropped because CMA-ES independently drove the heuristic's `block_weight` to zero; if a trained policy later shows it is losing games to positional network mistakes, this is the axis to re-add.
 
-### Bureaucracy — binary, and one side is never right
+### Powering and the auto-resolved phases — no decision at all
 
-| | POWER_OPTIMAL | POWER_NOTHING |
-|---|---:|---:|
-| legal | 100% | 100% |
-| teacher picks | **100%** | 0.0% |
+Powering used to be a macro pair, and measured as a pure trap: `POWER_OPTIMAL` was the teacher's choice in **100%** of decisions while `POWER_NOTHING` was legal in 100% and correct in none. It is now auto-resolved with the heuristic, along with the hybrid fuel split and resource discard.
 
-`POWER_NOTHING` is legal at every single decision and correct at none of them. The genuine decision the engine supports but the macro layer hides is powering a **subset**: `Action::PowerCities { plant_numbers }` accepts any set of plants, so declining to fire an expensive uranium plant when the income gain is below the fuel cost is a legal, sometimes-correct play. The macro layer offers only all-or-nothing, so the policy spends ~9 decisions per game on a choice with one real option.
+The genuine decision the engine supports but the macro layer never exposed is powering a **subset**: `Action::PowerCities { plant_numbers }` accepts any set of plants, so declining to fire an expensive uranium plant when the income gain is below the fuel's value is a legal, occasionally correct play. All-or-nothing could not express it. If a trained policy later shows it is losing games to fuel mismanagement, a proper partial-power ladder is the thing to add — not the old binary.
 
-### Cross-cutting: three of five decision types have a constant teacher
+### DiscardPlant — small but real
+
+| | slot 0 | slot 1 | slot 2 |
+|---|---:|---:|---:|
+| legal | 100% | 100% | 100% |
+| teacher picks | 87.5% | 11.4% | 1.2% |
+
+Forced when a 4th plant is won (12.8 decisions per game). All three options are always available and the teacher's choice varies, so this small menu is already well formed: drop the lowest-numbered plant most of the time, but not always.
+
+### Cross-cutting: where the teacher still can't teach
 
 | Decision | Teacher's most common label | Share |
 |---|---|---:|
 | Auction — nominate | (spread across 7) | 33.8% |
 | **Auction — bidding** | `AUCTION_PASS` | **99.7%** |
-| BuyResources | (spread across 8) | 21.1% |
+| BuyResources | `BUY_DEFAULT` (a complete set) | 94.3% |
 | BuildCities | (spread across 6) | 42.8% |
-| **Bureaucracy** | `POWER_OPTIMAL` | **100%** |
+| DiscardPlant | slot 0 | 87.5% |
 
-Behavior cloning and DAgger can only teach a phase whose label actually varies. Three now do — nominating, buying, and building — after the build and buy ladders converted two constant labels into real distributions.
+Every menu now has reachable, meaningful alternatives — which was the real problem, more than label entropy. A behavior clone learns a strong prior everywhere and has somewhere sane to explore from in every phase.
 
-Two remain constant. For bidding and powering the teacher is a constant function, so a clone learns that constant and every deviation must come from self-play against a prior that is maximally confident and wrong-by-omission. The open work, in order: (1) make contested bidding representable in fewer decisions, (2) allow partial powering.
-
----
+The one place that is still structurally awkward is **bidding**. It is a binary "stay in at +1 or drop out", so a contested auction costs one policy call per Elektro — bidding 10 over base is 10 sequential decisions. That is a faithful model of an English auction (each call really is "am I still willing at this price?"), and the alternative was measured worse: a ±50 jump-bid range was removed for teaching large, non-strategic raises. But combined with a teacher that passes 99.7% of the time, it means contested bidding is the one skill neither imitation nor a short rollout is likely to produce, and a policy that cannot win a plant fight cannot build the capacity to close a game.
 
 ## Observation encoding (dim = 582)
 
@@ -332,7 +344,7 @@ make test
 |---|---|
 | `crates/powergrid-py/Cargo.toml` | PyO3 crate manifest (pyo3 0.28, cdylib) |
 | `crates/powergrid-py/src/lib.rs` | `Game` class: native obs/mask/step methods (`observation`, `action_mask`, `apply_action_id`, `step_vs_bots`), `bot_decide_id`, `copy`, etc. |
-| `crates/powergrid-bot-strategy/src/macro_actions.rs` | The 29-macro action space: expansion, legality + dedup, teacher labels |
+| `crates/powergrid-bot-strategy/src/macro_actions.rs` | The 26-macro action space: expansion, legality + dedup, teacher labels |
 | `python/pyproject.toml` | Python package metadata (hatchling build backend) |
 | `python/Makefile` | `make develop` = build Rust + install Python |
 | `python/TRAINING.md` | Step-by-step training runbook |
@@ -340,7 +352,7 @@ make test
 | `python/src/powergrid_env/encoding.py` | `encode_observation` — the Python reference obs implementation used by the parity tests (includes the routing Dijkstra) |
 | `python/src/powergrid_env/env.py` | `PowerGridAECEnv` (PettingZoo AEC) |
 | `python/src/powergrid_env/single_agent.py` | `PowerGridSingleAgentEnv` (Gymnasium, vs Rust bots or frozen policy snapshots, native fast path) |
-| `python/src/powergrid_env/export.py` | `policy_state_dict_to_bytes` — PGRLPOL1 policy serialization (export script + self-play snapshots) |
+| `python/src/powergrid_env/export.py` | `policy_state_dict_to_bytes` — PGRLPOL2 policy serialization (export script + self-play snapshots) |
 | `python/src/powergrid_env/policies/` | `RandomPolicy`, `RustBotPolicy` |
 | `python/scripts/train_selfplay.py` | Frozen-opponent self-play MaskablePPO training |
 | `python/scripts/train_vs_bots.py` | Single-agent MaskablePPO vs Rust bots |

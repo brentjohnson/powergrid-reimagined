@@ -424,7 +424,7 @@ so you need to export first, then rebuild.
 | Flag | Meaning |
 |---|---|
 | `--model` (runs/vs_bots/best_model) | Source checkpoint (without `.zip`) |
-| `--out` (../assets/policies/expert.bin) | Destination for the flat `PGRLPOL1` binary weights file |
+| `--out` (../assets/policies/expert.bin) | Destination for the flat `PGRLPOL2` binary weights file |
 | `--golden` (../assets/policies/expert.golden.json) | Destination for a torch reference logit file used by the Rust parity test |
 
 After exporting:
@@ -542,7 +542,7 @@ landed:
   masking, and auction bidding is a single +1/pass action (since 2026-06-24),
   so there is no composite action left to factor.
 - **GNN map encoder** — consciously skipped: the in-game Expert bot's Rust
-  inference (`PGRLPOL1`) only runs a fixed two-hidden-layer MLP, and a policy
+  inference (`PGRLPOL2`) only runs a fixed two-hidden-layer MLP, and a policy
   that cannot be exported into the game is not useful here.
 
 ---
