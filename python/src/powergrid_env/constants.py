@@ -69,14 +69,13 @@ NOMINATE_BASE   = 0   # 0..5: nominate market actual slot
 N_NOMINATE      = 6
 AUCTION_PASS    = 6
 AUCTION_RAISE   = 7
-BUILD_NOTHING   = 8
-BUILD_DEFAULT   = 9
-BUILD_CHEAPEST_1 = 10
-BUILD_CHEAPEST_2 = 11
-BUILD_CHEAPEST_3 = 12
-BUILD_MAX       = 13
-BUILD_BLOCK     = 14
-BUILD_RACE      = 15
+# Build: the whole menu is "how many of the cheapest reachable cities".
+# BUILD_COUNT_BASE + n builds exactly n (n = 0 is DoneBuilding); BUILD_DEFAULT
+# is the heuristic's own plan, last so dedup prefers the explicit count.
+BUILD_COUNT_BASE = 8
+N_BUILD_COUNT   = 7   # n in 0..=6
+BUILD_NOTHING   = BUILD_COUNT_BASE      # alias: n = 0
+BUILD_DEFAULT   = 15
 BUY_NOTHING     = 16
 BUY_DEFAULT     = 17
 BUY_STOCKPILE2  = 18

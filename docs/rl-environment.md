@@ -129,12 +129,8 @@ The policy does **not** choose primitive game moves. It chooses one complete **p
 | 0–5 | `NOMINATE` market slot 0–5 | Auction with no standing bid: nominate an `actual` market plant |
 | 6 | `AUCTION_PASS` | Drop out of / decline the auction (both auction sub-phases) |
 | 7 | `AUCTION_RAISE` | Raise +1 over the standing bid (English-auction convention). No jump bids — self-play with a ±50 raise range learned large non-strategic jumps |
-| 8 | `BUILD_NOTHING` | `DoneBuilding` |
-| 9 | `BUILD_DEFAULT` | Whatever the champion `hard` heuristic would build, **bit-exactly** (Gate 0) |
-| 10–12 | `BUILD_CHEAPEST_1/2/3` | The 1 / 2 / 3 cheapest affordable cities |
-| 13 | `BUILD_MAX` | Greedy cheapest up to `end_game_cities − owned` |
-| 14 | `BUILD_BLOCK` | Most-contested cities first (most existing owners), then cheapest; limit 3 |
-| 15 | `BUILD_RACE` | Exactly enough to hit the end-game trigger this turn, or nothing (all-or-nothing) |
+| 8–14 | `BUILD_COUNT_BASE + n`, n = 0…6 | Build the **n cheapest** reachable cities you can pay for. `n = 0` is `DoneBuilding`. Cash is the only limit — no reserve is withheld |
+| 15 | `BUILD_DEFAULT` | Whatever the champion `hard` heuristic would build, **bit-exactly** (Gate 0). Last id so dedup prefers the explicit count; in practice a count always reproduces it, so this is dead weight kept as a safety valve for >6-city plans |
 | 16 | `BUY_NOTHING` | `DoneBuying` |
 | 17 | `BUY_DEFAULT` | The heuristic's resource batch, bit-exactly |
 | 18–19 | `BUY_STOCKPILE2/3` | The heuristic with `stockpile_rounds` forced to 2 / 3 rounds of fuel |
@@ -145,11 +141,9 @@ The policy does **not** choose primitive game moves. It chooses one complete **p
 
 **Auto-resolved phases.** `PowerCitiesFuel` (hybrid gas/oil split) and `DiscardResource` (hybrid-slot overflow) are minor tactical steps with no strategic content, so `macro_actions::resolve_auto_phases` settles them with the heuristic. They never consume a policy decision and have no macro ids.
 
-**Masking and dedup.** `info["action_mask"]` comes from `macro_actions::legal_macros`, which validates each macro by trial application on a cloned state **and drops duplicates** — a macro whose primitive expansion equals a lower-id macro's is marked illegal. So `BUILD_CHEAPEST_3` collapses onto `CHEAPEST_2` when only two cities are affordable, and `BUILD_MAX` is nearly always deduped against `BUILD_DEFAULT` (greedy-cheapest-to-the-cap *is* what the heuristic computes). Expect roughly 3 live build options per decision, not 8.
+**Masking and dedup.** `info["action_mask"]` comes from `macro_actions::legal_macros`, which validates each macro by trial application on a cloned state **and drops duplicates** — a macro whose primitive expansion equals a lower-id macro's is marked illegal. So `BUILD_3` collapses onto `BUILD_2` when only two cities are affordable. Dedup is why id ordering matters: counts sit *below* `BUILD_DEFAULT` so that "build 2" is always id 10, never sometimes-10-sometimes-15 depending on whether the heuristic happened to agree.
 
-**Alternative-plan cash rule.** The `CHEAPEST_*`/`MAX`/`BLOCK` build plans price cities exactly as the heuristic does: **all** of the player's money is available for cities the rack can power, and only *overbuild* past powering headroom is gated behind the fuel + auction reserve. Building is the last spend of the round (`BuyResources` runs before it, Bureaucracy income lands right after), so cash held back at build time cannot buy fuel this round. `BUILD_RACE` waives the reserve entirely, since reaching the trigger ends the game.
-
-**Imitation labels.** `Game.bot_decide_id(actor, difficulty)` returns the macro id the champion heuristic would play (`macro_actions::teacher_macro_id`) — always a `*_DEFAULT`/matching macro whose expansion is the heuristic's action bit-for-bit, so a policy that copies the teacher reproduces the heuristic exactly. This is the behavior-cloning / DAgger target.
+**Imitation labels.** `Game.bot_decide_id(actor, difficulty)` returns the macro id the champion heuristic would play (`macro_actions::teacher_macro_id`) — always the id that *survives dedup*, so the label is never an illegal action. This is the behavior-cloning / DAgger target.
 
 ---
 

@@ -41,14 +41,28 @@ pub const AUCTION_PASS: u16 = 6;
 /// Auction (standing bid): raise by +1 (English-auction convention).
 pub const AUCTION_RAISE: u16 = 7;
 
-pub const BUILD_NOTHING: u16 = 8;
-pub const BUILD_DEFAULT: u16 = 9;
-pub const BUILD_CHEAPEST_1: u16 = 10;
-pub const BUILD_CHEAPEST_2: u16 = 11;
-pub const BUILD_CHEAPEST_3: u16 = 12;
-pub const BUILD_MAX: u16 = 13;
-pub const BUILD_BLOCK: u16 = 14;
-pub const BUILD_RACE: u16 = 15;
+/// Build the `n` cheapest reachable cities, `n = id - BUILD_COUNT_BASE` in
+/// `0..=6`. `n = 0` is "build nothing" (`DoneBuilding`).
+///
+/// **How many** is the whole build decision, so it is the whole build menu. The
+/// count is what trades income against turn order (more cities = earlier in
+/// `player_order` = worse, since buying and building both run in reverse), and
+/// what expresses the end-game push; *which* cities is a near-forced greedy
+/// cheapest-first walk once the count is fixed. The previous menu
+/// (`CHEAPEST_1/2/3` + `MAX` + `BLOCK` + `RACE`) spanned the same axis with
+/// gaps, plus two plans that measured dead: `MAX` was 100% deduped against
+/// `BUILD_DEFAULT` (greedy-cheapest-to-the-cap *is* what the heuristic
+/// computes) and `RACE`'s all-or-nothing reach-the-trigger-this-turn condition
+/// is essentially never affordable. `BLOCK` was the only *which*-lever and is
+/// dropped with it: CMA-ES independently zeroed the heuristic's `block_weight`,
+/// i.e. chasing contested cities did not pay.
+pub const BUILD_COUNT_BASE: u16 = 8;
+pub const N_BUILD_COUNT: u16 = 7;
+/// Build exactly what the champion heuristic would. Kept as the last build id so
+/// dedup prefers the explicit count (stable id semantics for the net), and as the
+/// safety valve for plans no `BUILD_COUNT_*` can express (more than 6 cities, or
+/// a future profile whose ordering isn't plain cheapest-first).
+pub const BUILD_DEFAULT: u16 = 15;
 
 pub const BUY_NOTHING: u16 = 16;
 pub const BUY_DEFAULT: u16 = 17;
@@ -194,17 +208,14 @@ fn expand_auction(
 }
 
 fn expand_build(state: &GameState, actor: PlayerId, macro_id: u16) -> Option<Vec<Action>> {
-    match macro_id {
-        BUILD_NOTHING => Some(vec![Action::DoneBuilding]),
-        BUILD_DEFAULT => Some(vec![heuristic_action(state, actor)?]),
-        BUILD_CHEAPEST_1 => build_from_ids(cheapest_cities(state, actor, 1)),
-        BUILD_CHEAPEST_2 => build_from_ids(cheapest_cities(state, actor, 2)),
-        BUILD_CHEAPEST_3 => build_from_ids(cheapest_cities(state, actor, 3)),
-        BUILD_MAX => build_from_ids(max_expansion(state, actor)),
-        BUILD_BLOCK => build_from_ids(block_cities(state, actor)),
-        BUILD_RACE => build_from_ids(race_to_trigger(state, actor)),
-        _ => None,
+    if macro_id == BUILD_DEFAULT {
+        return Some(vec![heuristic_action(state, actor)?]);
     }
+    if (BUILD_COUNT_BASE..BUILD_COUNT_BASE + N_BUILD_COUNT).contains(&macro_id) {
+        let n = (macro_id - BUILD_COUNT_BASE) as usize;
+        return build_from_ids(cheapest_cities(state, actor, n));
+    }
+    None
 }
 
 fn build_from_ids(ids: Vec<String>) -> Option<Vec<Action>> {
@@ -279,61 +290,32 @@ fn buildable(state: &GameState, actor: PlayerId) -> Vec<(String, u32)> {
     out
 }
 
-/// The cash rules for building, mirroring `strategy::decide_build_cities`:
-/// **all** of the player's money is available for cities they can actually power,
-/// and only *overbuild* past powering headroom is gated behind a reserve.
+/// Greedily take the cheapest `limit` cities from `sorted` that the actor can
+/// pay for, re-simulating route cost as the network grows. Returns owned ids.
 ///
-/// Building is the last spend of the round (`BuyResources` runs before it and
-/// Bureaucracy income lands right after), so cash held back at build time cannot
-/// buy fuel this round. Reserving it up front — as this code used to, by capping
-/// the whole city budget at `money - fuel_reserve` — starved every alternative
-/// build plan: with the champion `hard` profile's `fuel_reserve_multiplier` of
-/// 10, the budget was 0 in ~85% of real build decisions, so `CHEAPEST_*`/`MAX`/
-/// `BLOCK`/`RACE` all collapsed onto `BUILD_NOTHING` and were deduped out of the
-/// legal mask. The policy's build menu was effectively just nothing-or-heuristic.
-struct BuildBudget {
-    /// Total cash available.
-    money: u32,
-    /// Cities buildable this turn that the rack can actually power. The first
-    /// `headroom` picks spend freely.
-    headroom: usize,
-    /// Surplus that must remain after each pick *beyond* `headroom`, since those
-    /// cities earn no income this round and only count toward the end trigger.
-    overbuild_reserve: u32,
-}
-
-fn build_budget(state: &GameState, actor: PlayerId) -> BuildBudget {
-    let Some(player) = state.player(actor) else {
-        return BuildBudget {
-            money: 0,
-            headroom: 0,
-            overbuild_reserve: 0,
-        };
-    };
-    let profile = expansion_profile();
-    let powerable: u8 = player.plants.iter().map(|p| p.cities).sum();
-    let owned = state.player_city_count(actor) as u8;
-    BuildBudget {
-        money: player.money,
-        headroom: powerable.saturating_sub(owned) as usize,
-        overbuild_reserve: features::fuel_reserve(player, &profile.buy, Some(&state.resources))
-            + profile.auction.city_reserve as u32
-            + profile.auction.safety_buffer as u32,
-    }
-}
-
-/// Greedily pick cities from `sorted` while affordable under `budget` (cost
-/// re-simulated as the network grows), up to `limit`. Returns owned ids.
+/// **The only constraint is cash.** No fuel/auction reserve is withheld: the
+/// count *is* the policy's decision, so refusing a requested city to protect a
+/// heuristic reserve would silently turn `BUILD_n` into `BUILD_m`, which is the
+/// failure this menu exists to remove. Two facts make spending down defensible:
+/// building is the last spend of the round (`BuyResources` runs before it and
+/// Bureaucracy income lands right after, so cash held back cannot buy fuel this
+/// round), and over-spending is a real strategic error the policy should be able
+/// to *make* and be punished for, not one the action space hides. A policy that
+/// wants a reserve picks a smaller `n`.
+///
+/// The heuristic's own conservatism still exists — inside [`BUILD_DEFAULT`],
+/// which delegates to `strategy::decide_build_cities` (full money up to powering
+/// headroom, reserve-gated overbuild past it) unchanged.
 fn greedy_pick(
     state: &GameState,
     actor: PlayerId,
     sorted: &[(String, u32)],
-    budget: &BuildBudget,
+    budget: u32,
     limit: usize,
 ) -> Vec<String> {
     let mut owned = state.player_cities(actor);
     let mut chosen = Vec::new();
-    let mut cash = budget.money;
+    let mut cash = budget;
     for (id, _) in sorted {
         if chosen.len() >= limit {
             break;
@@ -352,11 +334,6 @@ fn greedy_pick(
         if cost > cash {
             continue;
         }
-        // Past powering headroom the city earns nothing this round, so it comes
-        // out of surplus only — the heuristic's `overbuild_ok` rule.
-        if chosen.len() >= budget.headroom && cash - cost < budget.overbuild_reserve {
-            continue;
-        }
         cash -= cost;
         owned.push(id.clone());
         chosen.push(id.clone());
@@ -364,65 +341,18 @@ fn greedy_pick(
     chosen
 }
 
-fn cheapest_cities(state: &GameState, actor: PlayerId, k: usize) -> Vec<String> {
-    let sorted = buildable(state, actor);
-    let budget = build_budget(state, actor);
-    greedy_pick(state, actor, &sorted, &budget, k)
-}
-
-fn max_expansion(state: &GameState, actor: PlayerId) -> Vec<String> {
-    let sorted = buildable(state, actor);
-    let budget = build_budget(state, actor);
+/// The `n` cheapest cities the actor can afford, capped by the end-game trigger
+/// (cities past it are pure waste — the game ends the moment it is reached).
+fn cheapest_cities(state: &GameState, actor: PlayerId, n: usize) -> Vec<String> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let money = state.player(actor).map(|p| p.money).unwrap_or(0);
     let cap = state
         .end_game_cities
         .saturating_sub(state.player_city_count(actor) as u8) as usize;
-    greedy_pick(state, actor, &sorted, &budget, cap)
-}
-
-/// Build most-contested cities first (occupied by opponents), then cheapest.
-fn block_cities(state: &GameState, actor: PlayerId) -> Vec<String> {
-    let mut sorted = buildable(state, actor);
-    // Re-sort: more existing owners first (contested), then cheaper, then id.
-    sorted.sort_by(|a, b| {
-        let oa = state
-            .map
-            .cities
-            .get(&a.0)
-            .map(|c| c.owners.len())
-            .unwrap_or(0);
-        let ob = state
-            .map
-            .cities
-            .get(&b.0)
-            .map(|c| c.owners.len())
-            .unwrap_or(0);
-        ob.cmp(&oa).then(a.1.cmp(&b.1)).then_with(|| a.0.cmp(&b.0))
-    });
-    let budget = build_budget(state, actor);
-    // Only worthwhile if a contested city exists; otherwise let dedup drop it.
-    greedy_pick(state, actor, &sorted, &budget, 3)
-}
-
-/// Build up to the end-game trigger this turn if affordable (race to end).
-fn race_to_trigger(state: &GameState, actor: PlayerId) -> Vec<String> {
-    let owned = state.player_city_count(actor) as u8;
-    let need = state.end_game_cities.saturating_sub(owned) as usize;
-    if need == 0 {
-        return Vec::new();
-    }
     let sorted = buildable(state, actor);
-    // Reaching the trigger ends the game at Bureaucracy, so there is no next
-    // round to reserve auction/fuel cash for — spend it all. (Leftover money is
-    // only the second tiebreak behind powered cities in `finish_ranks`.)
-    let mut budget = build_budget(state, actor);
-    budget.overbuild_reserve = 0;
-    let chosen = greedy_pick(state, actor, &sorted, &budget, need);
-    // Only a "race" if it actually reaches the trigger; else empty (deduped away).
-    if chosen.len() == need {
-        chosen
-    } else {
-        Vec::new()
-    }
+    greedy_pick(state, actor, &sorted, money, n.min(cap))
 }
 
 // ---------------------------------------------------------------------------
@@ -560,15 +490,19 @@ pub fn teacher_macro_id(state: &GameState, actor: PlayerId) -> Option<u16> {
             }
             _ => return None,
         },
-        // For build/buy/power the teacher always maps to the DEFAULT-family macro,
-        // whose expansion is bit-exactly `decide_with_bot`'s action — and which is
-        // the id that survives dedup (BUILD_DEFAULT collapses onto BUILD_NOTHING
-        // only when the heuristic itself emits DoneBuilding, handled below).
-        Phase::BuildCities { .. } => match &action {
-            Action::DoneBuilding => BUILD_NOTHING,
-            Action::BuildCities { .. } | Action::BuildCity { .. } => BUILD_DEFAULT,
-            _ => return None,
-        },
+        // Build: the label must be the id that SURVIVES dedup, or it would name an
+        // illegal action. `BUILD_COUNT_*` sit below `BUILD_DEFAULT`, so whenever a
+        // count reproduces the heuristic's plan exactly it shadows `BUILD_DEFAULT`
+        // and becomes the label; `BUILD_DEFAULT` remains the answer only for plans
+        // no count can express (>6 cities). With the champion profile the two
+        // agree almost always — same candidate ordering, same greedy walk — so the
+        // teacher usually speaks in counts, which is what we want the net to learn.
+        Phase::BuildCities { .. } => {
+            let expected = vec![action.clone()];
+            (BUILD_COUNT_BASE..BUILD_COUNT_BASE + N_BUILD_COUNT)
+                .find(|&id| expand_macro(state, actor, id).as_ref() == Some(&expected))
+                .unwrap_or(BUILD_DEFAULT)
+        }
         Phase::BuyResources { .. } => match &action {
             Action::DoneBuying => BUY_NOTHING,
             // Empty or non-empty batch: BUY_DEFAULT expands to this exact action

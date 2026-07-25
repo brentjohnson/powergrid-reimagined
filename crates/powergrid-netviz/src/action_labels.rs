@@ -2,10 +2,9 @@
 //! (`powergrid_bot_strategy::macro_actions`), used by the netviz output panel.
 
 use powergrid_bot_strategy::macro_actions::{
-    AUCTION_PASS, AUCTION_RAISE, BUILD_BLOCK, BUILD_CHEAPEST_1, BUILD_CHEAPEST_2, BUILD_CHEAPEST_3,
-    BUILD_DEFAULT, BUILD_MAX, BUILD_NOTHING, BUILD_RACE, BUY_DEFAULT, BUY_DENIAL, BUY_NOTHING,
-    BUY_STOCKPILE2, BUY_STOCKPILE3, DISCARD_PLANT_BASE, NOMINATE_BASE, N_DISCARD_PLANT, N_NOMINATE,
-    POWER_NOTHING, POWER_OPTIMAL,
+    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_DEFAULT, BUY_DENIAL,
+    BUY_NOTHING, BUY_STOCKPILE2, BUY_STOCKPILE3, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT,
+    N_DISCARD_PLANT, N_NOMINATE, POWER_NOTHING, POWER_OPTIMAL,
 };
 
 /// Human-readable label for macro id `id` (0..N_ACTIONS).
@@ -17,14 +16,13 @@ pub fn action_label(id: usize) -> String {
         }
         AUCTION_PASS => "Auction:Pass".to_string(),
         AUCTION_RAISE => "Auction:Raise+1".to_string(),
-        BUILD_NOTHING => "Build:Nothing".to_string(),
         BUILD_DEFAULT => "Build:Default".to_string(),
-        BUILD_CHEAPEST_1 => "Build:Cheapest1".to_string(),
-        BUILD_CHEAPEST_2 => "Build:Cheapest2".to_string(),
-        BUILD_CHEAPEST_3 => "Build:Cheapest3".to_string(),
-        BUILD_MAX => "Build:Max".to_string(),
-        BUILD_BLOCK => "Build:Block".to_string(),
-        BUILD_RACE => "Build:Race".to_string(),
+        i if (BUILD_COUNT_BASE..BUILD_COUNT_BASE + N_BUILD_COUNT).contains(&i) => {
+            match i - BUILD_COUNT_BASE {
+                0 => "Build:Nothing".to_string(),
+                n => format!("Build:{n} cheapest"),
+            }
+        }
         BUY_NOTHING => "Buy:Nothing".to_string(),
         BUY_DEFAULT => "Buy:Default".to_string(),
         BUY_STOCKPILE2 => "Buy:Stockpile2".to_string(),
