@@ -147,6 +147,103 @@ The policy does **not** choose primitive game moves. It chooses one complete **p
 
 ---
 
+## Phase-by-phase decision analysis
+
+What the policy actually gets to decide, per phase, and how much of the menu is live in real play.
+
+> **Method.** All figures below are measured over 20 seeded 4-player games between champion `hard` heuristic bots (4,150 macro decisions), sampling `legal_macros` and `teacher_macro_id` at every decision point. Measured 2026-07-25. Two caveats: (1) "legal %" is a property of the *state distribution the heuristic generates* — a differently-behaved policy visits different states and would see different numbers; (2) "teacher %" describes the heuristic, which is the behavior-cloning target, not a ceiling on good play.
+
+### Decision budget
+
+| Phase | Decisions / game (4 seats) | Live options (avg) | Menu size |
+|---|---:|---:|---:|
+| Auction — nominate | 37.4 | **5.01** | 7 |
+| Auction — bidding | 45.2 | 2.00 | 2 |
+| BuyResources | 37.4 | 2.39 | 5 |
+| BuildCities | 37.4 | **2.99** | 8 |
+| Bureaucracy (power) | 37.4 | 2.00 | 2 |
+| DiscardPlant | 12.8 | not sampled | 3 |
+
+**≈208 macro decisions per game, ≈52 per seat** — one learner episode is ~52 steps over ~9 rounds. (The "~50 decisions" figure quoted elsewhere is per seat; ~600 was the old primitive count, also per seat.)
+
+### Auction — the richest decision, split awkwardly in two
+
+The auction is the only phase with a genuinely wide menu, and the only one where the policy makes *two different kinds* of decision.
+
+**Nominating** (7 ids: 6 market slots + pass) is where plant choice happens. The four `actual` slots are legal ~92–99% of the time; slots 4–5 only exist in Step 3, when the market widens to six, hence their ~13–15%.
+
+| | NOM_0 | NOM_1 | NOM_2 | NOM_3 | NOM_4 | NOM_5 | PASS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| legal | 98.7% | 97.7% | 95.6% | 92.1% | 14.6% | 12.7% | 89.3% |
+| teacher picks | 4.1% | 7.0% | 15.2% | 30.5% | 4.0% | 5.3% | 33.8% |
+
+The teacher's spread here is healthy — it declines a third of the time and otherwise favours the higher-numbered (more capable) plants. This is the one phase where behavior cloning transfers real strategy.
+
+**Bidding** (2 ids: `+1` or pass) is where the menu stops carrying the decision:
+
+- The teacher **passes 99.7%** of bidding decisions and raises 0.3%.
+- Only **30.1%** of the 279 auctions see even one raise; the average auction sees **0.39** raises total.
+- Of the 110 raises played, 102 exceeded the plant's base price — by **1.1 Elektro on average**. Plants essentially sell at their printed number.
+
+Two consequences worth knowing before training on this:
+
+1. **Behavior cloning teaches "never raise."** With a constant label on 99.7% of bidding states, a clone learns pass as its bidding policy, and self-play must discover contested bidding entirely on its own — starting from a maximally biased prior. This is a plausible contributor to the end-game weakness: a policy that cannot win a plant fight cannot build the capacity to close a game.
+2. **The +1 ladder reintroduces the compounding-error shape the macro rebuild removed.** Bidding 10 over base costs 10 sequential policy calls, each an independent chance to deviate. The rest of the action space is one-decision-per-turn; the auction is not. The +1 convention is deliberate (a ±50 jump-bid range was removed for producing large non-strategic raises — see the History note above), but the cost is real and currently unpriced.
+
+There is also a structural split: *which plant to nominate* and *how much it is worth* are separate decisions, made at different times, with other players' turns in between. The policy cannot express "nominate slot 3, willing to go to 25."
+
+### Resources — nominally 5 options, effectively binary
+
+| | BUY_NOTHING | BUY_DEFAULT | STOCKPILE2 | STOCKPILE3 | DENIAL |
+|---|---:|---:|---:|---:|---:|
+| legal | 100% | 100% | 2.1% | 0.1% | 36.4% |
+| teacher picks | 0.0% | **100%** | 0.0% | 0.0% | 0.0% |
+
+The teacher plays `BUY_DEFAULT` in **every single** buy decision across all 748 samples. The three alternatives contribute almost nothing:
+
+- **`STOCKPILE2/3` are near-dead by construction.** Plant storage caps at 2× firing cost, so "hold more rounds of fuel" usually *cannot* differ from the default buy — you physically can't store it. Measured: `STOCKPILE2`'s expansion differs from `BUY_DEFAULT` in only **2.1%** of decisions, `STOCKPILE3` in 0.1%.
+- **`BUY_DENIAL` is structurally broken.** It differs from the default in 99.9% of decisions but is legal in only 36.4%. Cause: it targets the resource with the highest expected unit price, which is **uranium 59.4%** of the time, and the actor cannot store *any* of the chosen target in **61.8%** of decisions — so it produces `DoneBuying` and is deduped against `BUY_NOTHING`. More fundamentally, denial is weak in Power Grid by design: you can only hoard fuel you can burn, so you cannot starve a rival of a resource your own rack doesn't use.
+
+This is the same disease the build menu had before the count-ladder rewrite: a menu whose alternatives are unreachable, leaving nothing-or-heuristic.
+
+**What the menu is missing.** `BuyResources` runs *before* `BuildCities` in the round, so this is where the cash split between fuel and cities is actually decided — and there is no way to express it. The teacher's actual buys are small and varied (avg 9.4 Elektro, 0–8 units, mode 3), which is a real distribution the current five ids cannot span. The step-2 treatment applied here would be a **quantity ladder** — buy fuel for n rounds of firing, or spend up to n/k of cash — replacing all three alternatives.
+
+### Cities — a clean count ladder (post-rewrite)
+
+| | BUILD_0 | BUILD_1 | BUILD_2 | BUILD_3 | BUILD_4 | BUILD_5 | BUILD_6 | DEFAULT |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| legal | 100% | 89.0% | 66.7% | 29.7% | 9.2% | 3.2% | 1.1% | 0.0% |
+| teacher picks | 12.3% | 26.1% | **42.8%** | 16.0% | 2.7% | 0.1% | 0.0% | 0.0% |
+
+The menu now spans the decision monotonically, the teacher's label is genuinely varied, and the ladder tops out well above what anyone reaches (the teacher never exceeds 5). `BUILD_DEFAULT` is never legal — a count always reproduces the heuristic exactly — so it costs one id as insurance against a future profile whose ordering isn't cheapest-first.
+
+The count is the strategic axis for two reasons the observation can support: more cities means more income but an **earlier** turn-order position, which is a disadvantage (both buying and building run in reverse player order); and building past powering headroom is how the end-game trigger is reached. Because `BUILD_n` is limited only by cash, the end-game push is now expressible — the previous menu could not express it at all.
+
+**Accepted limitation:** *which* cities is not a decision. Greedy cheapest-first can expand in a strategically poor direction (into a corner, or away from a region that opens up in Step 2), and blocking is unavailable. `BUILD_BLOCK` was dropped because CMA-ES independently drove the heuristic's `block_weight` to zero; if a trained policy later shows it is losing games to positional network mistakes, this is the axis to re-add.
+
+### Bureaucracy — binary, and one side is never right
+
+| | POWER_OPTIMAL | POWER_NOTHING |
+|---|---:|---:|
+| legal | 100% | 100% |
+| teacher picks | **100%** | 0.0% |
+
+`POWER_NOTHING` is legal at every single decision and correct at none of them. The genuine decision the engine supports but the macro layer hides is powering a **subset**: `Action::PowerCities { plant_numbers }` accepts any set of plants, so declining to fire an expensive uranium plant when the income gain is below the fuel cost is a legal, sometimes-correct play. The macro layer offers only all-or-nothing, so the policy spends ~9 decisions per game on a choice with one real option.
+
+### Cross-cutting: three of five decision types have a constant teacher
+
+| Decision | Teacher's most common label | Share |
+|---|---|---:|
+| Auction — nominate | (spread across 7) | 33.8% |
+| **Auction — bidding** | `AUCTION_PASS` | **99.7%** |
+| **BuyResources** | `BUY_DEFAULT` | **100%** |
+| BuildCities | (spread across 6) | 42.8% |
+| **Bureaucracy** | `POWER_OPTIMAL` | **100%** |
+
+Behavior cloning and DAgger can only teach the two phases with a varied label — nominating and building. For bidding, buying, and powering, the teacher is a constant function, so a clone learns a constant and every deviation must come from self-play against a prior that is maximally confident and wrong-by-omission. Ranked by expected value, the open work is: (1) give the buy phase a real ladder, (2) make contested bidding representable in fewer decisions, (3) allow partial powering.
+
+---
+
 ## Observation encoding (dim = 582)
 
 All values are normalised and clamped to `[0, 1]`. Segments in order:
