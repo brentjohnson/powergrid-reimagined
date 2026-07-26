@@ -3,8 +3,8 @@
 # sweep_selfplay.sh — launch 8 parallel self-play variants from one behavior clone.
 #
 # WAVE 3 (2026-07-26) — FULL RESET. The macro action space was rebuilt (build is a
-# count ladder, buy is per-fuel none/1-round/2-round, powering is auto-resolved,
-# PGRLPOL1 -> PGRLPOL3),
+# count ladder, buy is per-plant none/1-set/2-sets, powering is auto-resolved,
+# PGRLPOL1 -> PGRLPOL4),
 # so *every* prior checkpoint is invalid, including the wave-2 winners. There is
 # no common ancestor to resume from any more. The sweep now starts from a
 # BEHAVIOR CLONE of the champion heuristic and asks a different question:
@@ -76,7 +76,7 @@
 #
 # Env overrides (all optional):
 #   TOTAL_TIMESTEPS=50000000   timesteps per variant
-#   CLONE=../alphazero/runs/clone_w3/clone.bin   PGRLPOL3 warm-start weights
+#   CLONE=../alphazero/runs/clone_w3/clone.bin   PGRLPOL4 warm-start weights
 #   SWEEP_DIR=runs/sweep3      root for the per-variant run dirs
 #   NET_WIDTH=128              must match the clone's width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
@@ -128,7 +128,7 @@ VARIANTS=(
 "w1-clone-anchor|201|clone|BASELINE. The clone plus everything wave 2 proved: big batch (1024), constant small lr (1e-4), no shaping, terminal reward only. Every other arm is this with ONE knob moved, so any difference is attributable.|--terminal-reward placement"
 "w2-vf-warmup|202|clone|The warm start leaves the CRITIC RANDOM, so early advantages are noise that can wreck a good clone. Let the critic catch up fast (vf-coef 0.5 -> 1.0) while the policy barely moves (n-epochs 4 -> 2).|--terminal-reward placement --vf-coef 1.0 --n-epochs 2"
 "w3-tiny-lr|203|clone|Same risk, blunter answer: make the policy nearly immovable (lr 1e-4 -> 3e-5) until the critic means something. If w3 >> w1 the clone is being damaged at 1e-4; if w3 ~= w1 it is not, and w1's larger steps are free.|--terminal-reward placement --learning-rate 3e-5"
-"w4-explore|204|clone|A clone of a deterministic teacher is peaked, so it may NEVER sample the ladder rungs the action-space rebuild added (per-fuel 1/2-round presses, BUILD_n). Entropy 0.03 -> 0.01: enough to try them, far below the 0.10 that collapsed wave 2.|--terminal-reward placement --ent-coef 0.01"
+"w4-explore|204|clone|A clone of a deterministic teacher is peaked, so it may NEVER sample the ladder rungs the action-space rebuild added (per-plant 1/2-set presses, BUILD_n). Entropy 0.03 -> 0.01: enough to try them, far below the 0.10 that collapsed wave 2.|--terminal-reward placement --ent-coef 0.01"
 "w5-winloss|205|clone|Isolates the reward shape. Wave 2 could not separate placement from win/loss on a converged policy (29% vs 26% base, inside noise). With a fresh critic the denser rank signal should matter more — this is the control that proves or kills it.|--terminal-reward winloss"
 "w6-bot-anchor|206|clone|A clone self-playing is mostly playing the teacher, so early self-play may add little. Weight the league toward the heuristic (0.45/0.50/0.05 -> 0.30/0.30/0.40) to keep the learner honest against the bar it is scored on.|--terminal-reward placement --league-mix 0.30,0.30,0.40"
 "w7-shaped-start|207|clone|The one arm that reintroduces shaping, for a NEW reason: the critic is random at step 0 and the powered-cities bonus is a dense signal to bootstrap it. Annealed to 0 over the first fifth so it cannot distort the converged policy.|--terminal-reward placement --reward-shaping --shaping-mode absolute --anneal-shaping-steps 10000000"

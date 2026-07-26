@@ -22,7 +22,7 @@ use crate::encoding::{N_ACTIONS, OBS_SIZE};
 // check alone would have let a stale policy load and silently play a scrambled
 // action map. The magic is the layout epoch: bump it whenever macro ids are
 // renumbered, even if `N_ACTIONS` is unchanged.
-const MAGIC: &[u8; 8] = b"PGRLPOL3";
+const MAGIC: &[u8; 8] = b"PGRLPOL4";
 const HEADER_LEN: usize = 8 + 3 * 4;
 
 const EMBEDDED_POLICY: &[u8] = include_bytes!("../../../assets/policies/expert.bin");

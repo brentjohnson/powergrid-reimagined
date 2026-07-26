@@ -3,11 +3,9 @@
 
 use powergrid_bot_strategy::macro_actions::{
     AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_DEFAULT, BUY_DONE,
-    BUY_FUEL1_BASE, BUY_FUEL2_BASE, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT, N_BUY_FUELS,
-    N_DISCARD_PLANT, N_NOMINATE,
+    BUY_PLANT1_BASE, BUY_PLANT2_BASE, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT,
+    N_BUY_PLANT_SLOTS, N_DISCARD_PLANT, N_NOMINATE,
 };
-
-const FUEL_NAMES: [&str; 4] = ["coal", "oil", "gas", "uranium"];
 
 /// Human-readable label for macro id `id` (0..N_ACTIONS).
 pub fn action_label(id: usize) -> String {
@@ -27,11 +25,11 @@ pub fn action_label(id: usize) -> String {
         }
         BUY_DONE => "Buy:Done".to_string(),
         BUY_DEFAULT => "Buy:Default".to_string(),
-        i if (BUY_FUEL1_BASE..BUY_FUEL1_BASE + N_BUY_FUELS).contains(&i) => {
-            format!("Buy:1 round {}", FUEL_NAMES[(i - BUY_FUEL1_BASE) as usize])
+        i if (BUY_PLANT1_BASE..BUY_PLANT1_BASE + N_BUY_PLANT_SLOTS).contains(&i) => {
+            format!("Buy:1 set[plant {}]", i - BUY_PLANT1_BASE)
         }
-        i if (BUY_FUEL2_BASE..BUY_FUEL2_BASE + N_BUY_FUELS).contains(&i) => {
-            format!("Buy:2 rounds {}", FUEL_NAMES[(i - BUY_FUEL2_BASE) as usize])
+        i if (BUY_PLANT2_BASE..BUY_PLANT2_BASE + N_BUY_PLANT_SLOTS).contains(&i) => {
+            format!("Buy:2 sets[plant {}]", i - BUY_PLANT2_BASE)
         }
         i if (DISCARD_PLANT_BASE..DISCARD_PLANT_BASE + N_DISCARD_PLANT).contains(&i) => {
             format!("DiscardPlant[slot {}]", i - DISCARD_PLANT_BASE)
