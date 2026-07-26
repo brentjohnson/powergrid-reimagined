@@ -401,6 +401,7 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
         &mut sim_player,
         &mut budget,
         &mut purchases,
+        !0, // every plant
     );
 
     // Pass 3: stockpile cheap fuel ahead of future dearness. The essential
@@ -439,14 +440,29 @@ fn decide_buy_resources(state: &GameState, bot: &mut Bot) -> Option<Action> {
 /// the coming firing, in the canonical order (passes 1 and 2 of
 /// [`decide_buy_resources`]). Factored out to keep the cumulative hybrid-pool
 /// bookkeeping in one place.
-fn plan_essential_buys(
+/// `slots` is a bitmask over plant **slots** — slot `i` is the player's `i`-th
+/// plant by number, which is how `player.plants` is kept sorted (`rules.rs`
+/// re-sorts on every acquisition) and how the observation and `DISCARD_PLANT`
+/// index them. Only selected plants contribute to the cumulative pool targets,
+/// which is what makes "fuel this subset of my rack" well defined on a shared
+/// pool: the requirement is the sum over the *declared* set, so there is no
+/// question of how much existing stock "belongs" to a given plant. The heuristic
+/// passes `!0` (every plant).
+pub(crate) fn plan_essential_buys(
     sim_market: &mut ResourceMarket,
     sim_player: &mut Player,
     budget: &mut u32,
     purchases: &mut Vec<(Resource, u8)>,
+    slots: u8,
 ) {
     // Most cities first; break ties by plant number (smaller = cheaper to fuel).
-    let mut plants = sim_player.plants.clone();
+    let mut plants: Vec<PowerPlant> = sim_player
+        .plants
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i < 8 && slots & (1 << i) != 0)
+        .map(|(_, p)| p.clone())
+        .collect();
     plants.sort_by(|a, b| b.cities.cmp(&a.cities).then(a.number.cmp(&b.number)));
 
     // `buy_for_plant` raises a *shared* fuel pool up to `target` total units, so the

@@ -76,21 +76,15 @@ N_BUILD_COUNT   = 7   # n in 0..=6
 BUILD_NOTHING   = BUILD_COUNT_BASE      # alias: n = 0
 # No build-default: a count always reproduces the heuristic (measured legal 0 /
 # 1504 decisions), so it was a permanently-masked output unit.
-# Buy: per-PLANT fuel — none / one set / two sets. Two is the ceiling, not a
-# design choice: storage caps at 2x cost per plant. Per plant because fuel is
-# spent in indivisible plant-sized chunks, so the plant quantizes the purchase —
-# a coal-2 + coal-4 rack has a real "buy 4 coal" decision that summing demand
-# per fuel (0/6/12) cannot name. Slot i = i-th plant by number, the same order
-# the observation and DISCARD_PLANT use. BUY_PLANT* presses use the additive
-# BuyResources primitive and compose; BUY_DONE ends the turn. BUY_DEFAULT is the
-# heuristic's whole batch in one shot (Gate 0).
-BUY_DONE        = 15
-BUY_DEFAULT     = 16  # load-bearing: presses are ADDITIVE, the heuristic TOPS UP,
-                      # and 28% of buy decisions have carry-over fuel where the
-                      # two differ. Without it the heuristic's plan is unplayable.
-BUY_PLANT1_BASE = 17  # 17..19: one set for plant slot 0..2
-BUY_PLANT2_BASE = 20  # 20..22: two sets (the storage cap), same slot order
-N_BUY_PLANT_SLOTS = 3
+# Buy: a BITMASK over plant slots — choose which plants you intend to fire, then
+# top those up to a full firing's worth, counting what you already hold. Bit i =
+# plant slot i (i-th plant by number, the same order the observation and
+# DISCARD_PLANT use). Mask 0 buys nothing. 3-plant rack cap -> 8 subsets.
+# Declaring the subset is what makes this well defined on a shared fuel pool, and
+# top-up (not additive) is why no heuristic escape hatch is needed: the full-rack
+# mask reproduces the champion's buy bit-for-bit, carry-over included.
+BUY_SUBSET_BASE = 15  # 15..22: mask over plant slots
+N_BUY_SUBSETS   = 8
 DISCARD_PLANT_BASE = 23  # 23..25: discard owned plant slot 0..2 (by number)
 N_DISCARD_PLANT = 3
 # Powering has no macro: Bureaucracy is auto-resolved with the heuristic (the

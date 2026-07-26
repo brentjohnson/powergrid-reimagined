@@ -2,9 +2,8 @@
 //! (`powergrid_bot_strategy::macro_actions`), used by the netviz output panel.
 
 use powergrid_bot_strategy::macro_actions::{
-    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUY_DEFAULT, BUY_DONE, BUY_PLANT1_BASE,
-    BUY_PLANT2_BASE, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT, N_BUY_PLANT_SLOTS,
-    N_DISCARD_PLANT, N_NOMINATE,
+    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUY_SUBSET_BASE, DISCARD_PLANT_BASE,
+    NOMINATE_BASE, N_BUILD_COUNT, N_BUY_SUBSETS, N_DISCARD_PLANT, N_NOMINATE,
 };
 
 /// Human-readable label for macro id `id` (0..N_ACTIONS).
@@ -22,13 +21,17 @@ pub fn action_label(id: usize) -> String {
                 n => format!("Build:{n} cheapest"),
             }
         }
-        BUY_DONE => "Buy:Done".to_string(),
-        BUY_DEFAULT => "Buy:Default".to_string(),
-        i if (BUY_PLANT1_BASE..BUY_PLANT1_BASE + N_BUY_PLANT_SLOTS).contains(&i) => {
-            format!("Buy:1 set[plant {}]", i - BUY_PLANT1_BASE)
-        }
-        i if (BUY_PLANT2_BASE..BUY_PLANT2_BASE + N_BUY_PLANT_SLOTS).contains(&i) => {
-            format!("Buy:2 sets[plant {}]", i - BUY_PLANT2_BASE)
+        i if (BUY_SUBSET_BASE..BUY_SUBSET_BASE + N_BUY_SUBSETS).contains(&i) => {
+            let mask = i - BUY_SUBSET_BASE;
+            if mask == 0 {
+                "Buy:Nothing".to_string()
+            } else {
+                let plants: Vec<String> = (0..3)
+                    .filter(|b| mask & (1 << b) != 0)
+                    .map(|b| b.to_string())
+                    .collect();
+                format!("Buy:fuel plants [{}]", plants.join(","))
+            }
         }
         i if (DISCARD_PLANT_BASE..DISCARD_PLANT_BASE + N_DISCARD_PLANT).contains(&i) => {
             format!("DiscardPlant[slot {}]", i - DISCARD_PLANT_BASE)

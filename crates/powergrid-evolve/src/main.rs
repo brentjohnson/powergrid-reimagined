@@ -40,7 +40,7 @@ struct Config {
     /// --opponents / --pool-dir). The sharp "can anything beat 3× this?" probe.
     opponent_toml: Option<PathBuf>,
     /// If set, skip training: the candidate seat is driven by this native RL
-    /// policy (PGRLPOL5 `.bin`) instead of a profile; evaluate on the seed block
+    /// policy (PGRLPOL6 `.bin`) instead of a profile; evaluate on the seed block
     /// and exit. The held-out policy gate. Combine with `--seed-base 90000+`.
     policy_file: Option<PathBuf>,
     /// `--policy-file` only: play the policy greedily (argmax) instead of
@@ -158,7 +158,7 @@ fn print_help() {
          --cma-seed S             RNG seed for CMA sampling (default 42)\n\
          --eval-toml FILE         score this profile's `hard` on the seed block and exit\n\
                                   (no training; use --seed-base 90000+ for held-out)\n\
-         --policy-file FILE       score this native RL policy (PGRLPOL5 .bin) as the\n\
+         --policy-file FILE       score this native RL policy (PGRLPOL6 .bin) as the\n\
                                   candidate seat and exit (the held-out policy gate)\n\
          --greedy                 with --policy-file: argmax play (stronger for BC\n\
                                   clones; matches the alphazero arena eval)\n\
