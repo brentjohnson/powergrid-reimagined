@@ -1,5 +1,5 @@
 """
-Serialization of an sb3 MaskablePPO policy network to the flat PGRLPOL2 binary
+Serialization of an sb3 MaskablePPO policy network to the flat PGRLPOL3 binary
 consumed by Rust (powergrid-bot-strategy/src/policy.rs::MlpPolicy::from_bytes).
 
 Only the policy path is exported (the value head is not needed for play):
@@ -7,7 +7,7 @@ Only the policy path is exported (the value head is not needed for play):
     obs(OBS_SIZE) -> Linear -> tanh -> Linear -> tanh -> Linear -> logits(N_ACTIONS)
 
 Binary layout (all little-endian):
-    8 bytes   magic b"PGRLPOL2"
+    8 bytes   magic b"PGRLPOL3"
     3 * u32   obs_size, hidden, n_actions
     f32[]     l1.weight, l1.bias, l2.weight, l2.bias, out.weight, out.bias
               (torch row-major order: weight[out][in])
@@ -23,7 +23,7 @@ from .constants import N_ACTIONS, OBS_SIZE
 # Layout epoch, not just a format tag: bump whenever macro ids are renumbered,
 # even if N_ACTIONS is unchanged, so a stale policy fails to load instead of
 # silently playing a scrambled action map. See policy.rs.
-MAGIC = b"PGRLPOL2"
+MAGIC = b"PGRLPOL3"
 # Value network: same MLP shape as the policy but a single scalar output (the
 # acting seat's expected return / win-value). Used by the Rust play-time search
 # (search.rs) as the MCTS leaf value — one forward pass instead of a rollout.
@@ -152,7 +152,7 @@ def value_state_dict_to_bytes(state_dict) -> bytes:
     """Serialize the value path of a MaskablePPO ``policy.state_dict()`` to the
     flat PGRLVAL1 binary consumed by Rust (``policy.rs::ValueNet::from_bytes``).
 
-    Layout mirrors PGRLPOL2: magic + (obs_size, hidden, out_dim=1) + the six
+    Layout mirrors PGRLPOL3: magic + (obs_size, hidden, out_dim=1) + the six
     f32 tensor blocks (l1/l2/out weight+bias, torch row-major)."""
     out = bytearray(VALUE_MAGIC)
     out += struct.pack("<III", OBS_SIZE, _value_hidden_size(state_dict), VALUE_OUT_DIM)

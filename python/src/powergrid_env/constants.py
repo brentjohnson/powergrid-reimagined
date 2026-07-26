@@ -76,23 +76,23 @@ BUILD_COUNT_BASE = 8
 N_BUILD_COUNT   = 7   # n in 0..=6
 BUILD_NOTHING   = BUILD_COUNT_BASE      # alias: n = 0
 BUILD_DEFAULT   = 15
-# Buy: a ladder relative to ONE COMPLETE SET of fuel for the rack, not an
-# absolute unit count — fuel units aren't interchangeable, so "a full set, ± a
-# bit" is the decision, and a relative id means the same thing at every rack
-# size. BUY_DEFAULT is the complete set (== the heuristic, Gate 0).
-BUY_NOTHING     = 16
-BUY_DEFAULT     = 17  # one complete set
-BUY_SHORT_1     = 18
-BUY_SHORT_2     = 19
-BUY_EXTRA_1     = 20
-BUY_EXTRA_2     = 21
-BUY_FILL        = 22  # top all burnable fuel to the storage cap
-DISCARD_PLANT_BASE = 23  # 23..25: discard owned plant slot 0..2 (by number)
+# Buy: per-FUEL levels — none / one round / two rounds. Two is the ceiling, not
+# a design choice: storage caps at 2x demand. Per fuel rather than per plant
+# because fuel is fungible within a pool (two coal plants share one coal stock),
+# so "fuel plant A but not B" is not a distinct state. The BUY_FUEL* presses use
+# the additive BuyResources primitive and compose; BUY_DONE ends the turn.
+# BUY_DEFAULT is the heuristic's whole batch in one shot (Gate 0).
+BUY_DONE        = 16
+BUY_DEFAULT     = 17
+BUY_FUEL1_BASE  = 18  # 18..21: one round of coal / oil / gas / uranium
+BUY_FUEL2_BASE  = 22  # 22..25: two rounds (the storage cap), same order
+N_BUY_FUELS     = 4
+DISCARD_PLANT_BASE = 26  # 26..28: discard owned plant slot 0..2 (by number)
 N_DISCARD_PLANT = 3
 # Powering has no macro: Bureaucracy is auto-resolved with the heuristic (the
 # teacher fired the optimal subset 100% of the time and "power nothing" was
 # legal everywhere and correct nowhere).
-N_ACTIONS       = 26
+N_ACTIONS       = 29
 
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +

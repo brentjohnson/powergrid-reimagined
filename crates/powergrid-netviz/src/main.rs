@@ -1,6 +1,6 @@
 //! Interactive inspector for the RL Expert policy network.
 //!
-//! Load a `PGRLPOL2` policy file (or use the embedded `expert.bin`), edit the
+//! Load a `PGRLPOL3` policy file (or use the embedded `expert.bin`), edit the
 //! 454-dim observation with labeled sliders, and watch the forward pass —
 //! input cells, both 64-wide hidden layers, and the 94 output logits — update
 //! live. Click a node to trace its full weighted path through every layer

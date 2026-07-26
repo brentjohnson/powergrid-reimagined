@@ -216,7 +216,7 @@ def main():
                              "updates on a plateaued policy.")
     parser.add_argument("--init-policy-from", default=None,
                         help="Warm-start a FRESH run from a behavior clone: path to a "
-                             "PGRLPOL2 .bin (as written by alphazero/export.py or "
+                             "PGRLPOL3 .bin (as written by alphazero/export.py or "
                              "scripts/export_policy.py). Loads the three policy layers "
                              "and leaves the value head freshly initialised, so the "
                              "first updates should use a small --learning-rate. "

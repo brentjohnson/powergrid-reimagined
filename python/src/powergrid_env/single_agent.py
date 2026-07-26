@@ -102,7 +102,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         # Frozen-opponent self-play: probability that an episode uses "hard"
         # heuristic bots instead of the policy snapshot (grounding/diversity).
         self.bot_mix = bot_mix
-        # Snapshot bytes (PGRLPOL2) for "policy" opponents; applied at reset.
+        # Snapshot bytes (PGRLPOL3) for "policy" opponents; applied at reset.
         self._opponent_policy_bytes: bytes | None = None
         # League pool: list of (kind, payload, weight) sampled per episode.
         # When set, it takes precedence over the single snapshot + bot_mix.
@@ -233,14 +233,14 @@ class PowerGridSingleAgentEnv(gym.Env):
 
     def set_opponent_policy(self, data: bytes) -> None:
         """Frozen self-play hook (called via VecEnv.env_method): snapshot of
-        the learner's policy in PGRLPOL2 bytes (powergrid_env.export). Applies
+        the learner's policy in PGRLPOL3 bytes (powergrid_env.export). Applies
         from the next reset; the episode in progress keeps its opponents."""
         self._opponent_policy_bytes = data
 
     def set_opponent_pool(self, entries: list[tuple[str, object, float]]) -> None:
         """League hook (called via VecEnv.env_method): weighted opponent pool
         sampled independently at each reset. Each entry is (kind, payload,
-        weight): kind "policy" with PGRLPOL2 bytes, or "bots" with a heuristic
+        weight): kind "policy" with PGRLPOL3 bytes, or "bots" with a heuristic
         difficulty string. Overrides set_opponent_policy/bot_mix while set;
         pass None or [] to fall back to them."""
         if not entries:
@@ -249,7 +249,7 @@ class PowerGridSingleAgentEnv(gym.Env):
         for kind, payload, weight in entries:
             if kind == "policy":
                 if not isinstance(payload, bytes):
-                    raise ValueError("'policy' pool entries need PGRLPOL2 bytes")
+                    raise ValueError("'policy' pool entries need PGRLPOL3 bytes")
             elif kind == "bots":
                 if payload not in ("easy", "normal", "hard", "expert"):
                     raise ValueError(f"unknown bot difficulty {payload!r}")

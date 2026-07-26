@@ -5,7 +5,7 @@ import pytest
 
 
 def make_policy_bytes(rng: np.random.Generator, hidden: int = 64) -> bytes:
-    """Valid PGRLPOL2 blob with small random weights (a 'random' policy).
+    """Valid PGRLPOL3 blob with small random weights (a 'random' policy).
 
     ``hidden`` is the (equal-width) hidden size; the loader reads it from the
     header, so any value the Rust port accepts works here.
