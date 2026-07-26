@@ -179,10 +179,10 @@ progress from the resumed checkpoint's step count rather than from zero.
 `scripts/sweep_selfplay.sh` launches 8 self-play variants in parallel, each
 differing from a baseline arm in a single knob.
 
-**Wave 3 (2026-07-25) is a full reset.** The macro action space was rebuilt
-(build and buy are quantity ladders, powering is auto-resolved, `PGRLPOL1` →
-`PGRLPOL6`), so every prior checkpoint is invalid and there is no common
-ancestor left to resume from. The sweep now starts from a **behavior clone** of
+**Wave 3 (2026-07-26) is a full reset.** The macro action space was rebuilt —
+build is a count ladder, buy is a bitmask of which plants to fuel, powering is
+auto-resolved, and the policy format is now `PGRLPOL6` — so every prior
+checkpoint is invalid and there is no common ancestor left to resume from. The sweep now starts from a **behavior clone** of
 the champion heuristic and asks a different question: *given a policy that
 already plays like the `hard` bot, what finetuning recipe improves it instead of
 destroying it?*
@@ -206,6 +206,19 @@ Then:
 ./scripts/sweep_selfplay.sh --h2h          # RELATIVE: each variant vs 3x the baseline arm
 ./scripts/sweep_selfplay.sh --stop
 ```
+
+**Score the clone before launching.** It is the reference point every arm is
+measured against, and a weak one invalidates the sweep:
+
+```bash
+cargo run -p powergrid-evolve --release -- \
+    --policy-file alphazero/runs/clone_w3/clone.bin --greedy \
+    --opponent-toml assets/bots/default.toml
+```
+
+`--greedy` matters — a behavior clone plays materially stronger with argmax than
+with sampling, and the macro action space removed the stall risk that made greedy
+unusable under the primitive encoding.
 
 **The risk the sweep is designed around.** `--init-policy-from` loads only the
 three policy layers; the **value head stays randomly initialised**, so the first
@@ -238,7 +251,10 @@ Two ranking commands, because they answer different questions:
 - `--h2h` is the **relative** ranking: each variant in seat 0 against three
   copies of the baseline arm, for once several arms clear the bot bar.
 
-`COMPARE_GAMES` and `COMPARE_SEED` override the defaults for both.
+`COMPARE_GAMES` and `COMPARE_SEED` override the defaults for both, and
+`COMPARE_DETERMINISTIC=1` ranks with argmax instead of sampling — worth a second
+look for clone-derived policies, though the sampled numbers stay primary since
+training is stochastic.
 
 Each variant gets its own run dir under `runs/sweep3/` (own league, tb log and
 `best_model.zip`). Re-running is idempotent: launching is the same command as

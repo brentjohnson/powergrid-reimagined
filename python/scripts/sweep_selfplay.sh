@@ -2,12 +2,13 @@
 #
 # sweep_selfplay.sh — launch 8 parallel self-play variants from one behavior clone.
 #
-# WAVE 3 (2026-07-26) — FULL RESET. The macro action space was rebuilt (build is a
-# count ladder, buy is per-plant none/1-set/2-sets, powering is auto-resolved,
-# PGRLPOL1 -> PGRLPOL6),
-# so *every* prior checkpoint is invalid, including the wave-2 winners. There is
-# no common ancestor to resume from any more. The sweep now starts from a
-# BEHAVIOR CLONE of the champion heuristic and asks a different question:
+# WAVE 3 (2026-07-26) — FULL RESET. The macro action space was rebuilt: build is
+# a count ladder, buy is a bitmask of which plants to fuel, powering is
+# auto-resolved, every phase is one decision per turn, and the policy format is
+# now PGRLPOL6. *Every* prior checkpoint is invalid, including the wave-2
+# winners. There is no common ancestor to resume from any more. The sweep now
+# starts from a BEHAVIOR CLONE of the champion heuristic and asks a different
+# question:
 #
 #     Given a policy that already plays like the `hard` bot, what finetuning
 #     recipe improves it instead of destroying it?
@@ -35,6 +36,13 @@
 #       loads only the policy, so the critic is random and shaping gives it a
 #       dense early signal. That is a critic-bootstrap argument, not the
 #       policy-teaching argument that failed before.
+#     * "A behavior clone is too peaked to explore." That was true when the buy
+#       teacher was a single constant macro. The subset rebuild made buy's
+#       imitation label VARIED (spread across all 8 masks, top mask only 24%), so
+#       three of five decision types now teach a real distribution — nominate,
+#       buy and build — where two did before. The clone should therefore be both
+#       stronger and less deterministic than earlier waves assumed, which raises
+#       the bar w8-scratch has to clear and re-aims w4 (below).
 #
 # THE MAIN RISK this sweep is designed around: --init-policy-from loads the three
 # policy layers and leaves the VALUE HEAD randomly initialised. The first updates
@@ -51,6 +59,19 @@
 #       --export alphazero/runs/clone_w3/clone.bin
 #
 # `--net-width` there MUST match NET_WIDTH here; the loader refuses a mismatch.
+#
+# WORTH DOING FIRST — score the clone, since it is the reference point every arm
+# is measured against and a weak one invalidates the whole sweep:
+#
+#   cargo run -p powergrid-evolve --release -- \
+#       --policy-file alphazero/runs/clone_w3/clone.bin --greedy \
+#       --opponent-toml assets/bots/default.toml
+#
+# `--greedy` matters: a behavior clone plays materially stronger with argmax than
+# with sampling (sampling picks the teacher's non-top move a fraction of the
+# time), and with the macro action space greedy no longer risks the stalls the
+# primitive encoding had. If the clone is far under the hard bot's own seat-0
+# share, fix the clone before burning 8 x 50M timesteps on finetuning it.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -81,6 +102,11 @@
 #   NET_WIDTH=128              must match the clone's width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
 #   THREADS=3                  torch/OMP threads per variant (8 x 3 = 24 of 28 cores)
+#   COMPARE_GAMES=200  COMPARE_SEED=12345
+#   COMPARE_DETERMINISTIC=1    rank with argmax instead of sampling. Worth a
+#                              second look for clone-derived policies, which play
+#                              stronger greedily; training is stochastic, so the
+#                              sampled numbers remain the primary ranking.
 #   NICE=10  STAGGER=15  DRY_RUN=1
 #
 set -euo pipefail
@@ -128,7 +154,7 @@ VARIANTS=(
 "w1-clone-anchor|201|clone|BASELINE. The clone plus everything wave 2 proved: big batch (1024), constant small lr (1e-4), no shaping, terminal reward only. Every other arm is this with ONE knob moved, so any difference is attributable.|--terminal-reward placement"
 "w2-vf-warmup|202|clone|The warm start leaves the CRITIC RANDOM, so early advantages are noise that can wreck a good clone. Let the critic catch up fast (vf-coef 0.5 -> 1.0) while the policy barely moves (n-epochs 4 -> 2).|--terminal-reward placement --vf-coef 1.0 --n-epochs 2"
 "w3-tiny-lr|203|clone|Same risk, blunter answer: make the policy nearly immovable (lr 1e-4 -> 3e-5) until the critic means something. If w3 >> w1 the clone is being damaged at 1e-4; if w3 ~= w1 it is not, and w1's larger steps are free.|--terminal-reward placement --learning-rate 3e-5"
-"w4-explore|204|clone|A clone of a deterministic teacher is peaked, so it may NEVER sample the ladder rungs the action-space rebuild added (per-plant 1/2-set presses, BUILD_n). Entropy 0.03 -> 0.01: enough to try them, far below the 0.10 that collapsed wave 2.|--terminal-reward placement --ent-coef 0.01"
+"w4-low-entropy|204|clone|Entropy DOWN (0.03 -> 0.01). The rebuild widened the live menus (buy 2.39 -> 3.84 options, build 2.04 -> 2.99), so a fixed ent-coef now buys more exploration than it did — and the clone is already stochastic where the teacher is (nominate/buy/build). The risk is now over- not under-exploration; this tests whether sharpening beats the default.|--terminal-reward placement --ent-coef 0.01"
 "w5-winloss|205|clone|Isolates the reward shape. Wave 2 could not separate placement from win/loss on a converged policy (29% vs 26% base, inside noise). With a fresh critic the denser rank signal should matter more — this is the control that proves or kills it.|--terminal-reward winloss"
 "w6-bot-anchor|206|clone|A clone self-playing is mostly playing the teacher, so early self-play may add little. Weight the league toward the heuristic (0.45/0.50/0.05 -> 0.30/0.30/0.40) to keep the learner honest against the bar it is scored on.|--terminal-reward placement --league-mix 0.30,0.30,0.40"
 "w7-shaped-start|207|clone|The one arm that reintroduces shaping, for a NEW reason: the critic is random at step 0 and the powered-cities bonus is a dense signal to bootstrap it. Annealed to 0 over the first fifth so it cannot distort the converged policy.|--terminal-reward placement --reward-shaping --shaping-mode absolute --anneal-shaping-steps 10000000"
@@ -236,8 +262,9 @@ status() {
 # directions and the metric stays informative for the whole run.
 compare() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
+    local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
     echo "=== baseline: 4x hard bots ($games games) — seat 0's structural share ==="
-    "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
+    "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
         --player hard --player hard --player hard --player hard
     for i in "${!VARIANTS[@]}"; do
         local name model
@@ -245,7 +272,7 @@ compare() {
         [[ -f ${model}.zip ]] || continue
         echo
         echo "=== $name (seat 0) vs 3x hard ($games games) ==="
-        "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
+        "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
             --player "$model" --player hard --player hard --player hard
     done
 }
@@ -256,10 +283,11 @@ compare() {
 # ancestor is a clone rather than a checkpoint.
 h2h() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
+    local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
     local base="$SWEEP_DIR/$BASELINE/best_model"
     [[ -f ${base}.zip ]] || { echo "baseline $BASELINE has no best_model yet" >&2; exit 1; }
     echo "=== self-baseline: 4x $BASELINE ($games games) ==="
-    "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
+    "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
         --player "$base" --player "$base" --player "$base" --player "$base"
     for i in "${!VARIANTS[@]}"; do
         local name model
@@ -268,7 +296,7 @@ h2h() {
         [[ -f ${model}.zip ]] || continue
         echo
         echo "=== $name (seat 0) vs 3x $BASELINE ($games games) ==="
-        "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet \
+        "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
             --player "$model" --player "$base" --player "$base" --player "$base"
     done
 }
@@ -322,8 +350,8 @@ echo "target         : $TOTAL_TIMESTEPS timesteps per variant"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
 echo
-echo "NOTE: no league seeding. Snapshots from earlier waves are PGRLPOL1 files"
-echo "      from a dead layout epoch and are rejected on load, by design."
+echo "NOTE: no league seeding. Snapshots from earlier waves are from dead layout"
+echo "      epochs (PGRLPOL1..5) and are rejected on load, by design."
 echo
 
 mkdir -p "$SWEEP_DIR"
