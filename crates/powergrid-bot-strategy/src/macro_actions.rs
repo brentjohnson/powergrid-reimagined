@@ -52,18 +52,22 @@ pub const AUCTION_RAISE: u16 = 7;
 /// cheapest-first walk once the count is fixed. The previous menu
 /// (`CHEAPEST_1/2/3` + `MAX` + `BLOCK` + `RACE`) spanned the same axis with
 /// gaps, plus two plans that measured dead: `MAX` was 100% deduped against
-/// `BUILD_DEFAULT` (greedy-cheapest-to-the-cap *is* what the heuristic
+/// the heuristic itself (greedy-cheapest-to-the-cap *is* what the heuristic
 /// computes) and `RACE`'s all-or-nothing reach-the-trigger-this-turn condition
 /// is essentially never affordable. `BLOCK` was the only *which*-lever and is
 /// dropped with it: CMA-ES independently zeroed the heuristic's `block_weight`,
 /// i.e. chasing contested cities did not pay.
 pub const BUILD_COUNT_BASE: u16 = 8;
 pub const N_BUILD_COUNT: u16 = 7;
-/// Build exactly what the champion heuristic would. Kept as the last build id so
-/// dedup prefers the explicit count (stable id semantics for the net), and as the
-/// safety valve for plans no `BUILD_COUNT_*` can express (more than 6 cities, or
-/// a future profile whose ordering isn't plain cheapest-first).
-pub const BUILD_DEFAULT: u16 = 15;
+// There is deliberately NO build-default macro. One existed as a safety valve for
+// plans no count could express, and measured completely dead: over 1504 build
+// decisions it was legal 0 times, was the teacher's label 0 times, and the
+// heuristic never built more than 6 cities. A count always reproduces it, so it
+// was an output unit that could never receive gradient. If a future expansion
+// profile ever orders candidates by something other than cheapest-first,
+// `teacher_macro_id` returns `None` for the build phase and Gate 0 fails loudly
+// in test — which is the right place to find out, and better insurance than a
+// permanently-masked id.
 
 // --- Buy: per-plant fuel — none / one set / two sets -----------------------
 //
@@ -93,10 +97,10 @@ pub const BUILD_DEFAULT: u16 = 15;
 // in the rest, because the shortfall came out of carry-over surplus.
 //
 /// End the buy turn having bought nothing more (`DoneBuying`).
-pub const BUY_DONE: u16 = 16;
+pub const BUY_DONE: u16 = 15;
 /// Buy exactly what the champion heuristic would, as one batch, and end the turn.
 /// Gate 0 for this phase, and the imitation label.
-pub const BUY_DEFAULT: u16 = 17;
+pub const BUY_DEFAULT: u16 = 16;
 /// Buy **one set** of fuel for plant slot 0..=2 — one firing's worth.
 ///
 /// Emits the additive `Action::BuyResources` primitive, which does *not* end the
@@ -104,16 +108,16 @@ pub const BUY_DEFAULT: u16 = 17;
 /// uranium, done". A press that could buy nothing (storage full, unaffordable,
 /// market empty, or a wind plant that burns nothing) expands to `None` and is
 /// masked out — so the turn can always be ended but never spun on.
-pub const BUY_PLANT1_BASE: u16 = 18;
+pub const BUY_PLANT1_BASE: u16 = 17;
 /// Buy **two sets** for plant slot 0..=2 — its storage ceiling. Same slot order.
-pub const BUY_PLANT2_BASE: u16 = 21;
+pub const BUY_PLANT2_BASE: u16 = 20;
 pub const N_BUY_PLANT_SLOTS: u16 = 3;
 
 /// Discard one owned plant (when a 4th was just bought): slot 0..=2 by number.
-pub const DISCARD_PLANT_BASE: u16 = 24;
+pub const DISCARD_PLANT_BASE: u16 = 23;
 pub const N_DISCARD_PLANT: u16 = 3;
 
-pub const N_MACROS: usize = 27;
+pub const N_MACROS: usize = 26;
 
 // ---------------------------------------------------------------------------
 // Canonical expansion profile
@@ -244,9 +248,6 @@ fn expand_auction(
 }
 
 fn expand_build(state: &GameState, actor: PlayerId, macro_id: u16) -> Option<Vec<Action>> {
-    if macro_id == BUILD_DEFAULT {
-        return Some(vec![heuristic_action(state, actor)?]);
-    }
     if (BUILD_COUNT_BASE..BUILD_COUNT_BASE + N_BUILD_COUNT).contains(&macro_id) {
         let n = (macro_id - BUILD_COUNT_BASE) as usize;
         return build_from_ids(cheapest_cities(state, actor, n));
@@ -407,9 +408,9 @@ fn buildable(state: &GameState, actor: PlayerId) -> Vec<(String, u32)> {
 /// to *make* and be punished for, not one the action space hides. A policy that
 /// wants a reserve picks a smaller `n`.
 ///
-/// The heuristic's own conservatism still exists — inside [`BUILD_DEFAULT`],
-/// which delegates to `strategy::decide_build_cities` (full money up to powering
-/// headroom, reserve-gated overbuild past it) unchanged.
+/// The heuristic's own conservatism lives in `strategy::decide_build_cities`
+/// (full money up to powering headroom, reserve-gated overbuild past it), which
+/// the count ladder deliberately does not inherit.
 fn greedy_pick(
     state: &GameState,
     actor: PlayerId,
@@ -541,18 +542,15 @@ pub fn teacher_macro_id(state: &GameState, actor: PlayerId) -> Option<u16> {
             }
             _ => return None,
         },
-        // Build: the label must be the id that SURVIVES dedup, or it would name an
-        // illegal action. `BUILD_COUNT_*` sit below `BUILD_DEFAULT`, so whenever a
-        // count reproduces the heuristic's plan exactly it shadows `BUILD_DEFAULT`
-        // and becomes the label; `BUILD_DEFAULT` remains the answer only for plans
-        // no count can express (>6 cities). With the champion profile the two
-        // agree almost always — same candidate ordering, same greedy walk — so the
-        // teacher usually speaks in counts, which is what we want the net to learn.
+        // Build: the label is the count whose expansion equals the heuristic's
+        // action. With the champion profile one always does — same candidate
+        // ordering, same greedy walk — so there is no default to fall back on.
+        // `None` here means a count could NOT reproduce the heuristic, which is
+        // a real regression: Gate 0 asserts on it rather than papering over it.
         Phase::BuildCities { .. } => {
             let expected = vec![action.clone()];
             (BUILD_COUNT_BASE..BUILD_COUNT_BASE + N_BUILD_COUNT)
-                .find(|&id| expand_macro(state, actor, id).as_ref() == Some(&expected))
-                .unwrap_or(BUILD_DEFAULT)
+                .find(|&id| expand_macro(state, actor, id).as_ref() == Some(&expected))?
         }
         // Buy: the heuristic emits one whole-turn batch, which is precisely what
         // BUY_DEFAULT expands to — so the label stays a single bit-exact macro

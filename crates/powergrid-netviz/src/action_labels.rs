@@ -2,9 +2,9 @@
 //! (`powergrid_bot_strategy::macro_actions`), used by the netviz output panel.
 
 use powergrid_bot_strategy::macro_actions::{
-    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUILD_DEFAULT, BUY_DEFAULT, BUY_DONE,
-    BUY_PLANT1_BASE, BUY_PLANT2_BASE, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT,
-    N_BUY_PLANT_SLOTS, N_DISCARD_PLANT, N_NOMINATE,
+    AUCTION_PASS, AUCTION_RAISE, BUILD_COUNT_BASE, BUY_DEFAULT, BUY_DONE, BUY_PLANT1_BASE,
+    BUY_PLANT2_BASE, DISCARD_PLANT_BASE, NOMINATE_BASE, N_BUILD_COUNT, N_BUY_PLANT_SLOTS,
+    N_DISCARD_PLANT, N_NOMINATE,
 };
 
 /// Human-readable label for macro id `id` (0..N_ACTIONS).
@@ -16,7 +16,6 @@ pub fn action_label(id: usize) -> String {
         }
         AUCTION_PASS => "Auction:Pass".to_string(),
         AUCTION_RAISE => "Auction:Raise+1".to_string(),
-        BUILD_DEFAULT => "Build:Default".to_string(),
         i if (BUILD_COUNT_BASE..BUILD_COUNT_BASE + N_BUILD_COUNT).contains(&i) => {
             match i - BUILD_COUNT_BASE {
                 0 => "Build:Nothing".to_string(),

@@ -4,7 +4,7 @@
 #
 # WAVE 3 (2026-07-26) — FULL RESET. The macro action space was rebuilt (build is a
 # count ladder, buy is per-plant none/1-set/2-sets, powering is auto-resolved,
-# PGRLPOL1 -> PGRLPOL4),
+# PGRLPOL1 -> PGRLPOL5),
 # so *every* prior checkpoint is invalid, including the wave-2 winners. There is
 # no common ancestor to resume from any more. The sweep now starts from a
 # BEHAVIOR CLONE of the champion heuristic and asks a different question:
@@ -76,7 +76,7 @@
 #
 # Env overrides (all optional):
 #   TOTAL_TIMESTEPS=50000000   timesteps per variant
-#   CLONE=../alphazero/runs/clone_w3/clone.bin   PGRLPOL4 warm-start weights
+#   CLONE=../alphazero/runs/clone_w3/clone.bin   PGRLPOL5 warm-start weights
 #   SWEEP_DIR=runs/sweep3      root for the per-variant run dirs
 #   NET_WIDTH=128              must match the clone's width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)

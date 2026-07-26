@@ -181,7 +181,7 @@ differing from a baseline arm in a single knob.
 
 **Wave 3 (2026-07-25) is a full reset.** The macro action space was rebuilt
 (build and buy are quantity ladders, powering is auto-resolved, `PGRLPOL1` →
-`PGRLPOL4`), so every prior checkpoint is invalid and there is no common
+`PGRLPOL5`), so every prior checkpoint is invalid and there is no common
 ancestor left to resume from. The sweep now starts from a **behavior clone** of
 the champion heuristic and asks a different question: *given a policy that
 already plays like the `hard` bot, what finetuning recipe improves it instead of
@@ -459,7 +459,7 @@ so you need to export first, then rebuild.
 | Flag | Meaning |
 |---|---|
 | `--model` (runs/vs_bots/best_model) | Source checkpoint (without `.zip`) |
-| `--out` (../assets/policies/expert.bin) | Destination for the flat `PGRLPOL4` binary weights file |
+| `--out` (../assets/policies/expert.bin) | Destination for the flat `PGRLPOL5` binary weights file |
 | `--golden` (../assets/policies/expert.golden.json) | Destination for a torch reference logit file used by the Rust parity test |
 
 After exporting:
@@ -577,7 +577,7 @@ landed:
   masking, and auction bidding is a single +1/pass action (since 2026-06-24),
   so there is no composite action left to factor.
 - **GNN map encoder** — consciously skipped: the in-game Expert bot's Rust
-  inference (`PGRLPOL4`) only runs a fixed two-hidden-layer MLP, and a policy
+  inference (`PGRLPOL5`) only runs a fixed two-hidden-layer MLP, and a policy
   that cannot be exported into the game is not useful here.
 
 ---

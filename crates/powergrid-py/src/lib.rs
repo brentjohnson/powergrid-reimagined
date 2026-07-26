@@ -60,7 +60,7 @@ impl Game {
         })
     }
 
-    /// Load a frozen policy snapshot (PGRLPOL4 bytes, as written by
+    /// Load a frozen policy snapshot (PGRLPOL5 bytes, as written by
     /// `export_policy.py` / `policy_state_dict_to_bytes`) to drive opponent
     /// seats when `step_vs_bots`/`advance_bots` are called with
     /// difficulty `"policy"`.

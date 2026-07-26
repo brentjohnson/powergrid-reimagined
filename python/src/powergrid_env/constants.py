@@ -70,12 +70,12 @@ N_NOMINATE      = 6
 AUCTION_PASS    = 6
 AUCTION_RAISE   = 7
 # Build: the whole menu is "how many of the cheapest reachable cities".
-# BUILD_COUNT_BASE + n builds exactly n (n = 0 is DoneBuilding); BUILD_DEFAULT
-# is the heuristic's own plan, last so dedup prefers the explicit count.
+# BUILD_COUNT_BASE + n builds exactly n (n = 0 is DoneBuilding).
 BUILD_COUNT_BASE = 8
 N_BUILD_COUNT   = 7   # n in 0..=6
 BUILD_NOTHING   = BUILD_COUNT_BASE      # alias: n = 0
-BUILD_DEFAULT   = 15
+# No build-default: a count always reproduces the heuristic (measured legal 0 /
+# 1504 decisions), so it was a permanently-masked output unit.
 # Buy: per-PLANT fuel — none / one set / two sets. Two is the ceiling, not a
 # design choice: storage caps at 2x cost per plant. Per plant because fuel is
 # spent in indivisible plant-sized chunks, so the plant quantizes the purchase —
@@ -84,17 +84,19 @@ BUILD_DEFAULT   = 15
 # the observation and DISCARD_PLANT use. BUY_PLANT* presses use the additive
 # BuyResources primitive and compose; BUY_DONE ends the turn. BUY_DEFAULT is the
 # heuristic's whole batch in one shot (Gate 0).
-BUY_DONE        = 16
-BUY_DEFAULT     = 17
-BUY_PLANT1_BASE = 18  # 18..20: one set for plant slot 0..2
-BUY_PLANT2_BASE = 21  # 21..23: two sets (the storage cap), same slot order
+BUY_DONE        = 15
+BUY_DEFAULT     = 16  # load-bearing: presses are ADDITIVE, the heuristic TOPS UP,
+                      # and 28% of buy decisions have carry-over fuel where the
+                      # two differ. Without it the heuristic's plan is unplayable.
+BUY_PLANT1_BASE = 17  # 17..19: one set for plant slot 0..2
+BUY_PLANT2_BASE = 20  # 20..22: two sets (the storage cap), same slot order
 N_BUY_PLANT_SLOTS = 3
-DISCARD_PLANT_BASE = 24  # 24..26: discard owned plant slot 0..2 (by number)
+DISCARD_PLANT_BASE = 23  # 23..25: discard owned plant slot 0..2 (by number)
 N_DISCARD_PLANT = 3
 # Powering has no macro: Bureaucracy is auto-resolved with the heuristic (the
 # teacher fired the optimal subset 100% of the time and "power nothing" was
 # legal everywhere and correct nowhere).
-N_ACTIONS       = 27
+N_ACTIONS       = 26
 
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +
