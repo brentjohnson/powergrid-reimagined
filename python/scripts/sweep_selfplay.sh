@@ -2,54 +2,45 @@
 #
 # sweep_selfplay.sh — launch 8 parallel self-play variants from one behavior clone.
 #
-# WAVE 3 (2026-07-26) — FULL RESET. The macro action space was rebuilt: build is
-# a count ladder, buy is a bitmask of which plants to fuel, powering is
-# auto-resolved, every phase is one decision per turn, and the policy format is
-# now PGRLPOL6. *Every* prior checkpoint is invalid, including the wave-2
-# winners. There is no common ancestor to resume from any more. The sweep now
-# starts from a BEHAVIOR CLONE of the champion heuristic and asks a different
-# question:
+# WAVE 3 (2026-07-26) — FULL RESET, INCLUDING THE PRIORS.
 #
-#     Given a policy that already plays like the `hard` bot, what finetuning
-#     recipe improves it instead of destroying it?
+# Two resets happened at once and it matters that they are separate.
 #
-# That is a genuinely different problem from wave 2, which was refining a
-# converged 1B-step policy. Some wave-2 findings carry over; several do not.
+#   1. The ARTIFACTS are dead. The macro action space was rebuilt: build is a
+#      count ladder, buy is a bitmask of which plants to fuel, powering is
+#      auto-resolved, every phase is one decision per turn, policy format is
+#      PGRLPOL6. Every prior checkpoint and clone is invalid.
 #
-#   CARRIES OVER:
-#     * Low-variance updates win. Big batch (1024) beat base 39% vs 26%,
-#       constant small lr (1e-4) 34%, the two combined 34.5%. w1 uses both, and
-#       every arm inherits them so the sweep tests deviations from a known-good
-#       recipe rather than from SB3 defaults.
-#     * Entropy UP collapses a good policy (0.10 -> ~9-13%). No arm raises it
-#       above 0.01; w4 probes only a small amount, for a specific new reason.
-#     * A mostly-historical league regresses (15%). The opponent-distribution
-#       axis is probed once (w6), toward MORE bot contact, not less.
+#   2. The FINDINGS are dead too. Waves 1 and 2 ran against broken rules, a
+#      broken environment and a mis-mapped action space (see
+#      RL-TRAINING-JOURNAL.md). Their conclusions -- "big batch beats base 39% vs
+#      26%", "constant 1e-4 helps", "entropy 0.10 collapses a policy", "a
+#      historical league regresses" -- are measurements of a system that no
+#      longer exists. They are NOT carried forward, and in particular they are no
+#      longer baked into COMMON, where they silently applied to every arm.
 #
-#   DOES NOT CARRY OVER:
-#     * "Bots are no longer a training target." False now: the clone starts at
-#       roughly heuristic strength, so the hard bot is exactly the bar.
-#     * Eval vs *normal* bots. A clone of the hard bot saturates that instantly
-#       and best_model selection degenerates into tracking eval noise — every
-#       variant now evaluates against `hard` (--eval-difficulty).
-#     * "Shaping is dead." Worth one arm (w7) for a NEW reason: the warm start
-#       loads only the policy, so the critic is random and shaping gives it a
-#       dense early signal. That is a critic-bootstrap argument, not the
-#       policy-teaching argument that failed before.
-#     * "A behavior clone is too peaked to explore." That was true when the buy
-#       teacher was a single constant macro. The subset rebuild made buy's
-#       imitation label VARIED (spread across all 8 masks, top mask only 24%), so
-#       three of five decision types now teach a real distribution — nominate,
-#       buy and build — where two did before. The clone should therefore be both
-#       stronger and less deterministic than earlier waves assumed, which raises
-#       the bar w8-scratch has to clear and re-aims w4 (below).
+# So this sweep does not refine a known-good recipe; there is no known-good
+# recipe. w1 is the trainer's own defaults plus the clone, and every other arm
+# moves exactly ONE knob off it. The point is to find out which knobs matter in
+# THIS environment, from scratch.
 #
-# THE MAIN RISK this sweep is designed around: --init-policy-from loads the three
-# policy layers and leaves the VALUE HEAD randomly initialised. The first updates
-# therefore ride on meaningless advantages and can wreck a good clone before the
-# critic catches up. w1/w2/w3 are three different answers to that (gentle updates
-# / fast critic / near-frozen policy); w8 is the control that says whether the
-# warm start was load-bearing at all.
+# What legitimately informs the design, because it was measured against the
+# current code in this repo rather than inherited:
+#
+#   * --init-policy-from loads only the three policy layers, so the VALUE HEAD
+#     starts random and the first updates ride on meaningless advantages. That is
+#     a fact about the code, not a training result, and it is the single most
+#     likely way to wreck a good clone. w2 and w7 attack it from two directions.
+#   * A clone of the `hard` bot saturates an eval against `normal` immediately,
+#     and that metric selects best_model -- so eval runs against `hard`.
+#   * The rebuilt menus are wider than the old ones (buy 3.84 live options,
+#     build 2.99) and three of five decision types now teach a varied imitation
+#     label (nominate, buy, build). Exploration therefore has real room, which is
+#     why entropy is probed UPWARD here: the old prior that forbade it is void.
+#
+# Deliberately untested this wave, for lack of slots rather than lack of
+# interest: opponent-pool composition, clip range, target-KL, net width. Add them
+# once the first-order knobs are pinned down.
 #
 # PREREQUISITE — build the clone first (this script does not create it):
 #
@@ -126,7 +117,7 @@ DRY_RUN=${DRY_RUN:-0}
 
 # The reference arm every other variant is a single-knob deviation from, and the
 # opponent for --h2h.
-BASELINE=w1-clone-anchor
+BASELINE=w1-base
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -135,31 +126,34 @@ COMMON=(
     --num-players 4
     --num-envs "$NUM_ENVS"
     --net-width "$NET_WIDTH"
-    --no-reward-shaping         # terminal reward only (w7 turns it back on)
-    --league-mix 0.45,0.50,0.05 # 5% heuristic anchor; the rest is self-play
-    --eval-difficulty hard      # NOT normal: a clone saturates normal instantly
+    --no-reward-shaping         # terminal reward is the objective; shaping is a
+                                # proxy for it (w7 turns it back on, annealed)
+    --eval-difficulty hard      # NOT normal: a clone saturates normal instantly,
+                                # and this metric selects best_model
     --save-freq 250000          # ~2M timesteps per checkpoint at 8 envs
     --eval-freq 50000           # ~400k timesteps per eval pass
-    --eval-episodes 200         # 20 (the default) is too noisy to rank variants
-    # Wave-2's winning low-variance recipe, inherited by every arm.
-    --n-steps 1024
-    --batch-size 1024
-    --learning-rate 1e-4
+    --eval-episodes 200         # 20 (the trainer default) is too noisy to rank
 )
+# NOTE: no PPO hyperparameters here. Wave 2's "winning recipe" (n-steps 1024,
+# batch 1024, lr 1e-4, league-mix 0.45/0.50/0.05) used to live in this block and
+# so applied to every arm unexamined. It was measured on a broken environment, so
+# it is now an arm to be tested (w3, w4), not an assumption to build on.
+
 
 # name|seed|init|hypothesis|extra flags
 #
 # `init` is "clone" (warm-start from $CLONE) or "scratch" (no warm start).
 VARIANTS=(
-"w1-clone-anchor|201|clone|BASELINE. The clone plus everything wave 2 proved: big batch (1024), constant small lr (1e-4), no shaping, terminal reward only. Every other arm is this with ONE knob moved, so any difference is attributable.|--terminal-reward placement"
-"w2-vf-warmup|202|clone|The warm start leaves the CRITIC RANDOM, so early advantages are noise that can wreck a good clone. Let the critic catch up fast (vf-coef 0.5 -> 1.0) while the policy barely moves (n-epochs 4 -> 2).|--terminal-reward placement --vf-coef 1.0 --n-epochs 2"
-"w3-tiny-lr|203|clone|Same risk, blunter answer: make the policy nearly immovable (lr 1e-4 -> 3e-5) until the critic means something. If w3 >> w1 the clone is being damaged at 1e-4; if w3 ~= w1 it is not, and w1's larger steps are free.|--terminal-reward placement --learning-rate 3e-5"
-"w4-low-entropy|204|clone|Entropy DOWN (0.03 -> 0.01). The rebuild widened the live menus (buy 2.39 -> 3.84 options, build 2.04 -> 2.99), so a fixed ent-coef now buys more exploration than it did — and the clone is already stochastic where the teacher is (nominate/buy/build). The risk is now over- not under-exploration; this tests whether sharpening beats the default.|--terminal-reward placement --ent-coef 0.01"
-"w5-winloss|205|clone|Isolates the reward shape. Wave 2 could not separate placement from win/loss on a converged policy (29% vs 26% base, inside noise). With a fresh critic the denser rank signal should matter more — this is the control that proves or kills it.|--terminal-reward winloss"
-"w6-bot-anchor|206|clone|A clone self-playing is mostly playing the teacher, so early self-play may add little. Weight the league toward the heuristic (0.45/0.50/0.05 -> 0.30/0.30/0.40) to keep the learner honest against the bar it is scored on.|--terminal-reward placement --league-mix 0.30,0.30,0.40"
-"w7-shaped-start|207|clone|The one arm that reintroduces shaping, for a NEW reason: the critic is random at step 0 and the powered-cities bonus is a dense signal to bootstrap it. Annealed to 0 over the first fifth so it cannot distort the converged policy.|--terminal-reward placement --reward-shaping --shaping-mode absolute --anneal-shaping-steps 10000000"
-"w8-scratch|208|scratch|CONTROL: identical to w1 but with NO warm start. Answers 'is the behavior clone load-bearing?' and would catch a silently broken --init-policy-from. History says from-scratch PPO fails on this game; if w8 keeps up, suspect the clone.|--terminal-reward placement"
+"w1-base|201|clone|BASELINE: the clone plus the trainer's own defaults (lr 3e-4, n-steps/batch 512, n-epochs 4, vf-coef 0.5, ent-coef 0.03, league 0.5/0.3/0.2, win/loss reward). Deliberately unopinionated -- with every prior wave invalidated there is no recipe to inherit, so the reference is the default and each arm is one knob off it.|"
+"w2-vf-warmup|202|clone|The warm start leaves the CRITIC RANDOM, so early advantages are noise that can wreck a good clone. Let the critic catch up fast (vf-coef 0.5 -> 1.0) while the policy moves less (n-epochs 4 -> 2). This is the structural risk, not an inherited hunch.|--vf-coef 1.0 --n-epochs 2"
+"w3-low-lr|203|clone|Same risk, blunter answer: make the policy nearly immovable (lr 3e-4 -> 1e-4) until the critic means something. Wave 2 claimed a constant small lr helps, on a broken environment; this tests the claim rather than assuming it.|--learning-rate 1e-4"
+"w4-big-batch|204|clone|Lower-variance gradients via a bigger rollout and minibatch (512 -> 1024). Wave 2's single largest reported effect (39% vs 26%) and therefore the one most worth re-measuring honestly, as an arm rather than as a COMMON default.|--n-steps 1024 --batch-size 1024"
+"w5-ent-up|205|clone|Entropy UP (0.03 -> 0.10). The old prior said this collapses a policy; that measurement is void, and the rebuilt menus are wider (buy 3.84 live options, build 2.99) so there is more to explore than there was. If the clone needs to discover the new buy subsets and build counts, this is how.|--ent-coef 0.10"
+"w6-placement|206|clone|Rank-shaped terminal reward instead of +1/-1. A 4-player game gives one bit per episode under win/loss; placement gives gradient between the losing seats, which should matter most while the critic is still forming. Untested on a working environment.|--terminal-reward placement"
+"w7-shaped-start|207|clone|The other answer to the random critic: give it a DENSE early signal. Powered-cities shaping, annealed to zero over the first fifth so it bootstraps the value head without steering the final policy. A critic-bootstrap argument, not the policy-teaching one that failed before.|--reward-shaping --shaping-mode absolute --anneal-shaping-steps 10000000"
+"w8-scratch|208|scratch|CONTROL: w1 with NO warm start. Answers 'is the behavior clone load-bearing?' and would catch a silently broken --init-policy-from. With three of five phases now teaching a varied imitation label the clone should be markedly better than scratch; if it is not, suspect the clone before the recipe.|"
 )
+
 
 variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
 

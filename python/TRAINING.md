@@ -224,21 +224,24 @@ unusable under the primitive encoding.
 three policy layers; the **value head stays randomly initialised**, so the first
 updates ride on meaningless advantages and can wreck a good clone before the
 critic catches up. Three arms are three different answers to that (gentle
-updates / fast critic / near-frozen policy), and one arm is a no-warm-start
+updates / fast critic / dense early signal), and one arm is a no-warm-start
 control that says whether the clone was load-bearing at all.
 
-**What carried over from wave 2:** low-variance updates win (big batch 1024 and
-a constant 1e-4 lr, both inherited by every arm); entropy *up* collapses a good
-policy, so no arm exceeds 0.01; a mostly-historical league regresses, so the
-opponent axis is probed once, toward *more* bot contact.
+**Nothing carries over from waves 1–2.** Those runs used broken rules, a broken
+environment and a mis-mapped action space, so their conclusions — "big batch beats
+base 39% vs 26%", "constant 1e-4 helps", "entropy 0.10 collapses a policy", "a
+historical league regresses" — describe a system that no longer exists. They used
+to live in the sweep's `COMMON` block, silently applying to every arm. They are
+now arms to be tested (`w3`, `w4`, `w5`) rather than assumptions to build on, and
+`w1` is simply the trainer's own defaults plus the clone.
 
-**What did not:** "bots are no longer a training target" is false now — a clone
-starts at roughly heuristic strength, so the `hard` bot is exactly the bar. That
-also means eval must run against `hard`, not `normal`: `--eval-difficulty`
-selects the eval opponent, and it matters beyond reporting because this metric
-picks `best_model`. Against an opponent the learner dominates, the score
-saturates and `best_model` degenerates into tracking eval noise — the wave-2
-"vs-bots eval misleads" finding, at its root.
+**What does inform the design**, because it was measured against current code:
+`--init-policy-from` leaves the **value head random**, which is the most likely
+way to wreck a good clone (attacked by `w2` and `w7`); a clone of the `hard` bot
+saturates an eval against `normal`, and that metric picks `best_model`, so eval
+runs against `hard`; and the rebuilt menus are wider than the old ones, with three
+of five decision types now teaching a varied imitation label — which is why
+entropy is probed *upward* rather than downward.
 
 Two ranking commands, because they answer different questions:
 
