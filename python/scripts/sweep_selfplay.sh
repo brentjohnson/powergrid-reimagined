@@ -1,103 +1,109 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — launch 8 parallel self-play variants from one behavior clone.
+# sweep_selfplay.sh — wave 4: finetune the wave-3 winner, leaning into self-play.
 #
-# WAVE 3 (2026-07-26) — FULL RESET, INCLUDING THE PRIORS.
+# WAVE 4 (2026-07-28).
 #
-# Two resets happened at once and it matters that they are separate.
+# Wave 3 finished at 50M steps per arm and — unlike waves 1-2 — was measured
+# against the current rules/env/action space, so its numbers are real priors:
 #
-#   1. The ARTIFACTS are dead. The macro action space was rebuilt: build is a
-#      count ladder, buy is a bitmask of which plants to fuel, powering is
-#      auto-resolved, every phase is one decision per turn, policy format is
-#      PGRLPOL6. Every prior checkpoint and clone is invalid.
+#   vs 3x hard, 200 games (seat 0's structural fair share ~25%):
+#     w3-low-lr        51.5%   <- champion; exported as the embedded Expert policy
+#     w4-big-batch     42.0%
+#     w2-vf-warmup     40.0%
+#     w8-scratch       37.0%   (control: matched the clone-start baseline)
+#     w1-base          36.5%
+#     w7-shaped-start  35.5%
+#     w6-placement     30.5%
+#     w5-ent-up         8.0%   (entropy-up collapse, reproduced on a WORKING env)
 #
-#   2. The FINDINGS are dead too. Waves 1 and 2 ran against broken rules, a
-#      broken environment and a mis-mapped action space (see
-#      RL-TRAINING-JOURNAL.md). Their conclusions -- "big batch beats base 39% vs
-#      26%", "constant 1e-4 helps", "entropy 0.10 collapses a policy", "a
-#      historical league regresses" -- are measurements of a system that no
-#      longer exists. They are NOT carried forward, and in particular they are no
-#      longer baked into COMMON, where they silently applied to every arm.
+# What wave 4 does with that:
 #
-# So this sweep does not refine a known-good recipe; there is no known-good
-# recipe. w1 is the trainer's own defaults plus the clone, and every other arm
-# moves exactly ONE knob off it. The point is to find out which knobs matter in
-# THIS environment, from scratch.
+#   * KEEP TRAINING the two arms that earned it: w3-low-lr (the champion, now
+#     also the --h2h opponent) and w4-big-batch (the strongest arm on an
+#     independent axis). Same dirs, same flags, target raised to
+#     TOTAL_TIMESTEPS cumulative.
 #
-# What legitimately informs the design, because it was measured against the
-# current code in this repo rather than inherited:
+#   * REPLACE the other six with FORKS of the champion: every y-arm resumes
+#     from the same pinned w3 checkpoint ($FORK_FROM, 50M steps) into its own
+#     fresh dir, carrying w3's recipe (constant lr 1e-4) plus one further idea.
+#     Pinning matters: w3 itself keeps training, so forking "w3's latest"
+#     would give later-launched arms a head start; the pin keeps every fork's
+#     starting weights identical.
 #
-#   * --init-policy-from loads only the three policy layers, so the VALUE HEAD
-#     starts random and the first updates ride on meaningless advantages. That is
-#     a fact about the code, not a training result, and it is the single most
-#     likely way to wreck a good clone. w2 and w7 attack it from two directions.
-#   * A clone of the `hard` bot saturates an eval against `normal` immediately,
-#     and that metric selects best_model -- so eval runs against `hard`.
-#   * The rebuilt menus are wider than the old ones (buy 3.84 live options,
-#     build 2.99) and three of five decision types now teach a varied imitation
-#     label (nominate, buy, build). Exploration therefore has real room, which is
-#     why entropy is probed UPWARD here: the old prior that forbade it is void.
+#   * LEAN INTO SELF-PLAY. The heuristic bots cannot teach the end-game push —
+#     they never fight the closing race the way a strong opponent does — so
+#     past ~50% vs hard the marginal training signal is in playing yourself,
+#     not them. Four of the six forks remove bots from the opponent pool
+#     entirely (--league-mix LATEST,PAST,BOTS with BOTS=0; the trainer
+#     supports a zero component). Two guards against forgetting how to beat
+#     bots remain: the frozen-past snapshot pool anchors the league, and the
+#     vs-hard eval still selects best_model.
 #
-# Deliberately untested this wave, for lack of slots rather than lack of
-# interest: opponent-pool composition, clip range, target-KL, net width. Add them
-# once the first-order knobs are pinned down.
+# Closed questions, deliberately NOT re-tested: entropy up (collapses — now
+# confirmed on a working env, twice); shaped start and placement from a fresh
+# clone (neutral-to-negative; placement returns below, but in the mirror-match
+# setting it was designed for); scratch vs clone (washed out by 50M steps —
+# the recipe dominates the init); vf warmup (mild, and moot now the critic is
+# trained).
 #
-# PREREQUISITE — build the clone first (this script does not create it):
-#
-#   python/.venv/bin/python -m alphazero.pretrain \
-#       --games 400 --epochs 20 --net-width 128 \
-#       --run-dir alphazero/runs/clone_w3 \
-#       --export alphazero/runs/clone_w3/clone.bin
-#
-# `--net-width` there MUST match NET_WIDTH here; the loader refuses a mismatch.
-#
-# WORTH DOING FIRST — score the clone, since it is the reference point every arm
-# is measured against and a weak one invalidates the whole sweep:
-#
-#   cargo run -p powergrid-evolve --release -- \
-#       --policy-file alphazero/runs/clone_w3/clone.bin --greedy \
-#       --opponent-toml assets/bots/default.toml
-#
-# `--greedy` matters: a behavior clone plays materially stronger with argmax than
-# with sampling (sampling picks the teacher's non-top move a fraction of the
-# time), and with the macro action space greedy no longer risks the stalls the
-# primitive encoding had. If the clone is far under the hard bot's own seat-0
-# share, fix the clone before burning 8 x 50M timesteps on finetuning it.
+# EVAL CAVEAT: --eval-difficulty hard still has headroom (champion ~52%,
+# ceiling 100%) but it saturates as arms improve, and a saturated eval selects
+# best_model on noise. Once several arms clear ~70% on --compare, rank them
+# with --h2h (vs 3x the continuing champion) and consider raising
+# COMPARE_GAMES.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
 #
 # Re-running is idempotent and self-healing: launching is the same command as
-# resuming. For each selected variant the script inspects its run dir and picks
-# up where it left off — resume from the furthest-along readable checkpoint (or
-# start from the clone if there is none) — but ONLY after confirming no trainer
-# is already running for that dir. The running-check verifies the recorded PID is
-# still a train_selfplay.py process for THIS run dir, so a stale pidfile (e.g. a
-# PID recycled across a reboot) can't block a resume or, worse, let two trainers
-# write the same dir. So the intended operational loop is simply: run it, and if
-# the box reboots or a variant crashes, run it again.
+# resuming. For each selected variant the script inspects its run dir and
+# picks up where it left off — resume from the furthest-along readable
+# checkpoint; if there is none, a fork arm starts from $FORK_FROM and a
+# continuation arm refuses loudly (silently restarting a wave-3 run from
+# scratch would be wrong). The fork source is only ever used for a variant's
+# FIRST launch; after that it resumes its own checkpoints. The running-check
+# verifies the recorded PID is still a train_selfplay.py process for THIS run
+# dir, so a stale pidfile (e.g. a PID recycled across a reboot) can't block a
+# resume or, worse, let two trainers write the same dir. The intended
+# operational loop is simply: run it, and if the box reboots or a variant
+# crashes, run it again.
+#
+# TOTAL_TIMESTEPS is CUMULATIVE: sb3 counts timesteps across resumes, and each
+# launch is passed only the remaining budget, so re-running never overshoots.
+# The wave-3 dirs sit at 50M, so the default 150M target buys every arm +100M.
+#
+# League note for forks: snapshots live in each run dir's own league/ subdir.
+# A fork's league starts empty, but the trainer pushes a snapshot of the
+# just-loaded weights at training start, so a nonzero PAST share never sees an
+# empty pool — the early "past" opponent is simply the fork point itself.
+#
+# The retired wave-3 arms (w1, w2, w5, w6, w7, w8) were stopped before this
+# rewrite and their dirs remain in $SWEEP_DIR as inert history. --stop only
+# knows the variants in the table below; if a retired arm is somehow still
+# running, kill its $SWEEP_DIR/<name>/train.pid by hand.
 #
 # Usage:
 #   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
-#   ./scripts/sweep_selfplay.sh 2 5          # launch/resume only variants 2 and 5
+#   ./scripts/sweep_selfplay.sh 3 5          # launch/resume only variants 3 and 5
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
-#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the baseline arm
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the champion
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=50000000   timesteps per variant
-#   CLONE=../alphazero/runs/clone_w3/clone.bin   PGRLPOL6 warm-start weights
+#   TOTAL_TIMESTEPS=150000000  CUMULATIVE timesteps per variant (see above)
+#   FORK_FROM=runs/sweep3/w3-low-lr/ckpt_50000000_steps
+#                              pinned fork point for the y-arms (stem, no .zip)
 #   SWEEP_DIR=runs/sweep3      root for the per-variant run dirs
-#   NET_WIDTH=128              must match the clone's width
+#   NET_WIDTH=128              policy width for fresh runs (resumes carry their own)
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
 #   THREADS=3                  torch/OMP threads per variant (8 x 3 = 24 of 28 cores)
 #   COMPARE_GAMES=200  COMPARE_SEED=12345
-#   COMPARE_DETERMINISTIC=1    rank with argmax instead of sampling. Worth a
-#                              second look for clone-derived policies, which play
-#                              stronger greedily; training is stochastic, so the
-#                              sampled numbers remain the primary ranking.
+#   COMPARE_DETERMINISTIC=1    rank with argmax instead of sampling. Training is
+#                              stochastic, so the sampled numbers remain the
+#                              primary ranking.
 #   NICE=10  STAGGER=15  DRY_RUN=1
 #
 set -euo pipefail
@@ -105,9 +111,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
-CLONE=${CLONE:-../alphazero/runs/clone_w3/clone.bin}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep3}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-50000000}
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/w3-low-lr/ckpt_50000000_steps}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-150000000}
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
@@ -115,43 +121,40 @@ NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
-# The reference arm every other variant is a single-knob deviation from, and the
-# opponent for --h2h.
-BASELINE=w1-base
+# The champion and continuing reference arm; the opponent for --h2h.
+BASELINE=w3-low-lr
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
-# flag there (e.g. --ent-coef) overrides the value set here.
+# flag there overrides the value set here.
 COMMON=(
     --num-players 4
     --num-envs "$NUM_ENVS"
     --net-width "$NET_WIDTH"
-    --no-reward-shaping         # terminal reward is the objective; shaping is a
-                                # proxy for it (w7 turns it back on, annealed)
-    --eval-difficulty hard      # NOT normal: a clone saturates normal instantly,
+    --no-reward-shaping         # terminal reward is the objective (wave 3's
+                                # shaped arm was neutral-to-negative)
+    --eval-difficulty hard      # NOT normal: saturated instantly in wave 3,
                                 # and this metric selects best_model
     --save-freq 250000          # ~2M timesteps per checkpoint at 8 envs
     --eval-freq 50000           # ~400k timesteps per eval pass
     --eval-episodes 200         # 20 (the trainer default) is too noisy to rank
 )
-# NOTE: no PPO hyperparameters here. Wave 2's "winning recipe" (n-steps 1024,
-# batch 1024, lr 1e-4, league-mix 0.45/0.50/0.05) used to live in this block and
-# so applied to every arm unexamined. It was measured on a broken environment, so
-# it is now an arm to be tested (w3, w4), not an assumption to build on.
-
 
 # name|seed|init|hypothesis|extra flags
 #
-# `init` is "clone" (warm-start from $CLONE) or "scratch" (no warm start).
+# `init` is "resume" (a continuing wave-3 arm; must already have checkpoints)
+# or "fork" (first launch resumes from $FORK_FROM into a fresh dir).
+#
+# League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 VARIANTS=(
-"w1-base|201|clone|BASELINE: the clone plus the trainer's own defaults (lr 3e-4, n-steps/batch 512, n-epochs 4, vf-coef 0.5, ent-coef 0.03, league 0.5/0.3/0.2, win/loss reward). Deliberately unopinionated -- with every prior wave invalidated there is no recipe to inherit, so the reference is the default and each arm is one knob off it.|"
-"w2-vf-warmup|202|clone|The warm start leaves the CRITIC RANDOM, so early advantages are noise that can wreck a good clone. Let the critic catch up fast (vf-coef 0.5 -> 1.0) while the policy moves less (n-epochs 4 -> 2). This is the structural risk, not an inherited hunch.|--vf-coef 1.0 --n-epochs 2"
-"w3-low-lr|203|clone|Same risk, blunter answer: make the policy nearly immovable (lr 3e-4 -> 1e-4) until the critic means something. Wave 2 claimed a constant small lr helps, on a broken environment; this tests the claim rather than assuming it.|--learning-rate 1e-4"
-"w4-big-batch|204|clone|Lower-variance gradients via a bigger rollout and minibatch (512 -> 1024). Wave 2's single largest reported effect (39% vs 26%) and therefore the one most worth re-measuring honestly, as an arm rather than as a COMMON default.|--n-steps 1024 --batch-size 1024"
-"w5-ent-up|205|clone|Entropy UP (0.03 -> 0.10). The old prior said this collapses a policy; that measurement is void, and the rebuilt menus are wider (buy 3.84 live options, build 2.99) so there is more to explore than there was. If the clone needs to discover the new buy subsets and build counts, this is how.|--ent-coef 0.10"
-"w6-placement|206|clone|Rank-shaped terminal reward instead of +1/-1. A 4-player game gives one bit per episode under win/loss; placement gives gradient between the losing seats, which should matter most while the critic is still forming. Untested on a working environment.|--terminal-reward placement"
-"w7-shaped-start|207|clone|The other answer to the random critic: give it a DENSE early signal. Powered-cities shaping, annealed to zero over the first fifth so it bootstraps the value head without steering the final policy. A critic-bootstrap argument, not the policy-teaching one that failed before.|--reward-shaping --shaping-mode absolute --anneal-shaping-steps 10000000"
-"w8-scratch|208|scratch|CONTROL: w1 with NO warm start. Answers 'is the behavior clone load-bearing?' and would catch a silently broken --init-policy-from. With three of five phases now teaching a varied imitation label the clone should be markedly better than scratch; if it is not, suspect the clone before the recipe.|"
+"w3-low-lr|203|resume|WAVE-3 CHAMPION (51.5% vs hard), continuing unchanged: constant lr 1e-4 on the trainer's own defaults. Doubles as the --h2h opponent, so every fork is measured against the thing it forked from, trained equally long.|--learning-rate 1e-4"
+"w4-big-batch|204|resume|Runner-up (42.0%), continuing unchanged: bigger rollout/minibatch (512 -> 1024) at the default lr 3e-4. The only strong arm on a different axis than 'move less' -- kept to see whether it converges on, or past, the champion with more steps.|--n-steps 1024 --batch-size 1024"
+"y1-nobots|301|fork|Champion's recipe with bots removed from the pool (league 0.60/0.40/0.00). The direct test of the wave-4 thesis: bots cannot teach the end-game push, so their 20% of rollouts is dead weight now. The past pool keeps the anchor.|--learning-rate 1e-4 --league-mix 0.60,0.40,0.00"
+"y2-mirror|302|fork|Nearly pure mirror-match (league 0.85/0.15/0.00): maximum pressure from the strongest available opponent -- the current self -- accepting nonstationarity risk; the past share is kept small but nonzero to damp cycles. If y1 beats w3 and y2 beats y1, opponent strength is the driver.|--learning-rate 1e-4 --league-mix 0.85,0.15,0.00"
+"y3-batch|303|fork|Stack the two measured winners: lr 1e-4 AND n-steps/batch 1024. Wave 3 tested them as separate single knobs off the same base; if the effects are even partly independent this arm should lead early.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024"
+"y4-lr-decay|304|fork|The champion holds lr constant; this fork decays it (1e-4 -> 0 across the remaining budget). Classic finishing schedule: if w3's late progress is noise around an optimum, annealing converts it into convergence -- and if it stalls below w3, constant lr was doing real work.|--learning-rate 1e-4 --lr-final 0"
+"y5-placement|305|fork|Placement reward + no bots. Rank-shaped terminal reward lost from a fresh clone (w6: random critic, vs bots); this is the setting it was designed for -- near-equal mirror games, where win/loss collapses toward a coin flip and the between-losers gradient is exactly the end-game-push signal.|--learning-rate 1e-4 --league-mix 0.60,0.40,0.00 --terminal-reward placement"
+"y6-sp-batch|306|fork|The wave-4 bet, combined: no bots AND big batch on the champion's lr. Mirror games between near-equal policies are the noisiest reward source available; the bigger batch is aimed at exactly that variance.|--learning-rate 1e-4 --league-mix 0.60,0.40,0.00 --n-steps 1024 --batch-size 1024"
 )
 
 
@@ -181,17 +184,11 @@ running_pid() {
     return 0
 }
 
-# Echo "<checkpoint-path-without-.zip> <num_timesteps>" for the furthest-along
-# *readable* checkpoint in a run dir, or nothing if there is none. Candidates
-# are tried highest-step-first; a checkpoint truncated by a kill mid-write fails
-# the zip read and is skipped in favour of the previous one, so an interrupted
-# run always resumes from a clean point. The step count comes from inside the
-# zip (num_timesteps), which the filename mirrors.
-latest_checkpoint() {
-    local dir=$1 zip stem steps
-    while IFS= read -r zip; do
-        [[ -n $zip ]] || continue
-        steps=$("$PY" - "$zip" <<'EOF' 2>/dev/null
+# Echo the num_timesteps recorded inside an sb3 checkpoint zip, or fail (also
+# fails on a zip truncated by a kill mid-write, which is what makes the resume
+# scan below skip unreadable checkpoints).
+zip_steps() {
+    "$PY" - "$1" <<'EOF' 2>/dev/null
 import json, sys, zipfile
 try:
     with zipfile.ZipFile(sys.argv[1]) as z:
@@ -199,9 +196,19 @@ try:
 except Exception:
     sys.exit(1)
 EOF
-        ) || continue
-        stem=${zip%.zip}
-        echo "$stem $steps"
+}
+
+# Echo "<checkpoint-path-without-.zip> <num_timesteps>" for the furthest-along
+# *readable* checkpoint in a run dir, or nothing if there is none. Candidates
+# are tried highest-step-first; a truncated checkpoint fails the zip read and
+# is skipped in favour of the previous one, so an interrupted run always
+# resumes from a clean point.
+latest_checkpoint() {
+    local dir=$1 zip steps
+    while IFS= read -r zip; do
+        [[ -n $zip ]] || continue
+        steps=$(zip_steps "$zip") || continue
+        echo "${zip%.zip} $steps"
         return 0
     done < <(ls "$dir"/ckpt_*_steps.zip 2>/dev/null \
                 | sed -E 's/.*ckpt_([0-9]+)_steps\.zip/\1 &/' \
@@ -251,9 +258,8 @@ status() {
 # ABSOLUTE yardstick: each variant's best_model in seat 0 against three `hard`
 # bots — the bar the whole project aims at. The all-bots row gives seat 0's
 # structural share (~25% plus seat bias), so read a variant against that, not
-# against 0. Unlike wave 2's vs-normal eval this does not saturate: a behavior
-# clone starts at roughly the bots' own level, so there is headroom in both
-# directions and the metric stays informative for the whole run.
+# against 0. Watch for saturation: past ~70-80% this stops separating arms and
+# --h2h becomes the ranking that matters.
 compare() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
@@ -271,10 +277,9 @@ compare() {
     done
 }
 
-# RELATIVE ranking: each variant in seat 0 against three copies of the baseline
-# arm. Once several arms clear the bot bar, beating strong opposition is the
-# finer signal — this is wave 2's --compare, retargeted now that the common
-# ancestor is a clone rather than a checkpoint.
+# RELATIVE ranking: each variant in seat 0 against three copies of the
+# champion. This is the wave-4 primary once the vs-hard eval saturates, and it
+# is exactly fair: every fork started from the champion's own weights.
 h2h() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
@@ -323,29 +328,11 @@ else
 fi
 
 [[ -x $PY ]] || { echo "no interpreter at $PY (run 'make develop' first)" >&2; exit 1; }
-if [[ ! -f $CLONE ]]; then
-    cat >&2 <<EOF
-behavior clone not found at: $CLONE
 
-Build it first (see the header of this script):
-  python/.venv/bin/python -m alphazero.pretrain \\
-      --games 400 --epochs 20 --net-width $NET_WIDTH \\
-      --run-dir alphazero/runs/clone_w3 \\
-      --export alphazero/runs/clone_w3/clone.bin
-
-Run that from the repo root. Or set CLONE=/path/to/clone.bin.
-Only variant 8 (w8-scratch) can run without it.
-EOF
-    exit 1
-fi
-
-echo "clone          : $CLONE (net-width $NET_WIDTH)"
-echo "target         : $TOTAL_TIMESTEPS timesteps per variant"
+echo "fork point     : $FORK_FROM (y-arms' first launch only)"
+echo "target         : $TOTAL_TIMESTEPS cumulative timesteps per variant"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
-echo
-echo "NOTE: no league seeding. Snapshots from earlier waves are from dead layout"
-echo "      epochs (PGRLPOL1..5) and are rejected on load, by design."
 echo
 
 mkdir -p "$SWEEP_DIR"
@@ -370,13 +357,10 @@ for n in "${SELECTED[@]}"; do
         continue
     fi
 
-    # Auto-resume: inspect the run dir and continue from where it left off.
-    # SB3 counts timesteps cumulatively across resumes, so we ask each launch for
-    # only the steps still needed to reach TOTAL_TIMESTEPS — re-running never
-    # overshoots. A resumed checkpoint already carries trained weights, so the
-    # warm start applies only to the very first launch.
+    # Auto-resume: continue from the arm's own furthest readable checkpoint.
+    # Only a fork arm's very first launch uses $FORK_FROM; a continuation arm
+    # with no checkpoint is an error, not a fresh start.
     start_args=()
-    steps="$TOTAL_TIMESTEPS"
     ckpt_stem=""; done_steps=""
     read -r ckpt_stem done_steps < <(latest_checkpoint "$dir") || true
     if [[ -n $ckpt_stem ]]; then
@@ -387,14 +371,26 @@ for n in "${SELECTED[@]}"; do
         fi
         start_args=(--resume-from "$ckpt_stem")
         echo "resuming $name from $(basename "$ckpt_stem").zip @ $done_steps (+$steps)"
-    elif [[ $init == clone ]]; then
-        start_args=(--init-policy-from "$CLONE")
-        echo "starting $name from the clone (+$TOTAL_TIMESTEPS)"
+    elif [[ $init == fork ]]; then
+        if [[ ! -f ${FORK_FROM}.zip ]]; then
+            echo "cannot fork $name: no checkpoint at ${FORK_FROM}.zip" >&2
+            echo "(set FORK_FROM, or sync the wave-3 champion's run dir first)" >&2
+            exit 1
+        fi
+        fork_steps=$(zip_steps "${FORK_FROM}.zip") || {
+            echo "cannot fork $name: ${FORK_FROM}.zip is unreadable" >&2; exit 1; }
+        steps=$(( TOTAL_TIMESTEPS - fork_steps ))
+        if (( steps <= 0 )); then
+            echo "skip $name: fork point already at $fork_steps >= target $TOTAL_TIMESTEPS" >&2
+            continue
+        fi
+        start_args=(--resume-from "$FORK_FROM")
+        echo "forking $name from $(basename "$FORK_FROM").zip @ $fork_steps (+$steps)"
     else
-        echo "starting $name from scratch, no warm start (+$TOTAL_TIMESTEPS)"
+        echo "refusing to start $name: it continues a wave-3 run but $dir has no" >&2
+        echo "readable checkpoint. Sync the wave-3 run dir (or fix SWEEP_DIR)." >&2
+        exit 1
     fi
-
-    mkdir -p "$dir"
 
     cmd=("$PY" scripts/train_selfplay.py
          "${COMMON[@]}"
@@ -404,16 +400,18 @@ for n in "${SELECTED[@]}"; do
          "${start_args[@]}"
          "${extra[@]}")
 
-    {
-        echo "# $name — $why"
-        echo "# launched: $(date -Is)"
-        echo "# init: $init  clone: $CLONE  target: $TOTAL_TIMESTEPS"
-        printf '%q ' "${cmd[@]}"; echo
-    } > "$dir/variant.txt"
-
     if [[ $DRY_RUN == 1 ]]; then
-        echo "[dry-run] $name"; sed -n '4p' "$dir/variant.txt"; continue
+        echo "[dry-run] $name:"; printf '  %q' "${cmd[@]}"; echo; continue
     fi
+
+    mkdir -p "$dir"
+    # Append (not overwrite): keep every launch's provenance across resumes.
+    {
+        echo
+        echo "# $name — $why"
+        echo "# launched: $(date -Is)  init: $init  target: $TOTAL_TIMESTEPS cumulative"
+        printf '%q ' "${cmd[@]}"; echo
+    } >> "$dir/variant.txt"
 
     OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS \
     OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS \
@@ -435,8 +433,8 @@ Monitor:
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # rollout/entropy_loss, eval/mean_reward
   $PY scripts/run_report.py $SWEEP_DIR/$BASELINE
 Rank the variants:
-  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (the project bar)
-  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x $BASELINE
+  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (watch for saturation)
+  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x $BASELINE (primary once saturated)
 Stop everything:
   ./scripts/sweep_selfplay.sh --stop
 EOF
