@@ -435,7 +435,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "embedded expert.bin is a PGRLPOL1 file from the pre-ladder macro layout; the magic bump rejects it (its dims still match, which is exactly why the epoch check exists). Un-ignore once a PGRLPOL2 policy is trained and re-exported."]
     fn embedded_policy_matches_torch_golden_logits() {
         #[derive(serde::Deserialize)]
         struct Golden {
