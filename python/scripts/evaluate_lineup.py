@@ -91,10 +91,20 @@ def play_game(
             break
         model = seat_models[actor]
         if model is not None:
-            obs = game.observation(actor)
             mask = game.action_mask(actor)
-            action, _ = model.predict(obs, action_masks=mask, deterministic=deterministic)
-            game.apply_action_id(actor, int(action))
+            if not mask.any():
+                # Auto-phase with no macro (e.g. Bureaucracy powering — removed
+                # from the action space; training resolves it natively in
+                # resolve_auto_phases). Resolve with the heuristic, which fires
+                # the same optimal subset.
+                action_json = game.bot_decide(actor, "hard")
+                if action_json is None:
+                    break
+                game.apply(actor, action_json)
+            else:
+                obs = game.observation(actor)
+                action, _ = model.predict(obs, action_masks=mask, deterministic=deterministic)
+                game.apply_action_id(actor, int(action))
         else:
             action_json = game.bot_decide(actor, seat_specs[actor])
             if action_json is not None:

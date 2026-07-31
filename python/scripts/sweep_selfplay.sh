@@ -1,57 +1,63 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — wave 4: finetune the wave-3 winner, leaning into self-play.
+# sweep_selfplay.sh — wave 5: fork the wave-4 winner, self-play with a bot anchor.
 #
-# WAVE 4 (2026-07-28).
+# WAVE 5 (2026-07-31).
 #
-# Wave 3 finished at 50M steps per arm and — unlike waves 1-2 — was measured
-# against the current rules/env/action space, so its numbers are real priors:
+# Wave 4 finished at 150M steps per arm. Both rankings, 200 games, seed 12345
+# (evaluate_lineup rotates seats; seat 0's par is ~25%):
 #
-#   vs 3x hard, 200 games (seat 0's structural fair share ~25%):
-#     w3-low-lr        51.5%   <- champion; exported as the embedded Expert policy
-#     w4-big-batch     42.0%
-#     w2-vf-warmup     40.0%
-#     w8-scratch       37.0%   (control: matched the clone-start baseline)
-#     w1-base          36.5%
-#     w7-shaped-start  35.5%
-#     w6-placement     30.5%
-#     w5-ent-up         8.0%   (entropy-up collapse, reproduced on a WORKING env)
+#   ABSOLUTE (--compare, vs 3x hard):        RELATIVE (--h2h, vs 3x w3 best):
+#     y4-lr-decay      58.5%   <- champion     y3-batch         35.5%
+#     w3-low-lr        57.0%                   y4-lr-decay      32.5%
+#     w4-big-batch     54.5%                   y2-mirror        29.0%
+#     y2-mirror        50.5%                   y5-placement     29.0%
+#     y3-batch         49.0%                   y1-nobots        28.5%
+#     y6-sp-batch      47.5%                   y6-sp-batch      28.5%
+#     y1-nobots        44.0%                   w4-big-batch     17.5%
+#     y5-placement     42.0%
 #
-# What wave 4 does with that:
+#   Tiebreak, y3 best (seat 0) vs 3x y4 best: 20.5% — y4 wins the direct
+#   match, leads vs hard, and beats the old champion. y4-lr-decay's
+#   best_model (144.4M steps, eval +0.43) is the wave-5 fork point AND the
+#   frozen --h2h yardstick.
 #
-#   * KEEP TRAINING the two arms that earned it: w3-low-lr (the champion, now
-#     also the --h2h opponent) and w4-big-batch (the strongest arm on an
-#     independent axis). Same dirs, same flags, target raised to
-#     TOTAL_TIMESTEPS cumulative.
+# What wave 4 settled:
 #
-#   * REPLACE the other six with FORKS of the champion: every y-arm resumes
-#     from the same pinned w3 checkpoint ($FORK_FROM, 50M steps) into its own
-#     fresh dir, carrying w3's recipe (constant lr 1e-4) plus one further idea.
-#     Pinning matters: w3 itself keeps training, so forking "w3's latest"
-#     would give later-launched arms a head start; the pin keeps every fork's
-#     starting weights identical.
+#   * BOTS=0 HURTS. All four no-bots arms (y1, y2, y5, y6) landed at h2h par
+#     (~28-29% vs the thing they forked from — i.e. 100M steps of training
+#     bought nothing relative to the champion) and BELOW 50% vs hard. The
+#     arms that kept the default 20% bot share (y3, y4) beat par on both
+#     boards. The 20% grounding share is load-bearing; the wave-4 thesis is
+#     rejected in its strong form. Wave 5 still leans into self-play, but
+#     with a nonzero bot anchor (0.10) instead of zero.
 #
-#   * LEAN INTO SELF-PLAY. The heuristic bots cannot teach the end-game push —
-#     they never fight the closing race the way a strong opponent does — so
-#     past ~50% vs hard the marginal training signal is in playing yourself,
-#     not them. Four of the six forks remove bots from the opponent pool
-#     entirely (--league-mix LATEST,PAST,BOTS with BOTS=0; the trainer
-#     supports a zero component). Two guards against forgetting how to beat
-#     bots remain: the frozen-past snapshot pool anchors the league, and the
-#     vs-hard eval still selects best_model.
+#   * LR DECAY IS A REAL FINISHER. y4 (1e-4 -> 0) converted w3's plateau
+#     into the new champion, and its approx-KL hit ~0 as the lr annealed
+#     out — it converged. That also means y4 itself CANNOT continue (its lr
+#     is 0); its value is as the fork point, and being retired makes its
+#     best_model a *stable* h2h opponent, unlike wave 4's moving target.
 #
-# Closed questions, deliberately NOT re-tested: entropy up (collapses — now
-# confirmed on a working env, twice); shaped start and placement from a fresh
-# clone (neutral-to-negative; placement returns below, but in the mirror-match
-# setting it was designed for); scratch vs clone (washed out by 50M steps —
-# the recipe dominates the init); vf warmup (mild, and moot now the critic is
-# trained).
+#   * BIG BATCH helps at lr 1e-4 (y3: best h2h) but not at 3e-4 (w4: worst
+#     h2h). y3's recipe is still live (constant lr, best_model at 135.6M),
+#     so y3 is the one wave-4 arm that KEEPS TRAINING.
 #
-# EVAL CAVEAT: --eval-difficulty hard still has headroom (champion ~52%,
-# ceiling 100%) but it saturates as arms improve, and a saturated eval selects
-# best_model on noise. Once several arms clear ~70% on --compare, rank them
-# with --h2h (vs 3x the continuing champion) and consider raising
-# COMPARE_GAMES.
+#   * Placement reward: neutral again, now in the setting it was designed
+#     for (y5 ~= y1). Closed for good, along with entropy-up (collapses),
+#     shaped start, scratch, and vf-warmup from earlier waves.
+#
+# The wave-5 menu: y3 continues; seven z-arms fork from the pinned y4 best.
+# Every fork carries lr 1e-4; the axes are (a) decay vs constant, (b) batch
+# 512 vs 1024, (c) league mix — default 0.5/0.3/0.2 vs self-play-lean
+# 0.65/0.25/0.10 vs past-heavy 0.50/0.40/0.10. Four of the seven forks are
+# self-play-lean: that is the "lean into self-play" bet, re-run with the
+# measured-necessary bot anchor kept.
+#
+# EVAL CAVEAT: --eval-difficulty hard still has headroom (champion 58.5%)
+# but it saturates as arms improve, and a saturated eval selects best_model
+# on noise. Once several arms clear ~70% on --compare, rank with --h2h
+# (vs 3x the frozen y4 best — exactly the weights every fork started from)
+# and consider raising COMPARE_GAMES.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -60,7 +66,7 @@
 # resuming. For each selected variant the script inspects its run dir and
 # picks up where it left off — resume from the furthest-along readable
 # checkpoint; if there is none, a fork arm starts from $FORK_FROM and a
-# continuation arm refuses loudly (silently restarting a wave-3 run from
+# continuation arm refuses loudly (silently restarting a wave-4 run from
 # scratch would be wrong). The fork source is only ever used for a variant's
 # FIRST launch; after that it resumes its own checkpoints. The running-check
 # verifies the recorded PID is still a train_selfplay.py process for THIS run
@@ -71,17 +77,24 @@
 #
 # TOTAL_TIMESTEPS is CUMULATIVE: sb3 counts timesteps across resumes, and each
 # launch is passed only the remaining budget, so re-running never overshoots.
-# The wave-3 dirs sit at 50M, so the default 150M target buys every arm +100M.
+# y3 sits at 150M and the fork point at 144.4M, so the default 250M target
+# buys every arm +100-106M — the same increment wave 4 ran.
+#
+# Resume-lr note: MaskablePPO.load is passed custom_objects built from THIS
+# launch's flags, so a fork's lr schedule is its own — y4's decayed-to-zero
+# lr does not leak into the forks.
 #
 # League note for forks: snapshots live in each run dir's own league/ subdir.
 # A fork's league starts empty, but the trainer pushes a snapshot of the
 # just-loaded weights at training start, so a nonzero PAST share never sees an
 # empty pool — the early "past" opponent is simply the fork point itself.
 #
-# The retired wave-3 arms (w1, w2, w5, w6, w7, w8) were stopped before this
-# rewrite and their dirs remain in $SWEEP_DIR as inert history. --stop only
-# knows the variants in the table below; if a retired arm is somehow still
-# running, kill its $SWEEP_DIR/<name>/train.pid by hand.
+# The retired arms (wave 3's w1/w2/w5-w8 and wave 4's w3-low-lr,
+# w4-big-batch, y1, y2, y4-lr-decay, y5, y6) were finished or stopped before
+# this rewrite and their dirs remain in $SWEEP_DIR as inert history —
+# y4-lr-decay's dir must stay, it IS the fork point and h2h opponent. --stop
+# only knows the variants in the table below; if a retired arm is somehow
+# still running, kill its $SWEEP_DIR/<name>/train.pid by hand.
 #
 # Usage:
 #   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
@@ -89,13 +102,13 @@
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
-#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the champion
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=150000000  CUMULATIVE timesteps per variant (see above)
-#   FORK_FROM=runs/sweep3/w3-low-lr/ckpt_50000000_steps
-#                              pinned fork point for the y-arms (stem, no .zip)
+#   TOTAL_TIMESTEPS=250000000  CUMULATIVE timesteps per variant (see above)
+#   FORK_FROM=runs/sweep3/y4-lr-decay/best_model
+#                              pinned fork point for the z-arms (stem, no .zip)
 #   SWEEP_DIR=runs/sweep3      root for the per-variant run dirs
 #   NET_WIDTH=128              policy width for fresh runs (resumes carry their own)
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
@@ -112,8 +125,8 @@ cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep3}
-FORK_FROM=${FORK_FROM:-$SWEEP_DIR/w3-low-lr/ckpt_50000000_steps}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-150000000}
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/y4-lr-decay/best_model}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-250000000}
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
@@ -121,8 +134,10 @@ NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
-# The champion and continuing reference arm; the opponent for --h2h.
-BASELINE=w3-low-lr
+# The frozen --h2h opponent: the retired wave-4 champion's best_model — the
+# exact weights every z-arm forked from. Because y4-lr-decay no longer trains
+# (its lr annealed to 0), this yardstick never moves, unlike wave 4's.
+BASELINE=y4-lr-decay
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -142,19 +157,19 @@ COMMON=(
 
 # name|seed|init|hypothesis|extra flags
 #
-# `init` is "resume" (a continuing wave-3 arm; must already have checkpoints)
+# `init` is "resume" (a continuing wave-4 arm; must already have checkpoints)
 # or "fork" (first launch resumes from $FORK_FROM into a fresh dir).
 #
 # League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 VARIANTS=(
-"w3-low-lr|203|resume|WAVE-3 CHAMPION (51.5% vs hard), continuing unchanged: constant lr 1e-4 on the trainer's own defaults. Doubles as the --h2h opponent, so every fork is measured against the thing it forked from, trained equally long.|--learning-rate 1e-4"
-"w4-big-batch|204|resume|Runner-up (42.0%), continuing unchanged: bigger rollout/minibatch (512 -> 1024) at the default lr 3e-4. The only strong arm on a different axis than 'move less' -- kept to see whether it converges on, or past, the champion with more steps.|--n-steps 1024 --batch-size 1024"
-"y1-nobots|301|fork|Champion's recipe with bots removed from the pool (league 0.60/0.40/0.00). The direct test of the wave-4 thesis: bots cannot teach the end-game push, so their 20% of rollouts is dead weight now. The past pool keeps the anchor.|--learning-rate 1e-4 --league-mix 0.60,0.40,0.00"
-"y2-mirror|302|fork|Nearly pure mirror-match (league 0.85/0.15/0.00): maximum pressure from the strongest available opponent -- the current self -- accepting nonstationarity risk; the past share is kept small but nonzero to damp cycles. If y1 beats w3 and y2 beats y1, opponent strength is the driver.|--learning-rate 1e-4 --league-mix 0.85,0.15,0.00"
-"y3-batch|303|fork|Stack the two measured winners: lr 1e-4 AND n-steps/batch 1024. Wave 3 tested them as separate single knobs off the same base; if the effects are even partly independent this arm should lead early.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024"
-"y4-lr-decay|304|fork|The champion holds lr constant; this fork decays it (1e-4 -> 0 across the remaining budget). Classic finishing schedule: if w3's late progress is noise around an optimum, annealing converts it into convergence -- and if it stalls below w3, constant lr was doing real work.|--learning-rate 1e-4 --lr-final 0"
-"y5-placement|305|fork|Placement reward + no bots. Rank-shaped terminal reward lost from a fresh clone (w6: random critic, vs bots); this is the setting it was designed for -- near-equal mirror games, where win/loss collapses toward a coin flip and the between-losers gradient is exactly the end-game-push signal.|--learning-rate 1e-4 --league-mix 0.60,0.40,0.00 --terminal-reward placement"
-"y6-sp-batch|306|fork|The wave-4 bet, combined: no bots AND big batch on the champion's lr. Mirror games between near-equal policies are the noisiest reward source available; the bigger batch is aimed at exactly that variance.|--learning-rate 1e-4 --league-mix 0.60,0.40,0.00 --n-steps 1024 --batch-size 1024"
+"y3-batch|303|resume|The one continuing wave-4 arm: best h2h vs the old champion (35.5%) on constant lr 1e-4 + batch 1024, and still setting bests at 135.6M — its recipe has no built-in stopping point. Continues unchanged to see if it catches the y4 lineage.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024"
+"z1-cont|401|fork|Control: the champion's weights on w3's recipe (constant lr 1e-4, default league). y4 cannot continue at lr 0, so this is its plain 'unfrozen' successor — if the decay's win was convergence-to-a-local-optimum, restarting at 1e-4 should walk away from it and score BELOW the frozen yardstick early.|--learning-rate 1e-4"
+"z2-redecay|402|fork|Repeat the proven finisher from the new start: lr 1e-4 -> 0 across the remaining budget, default league. Wave 4's single biggest win re-armed; if decay's benefit was one-shot (you can only converge once), this lands at par and closes the question.|--learning-rate 1e-4 --lr-final 0"
+"z3-batch-decay|403|fork|Stack the two arms that beat h2h par: batch 1024 (y3's axis) + lr decay (y4's axis). They were only ever tested separately; if even partly independent this arm should lead the decay group.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024"
+"z4-sp-lean|404|fork|Self-play-lean league 0.65/0.25/0.10 at constant lr 1e-4: the wave-4 bet re-run with the measured-necessary bot anchor kept. Wave 4 only tested 0.20 bots vs zero; 0.10 is the untested middle where the anchor holds but self-play pressure rises.|--learning-rate 1e-4 --league-mix 0.65,0.25,0.10"
+"z5-sp-decay|405|fork|Self-play-lean 0.65/0.25/0.10 + the decay finisher. If z4 beats z1 (mix effect) and z2 beats z1 (decay effect), this is the combination candidate for the next fork point.|--learning-rate 1e-4 --lr-final 0 --league-mix 0.65,0.25,0.10"
+"z6-past-heavy|406|fork|Lean into self-play via the PAST pool instead of LATEST: 0.50/0.40/0.10. y2's 0.85-LATEST mirror was the weakest self-play arm, so raw mirror pressure isn't the driver; a deeper frozen-snapshot pool buys opponent diversity without the nonstationarity.|--learning-rate 1e-4 --league-mix 0.50,0.40,0.10"
+"z7-sp-all|407|fork|Everything at once: self-play-lean 0.65/0.25/0.10 + batch 1024 + decay. The kitchen-sink bet — mirror games are the noisiest reward source, the big batch is aimed at that variance, and the decay finishes it. Reads against z3/z5 to attribute any win.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.65,0.25,0.10"
 )
 
 
@@ -277,14 +292,15 @@ compare() {
     done
 }
 
-# RELATIVE ranking: each variant in seat 0 against three copies of the
-# champion. This is the wave-4 primary once the vs-hard eval saturates, and it
-# is exactly fair: every fork started from the champion's own weights.
+# RELATIVE ranking: each variant in seat 0 against three copies of the frozen
+# wave-4 champion — the exact weights the z-arms forked from, and no longer a
+# moving target since y4-lr-decay is retired. This is the primary ranking once
+# the vs-hard eval saturates. Above-par here == genuinely past the fork point.
 h2h() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
     local base="$SWEEP_DIR/$BASELINE/best_model"
-    [[ -f ${base}.zip ]] || { echo "baseline $BASELINE has no best_model yet" >&2; exit 1; }
+    [[ -f ${base}.zip ]] || { echo "baseline $BASELINE has no best_model (sync $SWEEP_DIR/$BASELINE)" >&2; exit 1; }
     echo "=== self-baseline: 4x $BASELINE ($games games) ==="
     "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
         --player "$base" --player "$base" --player "$base" --player "$base"
@@ -329,7 +345,7 @@ fi
 
 [[ -x $PY ]] || { echo "no interpreter at $PY (run 'make develop' first)" >&2; exit 1; }
 
-echo "fork point     : $FORK_FROM (y-arms' first launch only)"
+echo "fork point     : $FORK_FROM (z-arms' first launch only)"
 echo "target         : $TOTAL_TIMESTEPS cumulative timesteps per variant"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
@@ -374,7 +390,7 @@ for n in "${SELECTED[@]}"; do
     elif [[ $init == fork ]]; then
         if [[ ! -f ${FORK_FROM}.zip ]]; then
             echo "cannot fork $name: no checkpoint at ${FORK_FROM}.zip" >&2
-            echo "(set FORK_FROM, or sync the wave-3 champion's run dir first)" >&2
+            echo "(set FORK_FROM, or sync the wave-4 champion's run dir first)" >&2
             exit 1
         fi
         fork_steps=$(zip_steps "${FORK_FROM}.zip") || {
@@ -387,8 +403,8 @@ for n in "${SELECTED[@]}"; do
         start_args=(--resume-from "$FORK_FROM")
         echo "forking $name from $(basename "$FORK_FROM").zip @ $fork_steps (+$steps)"
     else
-        echo "refusing to start $name: it continues a wave-3 run but $dir has no" >&2
-        echo "readable checkpoint. Sync the wave-3 run dir (or fix SWEEP_DIR)." >&2
+        echo "refusing to start $name: it continues a wave-4 run but $dir has no" >&2
+        echo "readable checkpoint. Sync the wave-4 run dir (or fix SWEEP_DIR)." >&2
         exit 1
     fi
 
@@ -429,12 +445,12 @@ cat <<EOF
 
 Monitor:
   ./scripts/sweep_selfplay.sh --status
-  tail -f $SWEEP_DIR/$BASELINE/train.log
+  tail -f $SWEEP_DIR/z2-redecay/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # rollout/entropy_loss, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/$BASELINE
+  $PY scripts/run_report.py $SWEEP_DIR/z2-redecay
 Rank the variants:
   ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (watch for saturation)
-  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x $BASELINE (primary once saturated)
+  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen $BASELINE best (primary once saturated)
 Stop everything:
   ./scripts/sweep_selfplay.sh --stop
 EOF
