@@ -120,11 +120,20 @@ class LeagueSnapshotCallback(BaseCallback):
 
     Snapshots persist on disk, so a resumed run (--resume-from) reloads its
     league on training start and continues where it left off.
+
+    ``peer_dirs`` (cross-arm population play) adds other concurrently-training
+    runs' league dirs to the *past* pool: their snapshots are rescanned at
+    every refresh, so each arm keeps sampling its siblings as they evolve.
+    Peer snapshots share ``mix[1]`` with the arm's own history; the "latest"
+    slot stays the arm's own. Peer files are validated on read (a sibling may
+    be mid-write or its dir not created yet) — invalid picks are dropped from
+    that refresh rather than crashing training.
     """
 
     def __init__(self, train_env, *, snapshot_every: int, league_dir: str,
                  past_k: int = 4, mix: tuple[float, float, float] = (0.5, 0.3, 0.2),
                  bot_difficulty: str = "hard", seed: int | None = None,
+                 peer_dirs: list[str] | tuple[str, ...] = (),
                  verbose: int = 0):
         super().__init__(verbose)
         if snapshot_every < 1:
@@ -139,9 +148,12 @@ class LeagueSnapshotCallback(BaseCallback):
         self.past_k = past_k
         self.mix = tuple(float(w) for w in mix)
         self.bot_difficulty = bot_difficulty
+        own = os.path.abspath(league_dir)
+        self.peer_dirs = [d for d in peer_dirs if os.path.abspath(d) != own]
         self._rng = np.random.default_rng(seed)
         self._last_snapshot_at = 0
         self._snapshots: list[tuple[int, str]] = []  # (timesteps, path), sorted
+        self._peer_snapshots: list[str] = []
 
     def _scan_league(self) -> None:
         self._snapshots = sorted(
@@ -149,6 +161,24 @@ class LeagueSnapshotCallback(BaseCallback):
             for p in glob.glob(os.path.join(self.league_dir, "snap_*.bin"))
             if (m := re.search(r"snap_(\d+)\.bin$", p))
         )
+        self._peer_snapshots = [
+            p for d in self.peer_dirs
+            for p in glob.glob(os.path.join(d, "snap_*.bin"))
+        ]
+
+    @staticmethod
+    def _read_snapshot(path: str) -> bytes | None:
+        """Snapshot bytes, or None if unreadable/not a policy file. Own writes
+        are atomic (tmp + rename), but a peer arm may have been synced half-way
+        or use a different format epoch — never let that kill training."""
+        from .export import MAGIC
+
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return None
+        return data if data.startswith(MAGIC) else None
 
     def _build_pool(self) -> list[tuple[str, bytes | str, float]]:
         p_latest, p_past, p_bots = self.mix
@@ -156,13 +186,13 @@ class LeagueSnapshotCallback(BaseCallback):
         latest_step, latest_path = self._snapshots[-1]
         with open(latest_path, "rb") as f:
             pool.append(("policy", f.read(), p_latest))
-        past = self._snapshots[:-1]
+        past = [p for _, p in self._snapshots[:-1]] + self._peer_snapshots
         if past and self.past_k > 0 and p_past > 0:
             picks = self._rng.choice(len(past), size=min(self.past_k, len(past)),
                                      replace=False)
-            for i in picks:
-                with open(past[int(i)][1], "rb") as f:
-                    pool.append(("policy", f.read(), p_past / len(picks)))
+            blobs = [b for i in picks if (b := self._read_snapshot(past[int(i)]))]
+            for b in blobs:
+                pool.append(("policy", b, p_past / len(blobs)))
         if p_bots > 0:
             pool.append(("bots", self.bot_difficulty, p_bots))
         return pool
@@ -173,14 +203,19 @@ class LeagueSnapshotCallback(BaseCallback):
         os.makedirs(self.league_dir, exist_ok=True)
         data = policy_state_dict_to_bytes(self.model.policy.state_dict())
         path = os.path.join(self.league_dir, f"snap_{self.model.num_timesteps}.bin")
-        with open(path, "wb") as f:
+        # Atomic write: peer arms scan this dir, so a snapshot must never be
+        # observable half-written.
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
             f.write(data)
+        os.replace(tmp, path)
         self._scan_league()
         self.train_env.env_method("set_opponent_pool", self._build_pool())
         self._last_snapshot_at = self.model.num_timesteps
         if self.verbose:
+            peers = f", {len(self._peer_snapshots)} peer" if self.peer_dirs else ""
             print(f"League: snapshot at {self._last_snapshot_at:,} timesteps "
-                  f"({len(self._snapshots)} in league)")
+                  f"({len(self._snapshots)} in league{peers})")
 
     def _on_training_start(self) -> None:
         self._push()
@@ -192,6 +227,8 @@ class LeagueSnapshotCallback(BaseCallback):
 
     def _on_rollout_end(self) -> None:
         self.logger.record("league/size", len(self._snapshots))
+        if self.peer_dirs:
+            self.logger.record("league/peer_size", len(self._peer_snapshots))
         self.logger.record("selfplay/snapshot_timesteps", self._last_snapshot_at)
 
 

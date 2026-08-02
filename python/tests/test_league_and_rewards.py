@@ -195,3 +195,57 @@ def test_league_build_pool_single_snapshot(tmp_path):
     cb._scan_league()
     pool = cb._build_pool()
     assert [k for k, _, _ in pool] == ["policy", "bots"]  # no past snapshots yet
+
+
+def test_league_peer_pool(tmp_path):
+    rng = np.random.default_rng(0)
+    league = tmp_path / "league"
+    league.mkdir()
+    (league / "snap_100.bin").write_bytes(make_policy_bytes(rng))
+    peer = tmp_path / "peer" / "league"
+    peer.mkdir(parents=True)
+    peer_blob = make_policy_bytes(rng)
+    (peer / "snap_900.bin").write_bytes(peer_blob)
+
+    cb = LeagueSnapshotCallback(
+        train_env=None, snapshot_every=1000, league_dir=str(league), past_k=4,
+        mix=(0.5, 0.3, 0.2), seed=0,
+        peer_dirs=[str(peer), str(tmp_path / "not-launched-yet" / "league"),
+                   str(league)],  # own dir must be ignored, missing dir tolerated
+    )
+    assert cb.peer_dirs == [str(peer), str(tmp_path / "not-launched-yet" / "league")]
+    cb._scan_league()
+    assert cb._peer_snapshots == [str(peer / "snap_900.bin")]
+
+    # No own past, but the peer snapshot fills the PAST share.
+    pool = cb._build_pool()
+    assert [k for k, _, _ in pool] == ["policy", "policy", "bots"]
+    assert pool[1] == ("policy", peer_blob, 0.3)
+    env = selfplay_env()
+    env.set_opponent_pool(pool)
+    env.reset()
+
+
+def test_league_peer_pool_skips_invalid_snapshot(tmp_path):
+    rng = np.random.default_rng(0)
+    league = tmp_path / "league"
+    league.mkdir()
+    for steps in (100, 200):
+        (league / f"snap_{steps}.bin").write_bytes(make_policy_bytes(rng))
+    peer = tmp_path / "peer-league"
+    peer.mkdir()
+    (peer / "snap_500.bin").write_bytes(b"NOTAPOLICY-half-synced-garbage")
+
+    cb = LeagueSnapshotCallback(train_env=None, snapshot_every=1000,
+                                league_dir=str(league), past_k=8,
+                                mix=(0.5, 0.3, 0.2), seed=0,
+                                peer_dirs=[str(peer)])
+    cb._scan_league()
+    pool = cb._build_pool()
+    # The bad peer file is dropped; the valid own-past snapshot carries the
+    # full PAST weight and every entry is loadable.
+    assert [k for k, _, _ in pool] == ["policy", "policy", "bots"]
+    assert pool[1][2] == pytest.approx(0.3)
+    env = selfplay_env()
+    env.set_opponent_pool(pool)
+    env.reset()

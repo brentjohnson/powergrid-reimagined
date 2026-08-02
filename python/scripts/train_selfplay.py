@@ -124,6 +124,13 @@ def main():
                         help="Sampling weights for the opponent pool: latest snapshot, "
                              "past snapshots (shared), heuristic hard bots. "
                              "Default 0.5,0.3,0.2.")
+    parser.add_argument("--league-peers", default=None, metavar="DIR[,DIR...]",
+                        help="Comma-separated league dirs of OTHER concurrently-training "
+                             "runs (population / cross-arm play). Their snapshots join "
+                             "this run's own history in the PAST share of --league-mix "
+                             "and are rescanned at every snapshot refresh, so the arms "
+                             "keep training against each other as they evolve. Dirs may "
+                             "be empty or not exist yet (a peer that hasn't launched).")
     parser.add_argument("--anneal-shaping-steps", type=int, default=0,
                         help="Linearly anneal the shaping bonus to zero over this many "
                              "timesteps (shaping should bootstrap, not steer the final "
@@ -348,6 +355,7 @@ def main():
             past_k=args.league_past_k,
             mix=args.league_mix,
             seed=args.seed,
+            peer_dirs=[d for d in (args.league_peers or "").split(",") if d],
             verbose=1,
         )]
     else:
