@@ -1,78 +1,93 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — wave 6: population play — the arms train against each other.
+# sweep_selfplay.sh — wave 7: the population converges — decay everything that
+# won, and select checkpoints against the champion instead of the hard bot.
 #
-# WAVE 6 (2026-08-01).
+# WAVE 7 (2026-08-03).
 #
-# Wave 5 finished at ~250M steps per arm. Both rankings, 200 games, seed 12345
-# (seat-0 par ~25%):
+# Wave 6 finished at 350M steps per arm. Both rankings, 400 games, seed 12345:
 #
-#   ABSOLUTE (--compare, vs 3x hard):        RELATIVE (--h2h, vs 3x y4 best):
-#     z3-batch-decay   66.5%   <- champion     z3-batch-decay   30.0%
-#     z2-redecay       62.5%                   y3-batch         29.0%
-#     y3-batch         62.0%                   z5-sp-decay      29.0%
-#     z5-sp-decay      58.5%                   z2-redecay       27.5%
-#     z1-cont          56.0%                   z1-cont          24.5%
-#     z7-sp-all        55.0%                   z7-sp-all        24.0%
-#     z4-sp-lean       54.5%                   z6-past-heavy    23.0%
-#     z6-past-heavy    52.0%                   z4-sp-lean       20.5%
+#   ABSOLUTE (--compare, vs 3x hard;         RELATIVE (--h2h, vs 3x z3 best;
+#             4x-hard seat-0 par 21.0%):               mirror par 24.5%):
+#     p2-finish        68.5%   <- champion     p3-small-finish  29.0%
+#     y3-batch         66.2%                   p2-finish        28.7%
+#     p3-small-finish  65.5%                   y3-batch         28.2%
+#     p1-main          65.0%                   p1-main          26.5%
+#     p6-gentle        64.8%                   p4-solo          25.0%
+#     p7-exploit       64.8%                   p5-peer-heavy    24.5%
+#     p5-peer-heavy    63.2%                   p7-exploit       23.5%
+#     p4-solo          60.5%                   p6-gentle        20.8%
 #
-#   Direct matches sealed it: z3 best (seat 0) took 29.0% vs 3x y3 best and
-#   30.5% vs 3x z2 best. z3-batch-decay's best_model (246M steps) is the
-#   wave-6 fork point AND the frozen --h2h yardstick.
+#   Direct matches p2 vs p3 were a dead heat (p2 in seat 0 took 26.8% vs 3x
+#   p3; p3 took 26.2% vs 3x p2; both ~par 24.5%), so the vs-hard edge and the
+#   recipe's track record decided it: p2-finish is the wave-6 champion. Its
+#   best_model (337.2M steps) is the wave-7 fork point, the frozen --h2h
+#   yardstick, AND the new --eval-opponent (see below). It is also the
+#   embedded Expert as of 2026-08-03 (74% on the noisy 50-game native
+#   harness, vs 68% for the z3 export it replaced).
 #
-# What wave 5 settled — this closes the recipe era:
+# What wave 6 settled:
 #
-#   * DECAY IS REPEATABLE: z2-redecay (62.5%) beat z1-cont (56.0%) from the
-#     same weights. You don't converge once; re-arming the anneal from a new
-#     start works every time.
-#   * BATCH + DECAY STACK: z3 (66.5%) beat both single-knob parents. The two
-#     winning axes are at least partly independent.
-#   * SELF-PLAY-LEAN LOST AGAIN, third wave in a row: every 0.10-bots arm
-#     trailed its 0.20-bots twin (z4<z1, z5<z2, z7<z3, z6 worst). The default
-#     0.5/0.3/0.2 league mix stays. The way to get more from self-play is not
-#     a bigger self share — it is BETTER OPPONENTS, which is what this wave
-#     buys.
-#   * y3-batch's constant-lr lineage keeps compounding (49% -> 62% vs hard
-#     without ever decaying) — kept alive as the second lineage.
-#   * The frozen-y4 h2h barely separates arms any more (its own mirror
-#     measured 29.5% for seat order alone); expect the same of the z3
-#     yardstick late in this wave — read trends, not single numbers.
+#   * POPULATION PLAY PAYS: p1-main (65.0% / 26.5%) beat p4-solo (60.5% /
+#     25.0%) on the identical recipe, and p4's best_model never moved past
+#     the fork point (captured at 246.8M ≈ the 246M fork). Every arm keeps
+#     peers from here on; the solo control has answered its question.
+#   * DECAY WINS A THIRD STRAIGHT WAVE (y4, z3, now p2). Re-arming the
+#     anneal from each new start remains the single most reliable move.
+#   * SMALL-BATCH IS BACK IN THE RACE: p3 (batch 512 + decay) tied p2 on
+#     h2h and the direct matches. Keep both batch sizes in play.
+#   * A MODERATE PEER DIET IS THE SWEET SPOT: the deeper diets did nothing
+#     for the arm itself (p5 0.30/0.50 at par, p7 0.10/0.70 below par), and
+#     p6-gentle (const 5e-5) was the h2h WORST at 20.8% — a slow-moving arm
+#     gets farmed by an evolving pool. Don't field a deliberately slow arm
+#     again; 0.40/0.40/0.20 stays the default.
+#   * y3-batch's constant-lr lineage still compounds (62.0% -> 66.2% vs
+#     hard) without ever decaying — kept alive, and this wave its lineage
+#     finally gets a decay fork (q4) to see what it has been leaving on the
+#     table.
 #
-# WHAT'S NEW: cross-arm population play (trainer `--league-peers`). Every
-# arm's league PAST share now also samples the OTHER arms' snapshot dirs,
-# rescanned at every snapshot refresh (~every 100k steps), so the eight
-# trainers evolve against each other instead of only their own history.
-# Rationale: the echo chamber is self-play's failure mode, the bot share is
-# already maxed out as a teacher (arms are at 55-66% vs hard), and eight
-# diverging recipes are the strongest, most varied opponents available.
-# Mechanics: snapshots are written atomically (tmp+rename) and validated on
-# read, so an arm can never crash another by being mid-write; a peer dir
-# that doesn't exist yet (staggered launch) is just an empty pool slice.
+# WHAT'S NEW: checkpoint selection vs the frozen champion. The vs-hard eval
+# has saturated (the field crowds 63-68% and best_model selection tracks
+# noise — exactly the failure the wave-6 header predicted). The trainer grew
+# an `--eval-opponent POLICY.bin` flag (2026-08-03): eval episodes now seat
+# the learner against three copies of the frozen wave-6 champion, so
+# eval/mean_reward — and therefore best_model — measures progress PAST the
+# fork point instead of noise against a beaten yardstick. Reading the new
+# numbers: win_rate = (mean_reward + 1) / 2, and the champion mirror par is
+# ~24.5%, so mean_reward ≈ -0.51 is "as good as the fork point" and anything
+# above that is genuine progress. best= in --status is NEGATIVE now — that
+# is expected, not a regression. The eval opponent file is auto-exported
+# from $FORK_FROM on first launch (to $EVAL_OPPONENT) and then never moves.
+# --compare (vs hard) remains the absolute yardstick for wave-end reporting.
 #
-# The population forfeits per-knob attribution BY DESIGN (every arm's
-# opponents now depend on every other arm), with one exception kept on
-# purpose: p4-solo runs the exact p1-main recipe with NO peers — the p1 vs
-# p4 gap is the cleanest read on whether population play itself pays.
+# Continued-arm migration: y3-batch's stored best bar (vs hard) is not
+# comparable with the new metric, so its FIRST wave-7 launch sets the old
+# best_model aside as best_model.wave6-vs-hard.zip and deletes
+# best_mean_reward.json (marker file .wave7-eval-opponent makes this
+# one-time). Its best_model.zip is then re-earned under the new metric.
 #
-# Arm roles (all lr 1e-4 unless noted, all forked from z3 except y3):
-#   y3-batch   second lineage (never-decayed, never-forked), joins the pool
-#   p1-main    population default: batch 1024, const lr, mix 0.40/0.40/0.20
-#   p2-finish  champion recipe on the population: p1 + lr decay -> 0
-#   p3-small-finish  batch 512 + decay: a stylistically distinct member
-#   p4-solo    p1-main WITHOUT peers — the population-effect control
-#   p5-peer-heavy    mix 0.30/0.50/0.20, past_k 12: deepest population diet
-#   p6-gentle  lr 5e-5 const: slow-moving, stable target for the others
-#   p7-exploit mix 0.10/0.70/0.20, past_k 12: barely plays itself, hunts the
-#              population — the closest cheap approximation of an AlphaStar
-#              exploiter without win-rate-targeted matchmaking
+# Arm roles (all lr 1e-4, all peers, all forked from p2 except y3/q4):
+#   y3-batch   the second lineage: const lr + batch 1024, never decayed
+#   q1-main    population default, const lr, batch 1024 — the decay control
+#   q2-finish  champion recipe re-armed: q1 + lr decay -> 0 (likeliest champion)
+#   q3-small-finish  batch 512 + decay — wave 6's co-winner recipe
+#   q4-y3-finish     forked from y3's best (297.2M) + decay -> 0: the
+#              never-annealed lineage finally converges; also injects y3's
+#              distinct style into the candidate set, not just the pool
+#   q5-clip-finish   q2 + clip-range 0.1: does a tighter trust region stack
+#              with decay the way batch did? (clip has never been varied)
+#   q6-anchor-lean   mix 0.40/0.50/0.10, past_k 12: trades HALF THE BOT
+#              ANCHOR for peers. Every earlier sp-lean cut bots for SELF
+#              (echo chamber, lost 3 waves); cutting bots for the population
+#              is the untested version of the same question
+#   q7-exploit mix 0.10/0.70/0.20, past_k 12: the pool hardener, kept from
+#              wave 6 — mid-field itself but the only adversarial-pressure
+#              member, and cheap to keep
 #
-# EVAL CAVEAT, now acute: --eval-difficulty hard selects best_model and the
-# champion is at 66.5% — approaching the band where selection tracks noise.
-# Rank arms with --h2h (vs 3x the frozen z3 best) once --compare crowds
-# above ~70%, raise COMPARE_GAMES for the final ranking, and treat wave 6's
-# winner as a candidate for a HARDER eval opponent in wave 7 (e.g. an
-# embedded-policy eval) rather than pushing vs-hard further.
+# EVAL CAVEAT, one wave early: once the field crowds ~30%+ vs the frozen
+# champion the same saturation logic applies again — rank with --h2h trends,
+# raise COMPARE_GAMES for the final ranking (wave 6 used 400), and expect to
+# re-freeze wave 7's winner as wave 8's eval opponent.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -80,7 +95,7 @@
 # Re-running is idempotent and self-healing: launching is the same command as
 # resuming. For each selected variant the script inspects its run dir and
 # picks up where it left off — resume from the furthest-along readable
-# checkpoint; if there is none, a fork arm starts from $FORK_FROM and a
+# checkpoint; if there is none, a fork arm starts from its fork source and a
 # continuation arm refuses loudly (silently restarting a finished run from
 # scratch would be wrong). The fork source is only ever used for a variant's
 # FIRST launch; after that it resumes its own checkpoints. The running-check
@@ -92,24 +107,28 @@
 #
 # TOTAL_TIMESTEPS is CUMULATIVE: sb3 counts timesteps across resumes, and each
 # launch is passed only the remaining budget, so re-running never overshoots.
-# y3 sits at 250M and the fork point at 246M, so the default 350M target buys
-# every arm +100-104M — the same increment waves 4 and 5 ran.
+# y3 sits at 350M and the p2 fork point at 337.2M, so the default 450M target
+# buys most arms +100-113M — the same increment waves 4-6 ran. The exception
+# is q4-y3-finish, forking from y3's best at 297.2M: it gets +153M and simply
+# runs longer than its siblings.
 #
 # Resume-lr note: MaskablePPO.load is passed custom_objects built from THIS
-# launch's flags, so a fork's lr schedule is its own — z3's decayed-to-zero
+# launch's flags, so a fork's lr schedule is its own — p2's decayed-to-zero
 # lr does not leak into the forks.
 #
 # League note for forks: snapshots live in each run dir's own league/ subdir.
 # A fork's league starts empty, but the trainer pushes a snapshot of the
 # just-loaded weights at training start, so a nonzero PAST share never sees an
-# empty pool — the early "past" opponent is simply the fork point itself (and,
-# this wave, whatever the peers have published).
+# empty pool — the early "past" opponent is simply the fork point itself (and
+# whatever the peers have published).
 #
-# The retired arms (waves 3-5: w1-w8, y1/y2/y4/y5/y6, z1/z2/z4-z7) stay in
-# $SWEEP_DIR as inert history. z3-batch-decay's dir MUST stay — it is the
-# fork point and the frozen h2h yardstick (y4-lr-decay was the wave-5 one).
-# --stop only knows the variants in the table below; if a retired arm is
-# somehow still running, kill its $SWEEP_DIR/<name>/train.pid by hand.
+# The retired arms (waves 3-6: w1-w8, y1/y2/y4/y5/y6, z1-z7, p1/p3-p7) stay
+# in $SWEEP_DIR as inert history. p2-finish's dir MUST stay — it is the fork
+# point, the frozen h2h yardstick, and the --eval-opponent source
+# (z3-batch-decay was the wave-6 yardstick; its dir is now history only).
+# y3-batch's dir must obviously stay too (it both continues and is q4's fork
+# source). --stop only knows the variants in the table below; if a retired
+# arm is somehow still running, kill its $SWEEP_DIR/<name>/train.pid by hand.
 #
 # Usage:
 #   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
@@ -121,9 +140,12 @@
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=350000000  CUMULATIVE timesteps per variant (see above)
-#   FORK_FROM=runs/sweep3/z3-batch-decay/best_model
-#                              pinned fork point for the p-arms (stem, no .zip)
+#   TOTAL_TIMESTEPS=450000000  CUMULATIVE timesteps per variant (see above)
+#   FORK_FROM=runs/sweep3/p2-finish/best_model
+#                              pinned fork point for the q-arms (stem, no .zip)
+#   EVAL_OPPONENT=runs/sweep3/wave7-eval-opponent.bin
+#                              frozen PGRLPOL6 eval opponent; auto-exported
+#                              from $FORK_FROM if missing
 #   SWEEP_DIR=runs/sweep3      root for the per-variant run dirs
 #   NET_WIDTH=128              policy width for fresh runs (resumes carry their own)
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
@@ -140,8 +162,9 @@ cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep3}
-FORK_FROM=${FORK_FROM:-$SWEEP_DIR/z3-batch-decay/best_model}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-350000000}
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/p2-finish/best_model}
+EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave7-eval-opponent.bin}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-450000000}
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
@@ -149,10 +172,11 @@ NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
-# The frozen --h2h opponent: the retired wave-5 champion's best_model — the
-# exact weights every p-arm forked from. z3-batch-decay no longer trains (its
-# lr annealed to 0), so this yardstick never moves.
-BASELINE=z3-batch-decay
+# The frozen --h2h opponent: the retired wave-6 champion's best_model — the
+# exact weights the q-arms forked from and the eval opponent was exported
+# from. p2-finish no longer trains (its lr annealed to 0), so this yardstick
+# never moves.
+BASELINE=p2-finish
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -163,8 +187,11 @@ COMMON=(
     --net-width "$NET_WIDTH"
     --no-reward-shaping         # terminal reward is the objective (wave 3's
                                 # shaped arm was neutral-to-negative)
-    --eval-difficulty hard      # selects best_model; nearing saturation — see
-                                # the eval caveat in the header
+    --eval-opponent "$EVAL_OPPONENT"
+                                # selects best_model vs the frozen wave-6
+                                # champion; vs-hard saturated at 63-68%.
+                                # Par is ~24.5% == mean_reward ~ -0.51, so
+                                # best= in --status goes NEGATIVE by design.
     --save-freq 250000          # ~2M timesteps per checkpoint at 8 envs
     --eval-freq 50000           # ~400k timesteps per eval pass
     --eval-episodes 200         # 20 (the trainer default) is too noisy to rank
@@ -172,23 +199,24 @@ COMMON=(
 
 # name|seed|init|pop|hypothesis|extra flags
 #
-# `init` is "resume" (a continuing arm; must already have checkpoints) or
-# "fork" (first launch resumes from $FORK_FROM into a fresh dir).
+# `init` is "resume" (a continuing arm; must already have checkpoints),
+# "fork" (first launch resumes from $FORK_FROM into a fresh dir), or
+# "fork=<stem>" (first launch resumes from that checkpoint stem instead).
 #
 # `pop` is "peers" (the launch loop appends --league-peers with every OTHER
-# variant's league dir) or "solo" (no peers — the population-effect control).
+# variant's league dir) or "solo" (no peers — wave 6's control; answered).
 #
 # League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 # With peers, the PAST share samples own history AND the peers' snapshots.
 VARIANTS=(
-"y3-batch|303|resume|peers|The second lineage: constant lr 1e-4 + batch 1024, never decayed, never forked, still compounding (49% -> 62% vs hard across wave 5). Joins the population — its independent history is the most stylistically distinct opponent the pool has.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"p1-main|501|fork|peers|The population default: champion weights, batch 1024, constant lr, mix 0.40/0.40/0.20 with the PAST share fed by all seven siblings. Reads directly against p4-solo: same recipe, population on vs off.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"p2-finish|502|fork|peers|The champion recipe re-armed on the population: p1-main + lr decay 1e-4 -> 0. Decay has finished on top twice in a row (y4, z3); if opponent quality is what gates it, this is the wave's likeliest champion.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"p3-small-finish|503|fork|peers|Batch 512 + decay: the strongest small-batch recipe (z2's) inside the population. Partly a performance arm, partly a diversity donor — different update noise makes a stylistically different opponent for everyone else.|--learning-rate 1e-4 --lr-final 0 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"p4-solo|504|fork|solo|CONTROL: bit-for-bit p1-main's recipe with NO peers — its league is its own history, exactly like wave 5. The p1 vs p4 gap (and each one's h2h vs the frozen z3) is the clean measurement of whether population play itself pays.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"p5-peer-heavy|505|fork|peers|Deepest population diet: mix 0.30/0.50/0.20, past_k 12. Half of every rollout is against the pool. If p1 beats it, a taste of population suffices; if it beats p1, opponent variety is the binding resource.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.30,0.50,0.20 --league-past-k 12"
-"p6-gentle|506|fork|peers|Slow-moving member: constant lr 5e-5, otherwise p1. A near-stationary strong player stabilizes the population (others can learn against it without it shifting underfoot) and tests whether the champion keeps improving at half the step size.|--learning-rate 5e-5 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"p7-exploit|507|fork|peers|The exploiter: mix 0.10/0.70/0.20, past_k 12 — barely plays itself, lives on the population. Uniform sampling stands in for AlphaStar's win-rate matchmaking; its job is to find and punish the pool's shared habits, which feeds harder opponents back to everyone.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.10,0.70,0.20 --league-past-k 12"
+"y3-batch|303|resume|peers|The second lineage: constant lr 1e-4 + batch 1024, never decayed, never forked, compounding for a third straight wave (62.0% -> 66.2% vs hard across wave 6). Joins the wave-7 pool unchanged; q4 separately decays a copy of it.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"q1-main|601|fork|peers|The population default and this wave's decay control: champion weights, batch 1024, constant lr, mix 0.40/0.40/0.20. Every decay arm reads against this — same food, same fork, no anneal.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"q2-finish|602|fork|peers|The champion recipe re-armed a fourth time: q1-main + lr decay 1e-4 -> 0. Decay has finished on top three waves running (y4, z3, p2); until it loses, it is the presumptive champion.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"q3-small-finish|603|fork|peers|Batch 512 + decay: wave 6's co-winner (29.0% h2h, dead heat with p2 in direct matches). Half the batch means different update noise — a real contender that is also the pool's most distinct opponent.|--learning-rate 1e-4 --lr-final 0 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"q4-y3-finish|604|fork=$SWEEP_DIR/y3-batch/best_model|peers|The never-decayed lineage finally gets its anneal: fork y3's best (297.2M) + lr decay -> 0. Re-arming the anneal has worked from every start so far; if it works from this independent history too, decay is unconditional — and the pool gains a champion-strength player that never saw p2's weights.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"q5-clip-finish|605|fork|peers|q2-finish + clip-range 0.1. Batch stacked with decay in wave 5; clip is the other update-size knob and has never been varied. If a tighter trust region stacks too, wave 8 inherits a three-knob recipe; if it drags, clip 0.2 is vindicated.|--learning-rate 1e-4 --lr-final 0 --clip-range 0.1 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"q6-anchor-lean|606|fork|peers|Mix 0.40/0.50/0.10, past_k 12: trades half the BOT anchor for peers. Every earlier sp-lean arm cut bots to feed SELF and lost (echo chamber); cutting bots to feed the population is the untested variant — at 65%+ vs hard the heuristic teacher may finally be dead weight.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.50,0.10 --league-past-k 12"
+"q7-exploit|607|fork|peers|The exploiter, kept from wave 6: mix 0.10/0.70/0.20, past_k 12 — barely plays itself, lives on the population. Mid-field as a candidate but the pool's only adversarial-pressure member; its job is hardening everyone else's opponents, not winning.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.10,0.70,0.20 --league-past-k 12"
 )
 
 
@@ -276,6 +304,8 @@ list_variants() {
 }
 
 status() {
+    # NOTE: best= is eval/mean_reward vs 3x the frozen wave-6 champion
+    # (win_rate = (best+1)/2; par ~ -0.51). Negative values are normal.
     for i in "${!VARIANTS[@]}"; do
         local name dir pid state ckpt best when
         name=$(variant_field "$i" 1); dir="$SWEEP_DIR/$name"
@@ -306,8 +336,8 @@ status() {
 # ABSOLUTE yardstick: each variant's best_model in seat 0 against three `hard`
 # bots — the bar the whole project aims at. The all-bots row gives seat 0's
 # structural share (~25% plus seat bias), so read a variant against that, not
-# against 0. Watch for saturation: past ~70-80% this stops separating arms and
-# --h2h becomes the ranking that matters.
+# against 0. Saturated for ranking since wave 6 (the field crowds 63-68%);
+# kept for wave-end reporting and cross-wave comparability.
 compare() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
@@ -326,9 +356,10 @@ compare() {
 }
 
 # RELATIVE ranking: each variant in seat 0 against three copies of the frozen
-# wave-5 champion — the exact weights the p-arms forked from, and not a moving
-# target since z3-batch-decay is retired. This is the primary ranking once the
-# vs-hard eval saturates. Above-par here == genuinely past the fork point.
+# wave-6 champion — the exact weights the q-arms forked from, and not a moving
+# target since p2-finish is retired. This is the primary ranking (the vs-hard
+# eval is saturated). Above-par here == genuinely past the fork point; the
+# mirror measured par at 24.5% for seat order alone in wave 6.
 h2h() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
@@ -378,7 +409,22 @@ fi
 
 [[ -x $PY ]] || { echo "no interpreter at $PY (run 'make develop' first)" >&2; exit 1; }
 
-echo "fork point     : $FORK_FROM (p-arms' first launch only)"
+# The frozen eval opponent every arm's best_model selection runs against.
+# Exported once from the fork point and never touched again — the golden
+# sidecar goes next to it, NOT into assets/ (export_policy.py's default).
+if [[ ! -f $EVAL_OPPONENT && $DRY_RUN != 1 ]]; then
+    if [[ ! -f ${FORK_FROM}.zip ]]; then
+        echo "cannot export eval opponent: no checkpoint at ${FORK_FROM}.zip" >&2
+        echo "(set FORK_FROM/EVAL_OPPONENT, or sync the wave-6 champion's run dir)" >&2
+        exit 1
+    fi
+    echo "exporting frozen eval opponent: ${FORK_FROM}.zip -> $EVAL_OPPONENT"
+    "$PY" scripts/export_policy.py --model "$FORK_FROM" \
+        --out "$EVAL_OPPONENT" --golden "${EVAL_OPPONENT%.bin}.golden.json"
+fi
+
+echo "fork point     : $FORK_FROM (q-arms' first launch only)"
+echo "eval opponent  : $EVAL_OPPONENT (frozen; selects best_model)"
 echo "target         : $TOTAL_TIMESTEPS cumulative timesteps per variant"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
@@ -398,6 +444,13 @@ for n in "${SELECTED[@]}"; do
     read -r -a extra <<< "$(variant_field "$i" 6)"
     dir="$SWEEP_DIR/$name"
 
+    # Per-arm fork source: "fork" uses $FORK_FROM, "fork=<stem>" its own.
+    fork_src=$FORK_FROM
+    if [[ $init == fork=* ]]; then
+        fork_src=${init#fork=}
+        init=fork
+    fi
+
     # Already running? Never start a second writer on the same run dir. The
     # check confirms the pidfile's PID is genuinely this variant's trainer, so
     # a stale/recycled PID neither blocks a needed resume nor risks a duplicate.
@@ -407,9 +460,22 @@ for n in "${SELECTED[@]}"; do
         continue
     fi
 
+    # One-time wave-7 migration for continued arms: the stored best bar was
+    # earned vs hard bots and is not comparable with the new frozen-champion
+    # eval. Set the old best aside, drop the bar, and let the new metric
+    # re-earn best_model.zip. The marker file makes re-runs a no-op.
+    if [[ $init == resume && $DRY_RUN != 1 && -f $dir/best_mean_reward.json \
+          && ! -f $dir/.wave7-eval-opponent ]]; then
+        [[ -f $dir/best_model.zip && ! -f $dir/best_model.wave6-vs-hard.zip ]] \
+            && cp "$dir/best_model.zip" "$dir/best_model.wave6-vs-hard.zip"
+        rm "$dir/best_mean_reward.json"
+        touch "$dir/.wave7-eval-opponent"
+        echo "migrated $name to the wave-7 eval metric (old best kept as best_model.wave6-vs-hard.zip)"
+    fi
+
     # Auto-resume: continue from the arm's own furthest readable checkpoint.
-    # Only a fork arm's very first launch uses $FORK_FROM; a continuation arm
-    # with no checkpoint is an error, not a fresh start.
+    # Only a fork arm's very first launch uses its fork source; a continuation
+    # arm with no checkpoint is an error, not a fresh start.
     start_args=()
     ckpt_stem=""; done_steps=""
     read -r ckpt_stem done_steps < <(latest_checkpoint "$dir") || true
@@ -422,20 +488,20 @@ for n in "${SELECTED[@]}"; do
         start_args=(--resume-from "$ckpt_stem")
         echo "resuming $name from $(basename "$ckpt_stem").zip @ $done_steps (+$steps)"
     elif [[ $init == fork ]]; then
-        if [[ ! -f ${FORK_FROM}.zip ]]; then
-            echo "cannot fork $name: no checkpoint at ${FORK_FROM}.zip" >&2
-            echo "(set FORK_FROM, or sync the wave-5 champion's run dir first)" >&2
+        if [[ ! -f ${fork_src}.zip ]]; then
+            echo "cannot fork $name: no checkpoint at ${fork_src}.zip" >&2
+            echo "(set FORK_FROM, or sync the fork source's run dir first)" >&2
             exit 1
         fi
-        fork_steps=$(zip_steps "${FORK_FROM}.zip") || {
-            echo "cannot fork $name: ${FORK_FROM}.zip is unreadable" >&2; exit 1; }
+        fork_steps=$(zip_steps "${fork_src}.zip") || {
+            echo "cannot fork $name: ${fork_src}.zip is unreadable" >&2; exit 1; }
         steps=$(( TOTAL_TIMESTEPS - fork_steps ))
         if (( steps <= 0 )); then
             echo "skip $name: fork point already at $fork_steps >= target $TOTAL_TIMESTEPS" >&2
             continue
         fi
-        start_args=(--resume-from "$FORK_FROM")
-        echo "forking $name from $(basename "$FORK_FROM").zip @ $fork_steps (+$steps)"
+        start_args=(--resume-from "$fork_src")
+        echo "forking $name from $(basename "$fork_src").zip @ $fork_steps (+$steps)"
     else
         echo "refusing to start $name: it continues an earlier run but $dir has no" >&2
         echo "readable checkpoint. Sync the earlier run dir (or fix SWEEP_DIR)." >&2
@@ -483,13 +549,13 @@ done
 cat <<EOF
 
 Monitor:
-  ./scripts/sweep_selfplay.sh --status
-  tail -f $SWEEP_DIR/p2-finish/train.log
+  ./scripts/sweep_selfplay.sh --status     # best= is vs the frozen champion: win = (best+1)/2, par ~ -0.51
+  tail -f $SWEEP_DIR/q2-finish/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # league/peer_size, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/p2-finish
+  $PY scripts/run_report.py $SWEEP_DIR/q2-finish
 Rank the variants:
-  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (watch for saturation)
-  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen $BASELINE best (primary once saturated)
+  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (reporting; saturated for ranking)
+  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen $BASELINE best (primary ranking)
 Stop everything:
   ./scripts/sweep_selfplay.sh --stop
 EOF
