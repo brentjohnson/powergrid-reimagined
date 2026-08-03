@@ -41,7 +41,11 @@ from powergrid_env.callbacks import (
     PersistentBestEvalCallback,
     ShapingAnnealCallback,
 )
-from powergrid_env.export import policy_bytes_to_state_dict, policy_state_dict_to_bytes
+from powergrid_env.export import (
+    MAGIC as EXPORT_MAGIC,
+    policy_bytes_to_state_dict,
+    policy_state_dict_to_bytes,
+)
 
 
 def make_env(num_players: int, seed: int, reward_shaping: bool,
@@ -66,23 +70,28 @@ def league_mix(value: str) -> tuple[float, float, float]:
 
 
 def make_eval_env(num_players: int, seed: int, end_game_cities: int | None = None,
-                  difficulty: str = "normal"):
-    """Eval vs Rust bots — an external yardstick for self-play progress.
+                  difficulty: str = "normal",
+                  opponent_policy: bytes | None = None):
+    """Eval vs a fixed external yardstick — heuristic bots or a frozen policy.
 
-    `difficulty` matters for checkpoint selection, not just reporting: this metric
-    drives `best_model`. Against an opponent the learner already dominates the
-    score saturates and `best_model` starts tracking eval noise instead of skill,
-    so a warm-started run (which begins near the champion heuristic) should
-    evaluate against `hard`.
+    The eval opponent matters for checkpoint selection, not just reporting: this
+    metric drives `best_model`. Against an opponent the learner already dominates
+    the score saturates and `best_model` starts tracking eval noise instead of
+    skill, so a warm-started run (which begins near the champion heuristic)
+    should evaluate against `hard`, and a run whose lineage already beats hard
+    should evaluate against a frozen policy snapshot (`opponent_policy`,
+    PGRLPOL6 bytes — overrides `difficulty`).
     """
     def _init():
         env = PowerGridSingleAgentEnv(
             num_players=num_players,
-            bot_difficulty=difficulty,
+            bot_difficulty="policy" if opponent_policy is not None else difficulty,
             seed=seed,
             reward_shaping=False,
             end_game_cities=end_game_cities,
         )
+        if opponent_policy is not None:
+            env.set_opponent_policy(opponent_policy)
         # A policy that always passes can stall a game forever; truncate
         # such episodes instead of hanging the eval pass.
         return Monitor(gym.wrappers.TimeLimit(env, max_episode_steps=2000))
@@ -155,6 +164,15 @@ def main():
                              "best_model, so pick one the learner does NOT dominate — a "
                              "saturated score makes best_model track noise. Use 'hard' for "
                              "warm-started or already-strong runs.")
+    parser.add_argument("--eval-opponent", default=None, metavar="POLICY.bin",
+                        help="Evaluate against copies of this frozen PGRLPOL6 policy "
+                             "(as written by scripts/export_policy.py or a league "
+                             "snap_*.bin) instead of --eval-difficulty heuristic bots. "
+                             "Use once a lineage saturates the vs-hard eval (~70%%) and "
+                             "best_model selection starts tracking noise. NOTE: changing "
+                             "the eval opponent makes a run dir's stored best bar "
+                             "incomparable — delete best_mean_reward.json (and set aside "
+                             "best_model.zip) when switching an existing run over.")
     parser.add_argument("--reward-shaping", action=argparse.BooleanOptionalAction, default=True,
                         help="Add a per-round powered-cities bonus to the learner's step. "
                              "Eval is always unshaped.")
@@ -373,11 +391,22 @@ def main():
     eval_env = None
     eval_callback = None
     if args.eval_freq > 0:
-        # eval/mean_reward in [-1, 1] maps directly to win rate vs bots:
-        # win_rate = (mean_reward + 1) / 2.
+        eval_opponent_bytes = None
+        if args.eval_opponent:
+            with open(args.eval_opponent, "rb") as f:
+                eval_opponent_bytes = f.read()
+            if not eval_opponent_bytes.startswith(EXPORT_MAGIC):
+                raise SystemExit(
+                    f"--eval-opponent {args.eval_opponent} is not a "
+                    f"{EXPORT_MAGIC.decode()} policy file")
+            print(f"Eval opponent: frozen policy {args.eval_opponent} "
+                  f"(overrides --eval-difficulty)")
+        # eval/mean_reward in [-1, 1] maps directly to win rate vs the eval
+        # opponents: win_rate = (mean_reward + 1) / 2.
         eval_env = DummyVecEnv([make_eval_env(args.num_players, args.seed + 10_000,
                                               args.end_game_cities,
-                                              args.eval_difficulty)])
+                                              args.eval_difficulty,
+                                              opponent_policy=eval_opponent_bytes)])
         eval_callback = PersistentBestEvalCallback(
             eval_env,
             eval_freq=args.eval_freq,

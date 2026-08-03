@@ -239,7 +239,11 @@ now arms to be tested (`w3`, `w4`, `w5`) rather than assumptions to build on, an
 `--init-policy-from` leaves the **value head random**, which is the most likely
 way to wreck a good clone (attacked by `w2` and `w7`); a clone of the `hard` bot
 saturates an eval against `normal`, and that metric picks `best_model`, so eval
-runs against `hard`; and the rebuilt menus are wider than the old ones, with three
+runs against `hard` (and since wave 7 — 2026-08-03 — against a frozen champion
+policy via the trainer's `--eval-opponent POLICY.bin` flag, because the vs-hard
+eval saturated in turn once the field crowded 63–68%; the same escalation will
+repeat whenever the field catches its yardstick); and the rebuilt menus are
+wider than the old ones, with three
 of five decision types now teaching a varied imitation label — which is why
 entropy is probed *upward* rather than downward.
 
@@ -248,9 +252,9 @@ Two ranking commands, because they answer different questions:
 - `--compare` is the **absolute** yardstick: each variant's `best_model` in seat
   0 against three `hard` bots, the bar the project aims at. It prints an
   all-bots row first — four `hard` bots score seat 0's structural share (~25%
-  plus seat bias), so that, not 0, is the line to read against. Unlike wave 2's
-  vs-normal eval it does not saturate, because a clone starts near the bots' own
-  level.
+  plus seat bias), so that, not 0, is the line to read against. It stopped
+  separating arms in wave 6 (the field crowds 63–68%); it stays as the
+  cross-wave reporting yardstick.
 - `--h2h` is the **relative** ranking: each variant in seat 0 against three
   copies of the baseline arm, for once several arms clear the bot bar.
 
