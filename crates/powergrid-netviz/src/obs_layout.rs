@@ -28,6 +28,26 @@ const PHASE_SCALARS: [&str; 5] = [
     "end_game_cities",
     "turn_order_pos",
 ];
+const ENDGAME_FEATS: [&str; 18] = [
+    "self progress",
+    "self deficit (sat 6)",
+    "opp 0 progress",
+    "opp 1 progress",
+    "opp 2 progress",
+    "opp 3 progress",
+    "opp 4 progress",
+    "min opp deficit (sat 6)",
+    "self powerable now",
+    "opp 0 powerable now",
+    "opp 1 powerable now",
+    "opp 2 powerable now",
+    "opp 3 powerable now",
+    "opp 4 powerable now",
+    "self last powered",
+    "powered margin",
+    "can finish now",
+    "money after finish",
+];
 
 /// All sections, in observation-vector order. Section ranges are contiguous
 /// and cover the full `OBS_SIZE` — see the `sections_cover_obs_size` test.
@@ -141,6 +161,12 @@ pub fn sections() -> Vec<ObsSection> {
                     PLANT_FEATS[i % 5]
                 )
             },
+        },
+        ObsSection {
+            name: "End-game race",
+            start: 454 + N_CITIES + 4 + 75,
+            len: 18,
+            label: |i| ENDGAME_FEATS[i].to_string(),
         },
     ]
 }

@@ -89,7 +89,8 @@ pub const N_REGIONS: usize = REGION_NAMES.len();
 // opponent summary + opponent cities + city slot counts + active regions +
 // actual market + future market + market meta + resource market +
 // phase/step/round/end-game/turn-order scalars + phase scratch +
-// per-city connection cost + opponent per-resource fuel demand + opponent plants.
+// per-city connection cost + opponent per-resource fuel demand + opponent plants
+// + end-game race.
 pub const OBS_SIZE: usize = 1
     + 4
     + 15
@@ -106,7 +107,8 @@ pub const OBS_SIZE: usize = 1
     + 8
     + N_CITIES // 19. connection cost from the actor's network to each city
     + 4 // 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
-    + 5 * 3 * 5; // 21. opponent plants (5 opp × 3 slots × 5 feats)
+    + 5 * 3 * 5 // 21. opponent plants (5 opp × 3 slots × 5 feats)
+    + 18; // 22. end-game race (trigger proximity, powerable-now, finish affordability)
 
 /// The action space is the **macro** space (`crate::macro_actions`): the policy
 /// chooses one complete phase-plan per turn, not a primitive micro-action. The
@@ -448,6 +450,30 @@ fn per_round_demand(plant: &PowerPlant, resource: Resource) -> f32 {
     }
 }
 
+/// Most cities `player` could power *right now* with the plants and fuel in
+/// hand: best feasible plant subset by city total, capped by cities owned (the
+/// same cap Bureaucracy payment applies). The end-game comparison that decides
+/// the winner at trigger time.
+fn max_powerable_now(player: &powergrid_core::types::Player, city_count: usize) -> usize {
+    let n = player.plants.len().min(3) as u8;
+    let mut best = 0usize;
+    for mask in 0u8..(1u8 << n) {
+        if !is_subset_feasible(&player.plants, &player.resources, mask) {
+            continue;
+        }
+        let cities: usize = player
+            .plants
+            .iter()
+            .take(3)
+            .enumerate()
+            .filter(|(i, _)| mask & (1 << i) != 0)
+            .map(|(_, p)| p.cities as usize)
+            .sum();
+        best = best.max(cities);
+    }
+    best.min(city_count)
+}
+
 /// Port of `encoding.py::encode_observation` — builds obs vector directly from GameState.
 pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     let mut obs = vec![0.0f32; OBS_SIZE];
@@ -722,6 +748,54 @@ pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     }
     idx += 5 * 3 * 5;
 
+    // 22. End-game race (18): the push decision stated directly. The winner at
+    // trigger time is decided by "who can power the most right now" (the trigger
+    // round finishes with a normal Bureaucracy, then ranks are powered → money →
+    // cities), and the push itself is "reach the trigger while out-powering the
+    // field" — every input to that condition is surfaced here on one consistent
+    // scale instead of being left as cross-scale combinations of sections
+    // 4/5/16/19. Opponent fuel stock is public information (view_for hides only
+    // money/stats), so powerable-now is fair for all seats.
+    let trigger = (state.end_game_cities as f32).max(1.0);
+    let my_count = state.player_city_count(actor_id);
+    let my_deficit = state.end_game_cities.saturating_sub(my_count as u8) as usize;
+    // [0] self progress toward the trigger; [1] saturating deficit.
+    obs[idx] = my_count as f32 / trigger;
+    obs[idx + 1] = my_deficit.min(6) as f32 / 6.0;
+    // [2..7) per-opponent progress (section-5 order); [7] min opponent deficit.
+    let mut min_opp_deficit = 6usize;
+    for (i, opp) in opponents.iter().take(5).enumerate() {
+        let count = state.player_city_count(opp.id);
+        obs[idx + 2 + i] = count as f32 / trigger;
+        min_opp_deficit =
+            min_opp_deficit.min(state.end_game_cities.saturating_sub(count as u8) as usize);
+    }
+    obs[idx + 7] = min_opp_deficit as f32 / 6.0;
+    // [8] self powerable-now, [9..14) per-opponent powerable-now, [14] self
+    // last powered (opponents' is already in section 5), [15] powered margin.
+    let my_powerable = max_powerable_now(me, my_count);
+    obs[idx + 8] = my_powerable as f32 / 21.0;
+    let mut best_opp_powerable = 0usize;
+    for (i, opp) in opponents.iter().take(5).enumerate() {
+        let powerable = max_powerable_now(opp, state.player_city_count(opp.id));
+        obs[idx + 9 + i] = powerable as f32 / 21.0;
+        best_opp_powerable = best_opp_powerable.max(powerable);
+    }
+    obs[idx + 14] = me.last_cities_powered as f32 / 21.0;
+    obs[idx + 15] = (my_powerable as f32 - best_opp_powerable as f32 + 21.0) / 42.0;
+    // [16] can-finish-now: the exact greedy walk BUILD_n expands, so this
+    // feature and the mask's BUILD_deficit legality agree by construction.
+    // [17] money left after finishing (0 when finishing is out of reach).
+    if (1..=6).contains(&my_deficit) {
+        let (ids, cost) =
+            crate::macro_actions::cheapest_cities_with_cost(state, actor_id, my_deficit);
+        if ids.len() == my_deficit {
+            obs[idx + 16] = 1.0;
+            obs[idx + 17] = (me.money - cost) as f32 / 500.0;
+        }
+    }
+    idx += 18;
+
     debug_assert_eq!(idx, OBS_SIZE, "observation size mismatch");
     // Clamp into the Box bounds: a few features (e.g. player stockpiles, late
     // rounds) can exceed their nominal denominator in extreme games.
@@ -870,6 +944,45 @@ mod tests {
             assert_eq!(obs[base], p.number as f32 / 60.0, "future card {i} number");
             assert_eq!(obs[base + 4], 1.0, "future card {i} present");
         }
+    }
+
+    /// Section 22 (end-game race) sanity: trigger proximity, powerable-now,
+    /// and the can-finish-now affordability flag.
+    #[test]
+    fn end_game_race_section_encodes_push_condition() {
+        let base = OBS_SIZE - 18;
+        let (mut state, ids) = start_game(42);
+
+        // Fresh 2p game: no cities, no plants, trigger 21.
+        let obs = build_observation(&state, ids[0]);
+        assert_eq!(obs[base], 0.0, "self progress");
+        assert_eq!(obs[base + 1], 1.0, "self deficit saturates at 6+");
+        assert_eq!(obs[base + 7], 1.0, "min opponent deficit saturates");
+        assert_eq!(obs[base + 8], 0.0, "self powerable-now");
+        assert_eq!(obs[base + 15], 0.5, "powered margin is even");
+        assert_eq!(obs[base + 16], 0.0, "cannot finish from 6+ away");
+        assert_eq!(
+            obs[base + 17],
+            0.0,
+            "no money-after-finish when unreachable"
+        );
+
+        // Two cities from a trigger of 2 with an empty network: starting cash
+        // covers the cheapest pair (first city routes free, second pays routing
+        // from it), so the push is affordable and the feature must agree with
+        // the exact BUILD_n greedy walk.
+        state.end_game_cities = 2;
+        let money = state.player(ids[0]).unwrap().money;
+        let (chosen, cost) = crate::macro_actions::cheapest_cities_with_cost(&state, ids[0], 2);
+        assert_eq!(chosen.len(), 2, "starting cash affords two cities");
+        let obs = build_observation(&state, ids[0]);
+        assert_eq!(obs[base + 1], 2.0 / 6.0, "deficit 2");
+        assert_eq!(obs[base + 16], 1.0, "can finish now");
+        assert_eq!(
+            obs[base + 17],
+            (money - cost) as f32 / 500.0,
+            "money after finishing matches the greedy walk's cost"
+        );
     }
 
     /// Regression test: `fuel_gas` must only offer splits that

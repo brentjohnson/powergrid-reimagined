@@ -103,4 +103,9 @@ OBS_SIZE = (
     + MAX_CITIES  # 19. connection cost from the actor's network to each city
     + 4           # 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
     + 5 * 3 * 5   # 21. opponent plants (5 opp × 3 slots × 5 feats)
+    + 18          # 22. end-game race (trigger proximity, powerable-now,
+                  #     finish affordability) — 2026-08-06, obs 582 -> 600.
+                  #     Append-only: older 582-wide policies are migrated by
+                  #     zero-padding l1 rows (scripts/migrate_policy_obs.py),
+                  #     which leaves their logits bit-identical.
 )

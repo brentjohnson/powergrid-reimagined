@@ -344,7 +344,7 @@ fn greedy_pick(
     sorted: &[(String, u32)],
     budget: u32,
     limit: usize,
-) -> Vec<String> {
+) -> (Vec<String>, u32) {
     let mut owned = state.player_cities(actor);
     let mut chosen = Vec::new();
     let mut cash = budget;
@@ -370,14 +370,26 @@ fn greedy_pick(
         owned.push(id.clone());
         chosen.push(id.clone());
     }
-    chosen
+    (chosen, budget - cash)
 }
 
 /// The `n` cheapest cities the actor can afford, capped by the end-game trigger
 /// (cities past it are pure waste — the game ends the moment it is reached).
 fn cheapest_cities(state: &GameState, actor: PlayerId, n: usize) -> Vec<String> {
+    cheapest_cities_with_cost(state, actor, n).0
+}
+
+/// [`cheapest_cities`] plus the total Elektro the chosen set costs. Also used by
+/// the observation's end-game-race section ("can I reach the trigger this build
+/// phase, and what would it cost") so the obs feature and the BUILD_n expansion
+/// agree by construction.
+pub(crate) fn cheapest_cities_with_cost(
+    state: &GameState,
+    actor: PlayerId,
+    n: usize,
+) -> (Vec<String>, u32) {
     if n == 0 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
     let money = state.player(actor).map(|p| p.money).unwrap_or(0);
     let cap = state

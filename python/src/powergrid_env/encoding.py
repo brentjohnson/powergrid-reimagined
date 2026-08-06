@@ -35,10 +35,11 @@ from .constants import (
 
 _USA_TOML = Path(__file__).resolve().parents[3] / "assets" / "maps" / "usa.toml"
 _ADJ: dict[str, list[tuple[str, int]]] | None = None
+_CITY_REGION: dict[str, str] | None = None
 
 
 def _adjacency() -> dict[str, list[tuple[str, int]]]:
-    global _ADJ
+    global _ADJ, _CITY_REGION
     if _ADJ is None:
         data = tomllib.loads(_USA_TOML.read_text())
         adj: dict[str, list[tuple[str, int]]] = {c["id"]: [] for c in data["cities"]}
@@ -46,7 +47,14 @@ def _adjacency() -> dict[str, list[tuple[str, int]]]:
             adj.setdefault(conn["from"], []).append((conn["to"], conn["cost"]))
             adj.setdefault(conn["to"], []).append((conn["from"], conn["cost"]))
         _ADJ = adj
+        _CITY_REGION = {c["id"]: c["region"] for c in data["cities"]}
     return _ADJ
+
+
+def _city_regions() -> dict[str, str]:
+    _adjacency()
+    assert _CITY_REGION is not None
+    return _CITY_REGION
 
 
 def _connection_costs_from(owned: list[str]) -> dict[str, int]:
@@ -83,6 +91,93 @@ def _plant_demand(plant: dict) -> dict[str, float]:
     if kind in ("coal", "oil", "gas", "uranium"):
         return {kind: cost}
     return {}  # wind
+
+
+# Slot fee for the n-th player to build a city — mirrors Rust `connection_cost`.
+_SLOT_FEES = {0: 10, 1: 15, 2: 20}
+
+
+def _is_subset_feasible(plants: list[dict], resources: dict, mask: int) -> bool:
+    """Mirror of Rust `is_subset_feasible`: can `resources` fire the plants
+    selected by `mask` (bit i = plant i)? Pure-fuel plants claim their pools
+    first (slot order), then gas_or_oil hybrids split what remains."""
+    pools = {k: resources[k] for k in ("coal", "oil", "gas", "uranium")}
+    for i, plant in enumerate(plants[:3]):
+        if not (mask >> i) & 1:
+            continue
+        kind = plant["kind"]
+        if kind in ("coal", "oil", "gas", "uranium"):
+            if pools[kind] < plant["cost"]:
+                return False
+            pools[kind] -= plant["cost"]
+    for i, plant in enumerate(plants[:3]):
+        if not (mask >> i) & 1 or plant["kind"] != "gas_or_oil":
+            continue
+        if pools["gas"] + pools["oil"] < plant["cost"]:
+            return False
+        use_oil = min(plant["cost"], pools["oil"])
+        pools["oil"] -= use_oil
+        pools["gas"] -= plant["cost"] - use_oil
+    return True
+
+
+def _max_powerable_now(player: dict, city_count: int) -> int:
+    """Mirror of Rust `max_powerable_now`: most cities the player could power
+    right now with plants + fuel in hand, capped by cities owned."""
+    plants = (player.get("plants") or [])[:3]
+    resources = player["resources"]
+    best = 0
+    for mask in range(1 << len(plants)):
+        if _is_subset_feasible(plants, resources, mask):
+            cities = sum(p["cities"] for i, p in enumerate(plants) if (mask >> i) & 1)
+            best = max(best, cities)
+    return min(best, city_count)
+
+
+def _cheapest_cities_cost(
+    state: dict, actor_id: str, owned: list[str], budget: int, n: int
+) -> tuple[list[str], int]:
+    """Mirror of Rust `macro_actions::cheapest_cities_with_cost`: greedily take
+    the `n` cheapest buildable cities (static cost order, id tiebreak), paying
+    route (recomputed as the network grows) + slot fee, limited only by cash and
+    the end-game trigger cap."""
+    if n <= 0:
+        return [], 0
+    regions = _city_regions()
+    active = set(state.get("active_regions", []))
+    owners_map = state.get("city_owners", {})
+    step = state.get("step", 1)
+    cap = max(state.get("end_game_cities", 17) - len(owned), 0)
+    limit = min(n, cap)
+    costs = _connection_costs_from(owned)
+    candidates = []
+    for city_id in _adjacency():
+        if regions.get(city_id) not in active:
+            continue
+        owners = owners_map.get(city_id, [])
+        if actor_id in owners or len(owners) >= step:
+            continue
+        route = costs.get(city_id)
+        if route is None:
+            continue
+        candidates.append((route + _SLOT_FEES.get(len(owners), 20), city_id))
+    candidates.sort()
+    grown, chosen, cash = list(owned), [], budget
+    grown_costs = costs
+    for _, city_id in candidates:
+        if len(chosen) >= limit:
+            break
+        route = grown_costs.get(city_id)
+        if route is None:
+            continue
+        cost = route + _SLOT_FEES.get(len(owners_map.get(city_id, [])), 20)
+        if cost > cash:
+            continue
+        cash -= cost
+        grown.append(city_id)
+        chosen.append(city_id)
+        grown_costs = _connection_costs_from(grown)
+    return chosen, budget - cash
 
 
 def encode_observation(state: dict, actor_id: str) -> np.ndarray:
@@ -294,6 +389,36 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
             cap = plant["cost"] * 2 if plant["kind"] not in ("wind",) else 0
             obs[base+4] = cap / 10
     idx += 5 * 3 * 5
+
+    # 22. End-game race (18) — mirror of Rust section 22: the push decision
+    # stated directly (trigger proximity, powerable-now for every seat, and the
+    # exact can-finish affordability the BUILD_n greedy walk computes).
+    trigger = max(state.get("end_game_cities", 17), 1)
+    my_count = len(owned)
+    my_deficit = max(trigger - my_count, 0)
+    obs[idx] = my_count / trigger
+    obs[idx + 1] = min(my_deficit, 6) / 6
+    min_opp_deficit = 6
+    for i, opp in enumerate(opponents[:5]):
+        count = len(cities_by_player.get(opp["id"], []))
+        obs[idx + 2 + i] = count / trigger
+        min_opp_deficit = min(min_opp_deficit, max(trigger - count, 0))
+    obs[idx + 7] = min_opp_deficit / 6
+    my_powerable = _max_powerable_now(me, my_count)
+    obs[idx + 8] = my_powerable / 21
+    best_opp_powerable = 0
+    for i, opp in enumerate(opponents[:5]):
+        powerable = _max_powerable_now(opp, len(cities_by_player.get(opp["id"], [])))
+        obs[idx + 9 + i] = powerable / 21
+        best_opp_powerable = max(best_opp_powerable, powerable)
+    obs[idx + 14] = me.get("last_cities_powered", 0) / 21
+    obs[idx + 15] = (my_powerable - best_opp_powerable + 21) / 42
+    if 1 <= my_deficit <= 6:
+        finish, cost = _cheapest_cities_cost(state, actor_id, owned, me["money"], my_deficit)
+        if len(finish) == my_deficit:
+            obs[idx + 16] = 1.0
+            obs[idx + 17] = (me["money"] - cost) / 500
+    idx += 18
 
     assert idx == OBS_SIZE, f"Observation size mismatch: expected {OBS_SIZE}, got {idx}"
     # Clamp into the Box bounds: a few features (e.g. player stockpiles, late
