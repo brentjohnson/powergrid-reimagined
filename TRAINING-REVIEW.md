@@ -142,6 +142,50 @@ Perf note: the exact affordability walk only runs when `1 ≤ deficit ≤ 6`
 checkpoints (`.pt`) are also 582-wide — fresh runs pick up 600 automatically;
 padding a `.pt` trunk is analogous if a warm start is ever wanted there.
 
+## Wave-8 evaluation (2026-08-06, from the synced runs/sweep3)
+
+The wave was stopped at ~453–497M of the 550M target — only ~46–70M steps in.
+No games can be replayed locally (582-format checkpoints cannot run under the
+600-format env), so the ranking below is the recorded frozen-champion eval
+(vs 3× q4-y3-finish, 200 episodes/pass, par ≈ −0.50) — the metric that
+correctly picked the winner in wave 7:
+
+| arm | best (≈ win) | read |
+|-----|-------------|------|
+| r4-y3-finish | −0.34 (33%) | **leader** — cross-lineage decay from y3, again |
+| y3-batch | −0.36 (32%) | donor still compounding at 496M, entropy healthy |
+| r1-main / r2-finish / r5-sharp | −0.38 (31%) | pack |
+| r7-exploit | −0.40 | as designed (pool hardener) |
+| r3-small-finish | −0.44 | small batch trailing |
+| r6-q3-finish | −0.49 (26%) | **at par — the q3 cross-decay failed** |
+
+Conclusions: cross-lineage decay led a second straight wave *from the y3
+donor specifically* (r6 shows it does not transfer to other donors); the
+ent-0.015 probe (r5) eased entropy 0.25→0.21 with no collapse and no lead —
+inconclusive, worth re-arming; no full tiebreak ran, so r4 is "wave-8 leader"
+on this single metric, to be confirmed by wave 9's own `--h2h`.
+
+## Wave 9 (sweep script rewritten, runs/sweep4)
+
+`sweep_selfplay.sh` is now the format-reset wave. All migration is automatic
+and idempotent (`--prepare` stages everything without launching; artifacts
+already staged locally in `runs/sweep4/`, verified against the native
+engine): the wave-8 leader and the y3 donor are converted to 600-wide `.bin`
+clones (`--from-ckpt`, zero-padded, play-identical), the frozen eval opponent
+is the champion clone, and an `--h2h` baseline checkpoint is materialised
+from it (`--bin-to-ckpt`) since the 582 original can't run. Every arm is a
+fresh run (`--init-policy-from`, fresh value head, fresh 150M budget); the
+script refuses to run under a non-600 venv or into the old sweep dir, and
+never peers into 582-format league dirs.
+
+Arms: s1-main (control) · s2-finish (decay, 6th re-arm) · s3-gentle
+(lr 3e-5→0 — fresh-value-head guard) · s4-y3 (donor lineage reconstituted,
+never decays) · s5-placement (decay + placement terminal reward — denser rank
+gradient for the new race features; eval envs stay winloss so `best=` stays
+comparable) · s6-explore (ent 0.045 — the race features enter with zero
+weights; exploration must surface the push lines that use them) ·
+s7-exploit (pool hardener) · s8-sharp (ent 0.015 re-arm).
+
 ## Recommended next steps (in order)
 
 1. Retrain/fine-tune on the 600-wide obs: migrate the wave-7/8 champion `.bin`
