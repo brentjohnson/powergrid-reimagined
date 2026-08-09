@@ -1,141 +1,132 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — wave 9: the obs-600 format reset. Every arm is a fresh
-# run warm-started from a MIGRATED clone of a wave-8 donor; the script
-# auto-migrates every policy it touches.
+# sweep_selfplay.sh — wave 10: the first WITHIN-format wave since the obs-600
+# reset. Every arm either RESUMES its own 600-format checkpoints or FORKS
+# (--resume-from, warm value head) from a pinned 600-format checkpoint. No
+# .bin migration anywhere — that machinery was wave 9's format-reset artifact
+# and is gone.
 #
-# WAVE 9 (2026-08-06).
+# WAVE 10 (2026-08-09).
 #
-# Wave 8 was STOPPED EARLY (~453-497M of the 550M target, i.e. only ~46-70M
-# into the wave) for the observation format change: obs 582 -> 600 with the
-# end-game-race section 22 (see TRAINING-REVIEW.md). What the frozen-champion
-# eval (vs 3x q4-y3-finish, par ~ -0.50) recorded before the stop:
+# Wave 9 (the obs-600 reset, all 8 arms to a fresh 150M budget) is settled.
+# Every arm was a fresh run warm-started via --init-policy-from from a MIGRATED
+# clone of the wave-8 leader, so every arm carried a FRESH (random) value head.
+# What that measured:
 #
-#   r4-y3-finish     -0.34 (~33%)  <- wave-8 leader
-#   y3-batch         -0.36 (~32%)  (496M, still compounding, never decayed)
-#   r1-main          -0.38         r2-finish  -0.38    r5-sharp  -0.38
-#   r7-exploit       -0.40
-#   r3-small-finish  -0.44
-#   r6-q3-finish     -0.49         <- at par: the q3 cross-decay FAILED
+#   Frozen-champion eval (best mean_reward vs 3x the wave-8 leader, par ~-0.50):
+#     s3-gentle -0.19  s8-sharp -0.21  s2-finish -0.26  s5-placement -0.31
+#     s7-exploit -0.32  s4-y3 -0.33  s1-main -0.34  s6-explore -0.43
+#   Primary h2h (seat 0 vs 3x the frozen champion; combined 600 games over
+#   seeds 12345+99999, mirror par ~25%):
+#     s2-finish ~34.2   s3-gentle ~32.5   s8-sharp ~31.9   s1-main ~29.6 (par)
+#   The two boards disagreed at the top (eval liked s3, h2h liked s2), so a
+#   DIRECT head-to-head broke it (seed 77777, 400 games each direction):
+#     s3-gentle @seat0 vs 3x s2 = 25.5%   s2-finish @seat0 vs 3x s3 = 21.2%
+#   → s3-gentle wins the direct match both ways (its pool also suppressed lone
+#   s2 harder). s3-gentle is the wave-9 champion and the new embedded Expert
+#   (80% native vs 3x hard, ~+9pp above the frozen wave-8 champion).
 #
-# What the partial wave settled:
-#   * CROSS-LINEAGE DECAY FROM y3 LED AGAIN (r4, second straight wave) — but
-#     r6 (same recipe from the q3 donor) finished at par. The recipe is
-#     donor-specific: y3's never-annealed history is the champion factory,
-#     not "any strong donor". Knob closed: y3 is THE donor.
-#   * r5 (ent 0.015): entropy eased 0.25 -> 0.21 with no collapse and no
-#     lead — inconclusive at the stop. Re-armed this wave as s8-sharp.
-#   * No full tiebreak ran (the wave was cut short, and the 582-format
-#     checkpoints cannot play under the 600-format env on this machine), so
-#     r4 is the wave-8 leader on the frozen-champion eval ONLY. Wave 9's own
-#     --h2h/--compare confirm or overturn it as the arms train.
+# What wave 9 SETTLED (knobs closed / opened):
+#   * GENTLE lr (3e-5 -> 0) WON. But every wave-9 arm had a fresh value head,
+#     so the win may be nothing more than "a small lr protects the clone while
+#     the random critic warms up" — exactly the fresh-value-head guard it was
+#     armed to test. Wave 10 forks a WARM value head, so t5-gentle-finish
+#     re-runs the recipe with that confound removed: if gentle still beats
+#     standard decay from a warm head, lower peak lr is a real lever; if it
+#     ties/loses, gentle was format-migration-only. RESOLVE THIS.
+#   * DECAY held (s2-finish, s8-sharp both healthy, top of h2h/eval besides
+#     s3). Re-armed a SEVENTH straight wave as t2-finish.
+#   * ENTROPY UP is dead: s6-explore (ent 0.045) was worst on BOTH boards.
+#     Knob closed for good — do not re-arm high entropy.
+#   * ENTROPY DOWN (ent 0.015) is safe and mildly good, never a champion:
+#     s8-sharp was healthy (0.25 -> 0.19 nats, no collapse) and 3rd. Third and
+#     final test as t6-sharp-finish: beat t2 this wave or the knob closes.
+#   * PLACEMENT reward did nothing again (s5 ~ s2's parent). Closed a 4th time.
+#   * CONSTANT lr is the weakest of the update recipes (s1-main last-but-one on
+#     eval); kept only as the t1-main control.
 #
-# THE FORMAT RESET (why this wave looks different):
-#   * Old sb3 checkpoints CANNOT be resumed (582-wide l1). Every arm is a
-#     FRESH run (--init-policy-from) warm-started from a migrated .bin:
-#     zero-padded l1 rows make the clone play the donor's policy exactly
-#     (Rust-forward bit-identical), while gradient can now reach the 18 new
-#     end-game-race inputs.
-#   * Value heads start FRESH (a .bin carries only the policy path). Expect
-#     an early eval dip while the critic re-learns; s3-gentle exists to
-#     measure how much a small-lr start protects the clone (the
-#     --init-policy-from docs recommend one).
-#   * Step counters start at 0, so TOTAL_TIMESTEPS is a per-arm FRESH
-#     budget (default 150M), not the old cumulative-across-waves number.
-#   * runs/sweep3 is INERT HISTORY plus donor source — never resume, never
-#     peer into it (its league snapshots are 582 and would crash a
-#     new-format trainer at reset). This wave lives in runs/sweep4.
+# THE STRUCTURE (why wave 10 looks like waves 4-8 again):
+#   * The obs-600 format is stable now. Wave-9 checkpoints are 600-wide sb3
+#     zips, so forks use --resume-from (full checkpoint: warm policy AND value
+#     head, step counter continues) instead of --init-policy-from. No fresh
+#     value head, no early eval dip, no gentle-lr guard needed by default.
+#   * FORK_FROM = the new champion s3-gentle/best_model (@135.2M). It is
+#     RETIRED (its lr annealed to ~0), so its best_model is a stable fork
+#     point and the frozen --h2h/--eval yardstick — it never trains again.
+#   * The DONOR lineage lives on: s4-y3 (wave 9's reconstituted never-annealed
+#     y3 clone, constant lr) RESUMES and keeps compounding, exactly as y3-batch
+#     did through waves 4-8. t3-y3-finish forks its PINNED @150M checkpoint and
+#     decays — the cross-lineage-decay recipe that won waves 7 (q4) and led
+#     wave 8 (r4). It is young again (the format reset restarted y3's clock at
+#     150M), so this wave rebuilds the lineage as much as it races it.
+#   * runs/sweep3 remains INERT 582-format history + donor archaeology — never
+#     resume it, never peer into it (its snapshots would crash a 600 trainer).
+#     runs/sweep4 is this epoch's home; wave-9 dirs s1/s2/s5/s6/s7/s8 stay as
+#     inert history and are NOT peered (only the wave-10 arms peer each other).
 #
-# AUTO-MIGRATION (all idempotent, all before any launch):
-#   * wave9-champion.bin  <- migrate_policy_obs.py --from-ckpt on the wave-8
-#     leader's best_model (r4-y3-finish @ -0.34)
-#   * wave9-y3.bin        <- same, from y3-batch's best_model (the donor)
-#   * wave9-eval-opponent.bin <- the champion bin (frozen; selects
-#     best_model; par ~25% == mean_reward ~ -0.50, negative best= is normal)
-#   * wave9-baseline/best_model.zip <- --bin-to-ckpt on the champion bin, so
-#     --h2h can seat the frozen champion under the new format
-#   * any pre-existing .bin named via EVAL_OPPONENT/CHAMP_BIN/Y3_BIN is
-#     width-checked and zero-padded in place if it is still 582
-#
-# Arm roles (all clones of wave9-champion.bin except s4; all peers; lr 1e-4,
-# n-steps/batch 1024, mix 0.40/0.40/0.20, past_k 8 unless noted):
-#   s1-main       the population default and decay control: constant lr
-#   s2-finish     champion recipe re-armed a sixth time: s1 + lr decay -> 0
-#   s3-gentle     lr 3e-5 -> 0: the fresh-value-head guard. If it holds the
-#                 clone better than s1/s2 early, gentle starts become the
-#                 format-migration default
-#   s4-y3         clone of wave9-y3.bin, constant lr, never decayed: the
-#                 donor lineage reconstituted in the new format so future
-#                 waves have a fresh independent history to cross-decay
-#   s5-placement  s2 + --terminal-reward placement: rank-ladder terminal
-#                 reward (1st..4th mapped to +1..-1). The new section-22
-#                 features expose exactly the powered->money->cities race
-#                 that decides ranks; placement pays partial credit for
-#                 winning that race from behind. Eval envs stay winloss, so
-#                 best= remains comparable across arms
-#   s6-explore    s1 + --ent-coef 0.045 (1.5x default): the new race inputs
-#                 enter with ZERO weights — only exploration can surface
-#                 push behaviors that exploit them; this arm pays extra
-#                 entropy to look. If it just adds noise, kill the knob
-#   s7-exploit    mix 0.10/0.70/0.20, past_k 12: the pool hardener, kept a
-#                 fourth wave — its job is hardening everyone's opponents
-#   s8-sharp      s2 + --ent-coef 0.015: r5's inconclusive probe re-armed.
-#                 Collapse guard: entropy diving toward ~0.1 nats = kill
+# Arm roles (all lr 1e-4, n-steps/batch 1024, mix 0.40/0.40/0.20, past_k 8,
+# all peers, unless noted):
+#   s4-y3          RESUME the donor: constant lr, never decayed, never forked.
+#                  The fork material for this and future cross-lineage decays.
+#   t1-main        fork champion; constant lr — the decay/gentle control.
+#   t2-finish      t1 + lr decay -> 0. The champion recipe, 7th re-arm.
+#   t3-y3-finish   fork=s4-y3 @150M + decay -> 0. Cross-lineage decay from the
+#                  never-annealed donor (the q4/r4 champion factory).
+#   t4-small-finish  fork champion, batch 512 + decay. Small-batch+decay
+#                  co-won wave 6 (p3); keep both batch sizes and a distinct
+#                  default-lineage pool opponent.
+#   t5-gentle-finish  fork champion, lr 3e-5 -> 0 (warm value head). The wave-9
+#                  winner's recipe with the fresh-value-head confound removed.
+#                  vs t2-finish: is lower peak lr a real lever or was it a
+#                  migration guard? This is the wave's key question.
+#   t6-sharp-finish  t2 + ent-coef 0.015. Low-entropy's third and final test;
+#                  promote (beats t2) or retire the knob. Collapse guard:
+#                  entropy diving toward ~0.1 nats = kill the arm.
+#   t7-exploit     mix 0.10/0.70/0.20, past_k 12: the pool hardener, kept a
+#                  fifth wave. Hardens everyone's opponents, not a candidate.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
 #
 # Re-running is idempotent and self-healing: launching is the same command as
 # resuming. For each selected variant the script inspects its run dir and
-# picks up where it left off — resume from the furthest-along readable
-# checkpoint; if there is none, the arm starts fresh from its clone source
-# (--init-policy-from is only ever used for a variant's FIRST launch; after
-# that it resumes its own 600-format checkpoints). The running-check verifies
-# the recorded PID is still a train_selfplay.py process for THIS run dir, so
-# a stale pidfile (e.g. a PID recycled across a reboot) can't block a resume
-# or, worse, let two trainers write the same dir. The intended operational
-# loop is simply: run it, and if the box reboots or a variant crashes, run it
-# again.
+# resumes from the furthest-along readable checkpoint; if there is none, a fork
+# arm starts from its (pinned) fork source and a resume arm hard-errors rather
+# than silently restarting. The running-check verifies the recorded PID is
+# still a train_selfplay.py process for THIS run dir, so a stale pidfile can't
+# block a resume or let two trainers write the same dir. Operational loop:
+# run it; if the box reboots or an arm crashes, run it again.
 #
 # Resume-lr note: MaskablePPO.load is passed custom_objects built from THIS
-# launch's flags, so an arm's lr schedule is its own across resumes.
-#
-# League note: snapshots live in each run dir's own league/ subdir, all
-# 600-format from birth. A fresh arm's league is empty, but the trainer
-# pushes a snapshot of the just-loaded clone at training start, so a nonzero
-# PAST share never sees an empty pool.
+# launch's flags, so an arm's lr schedule is its own across resumes (a fork's
+# fresh lr 1e-4 overrides the decayed lr stored in the champion checkpoint).
 #
 # Usage:
 #   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
 #   ./scripts/sweep_selfplay.sh 3 5          # launch/resume only variants 3 and 5
-#   ./scripts/sweep_selfplay.sh --prepare    # run the format guard + all migrations, launch nothing
+#   ./scripts/sweep_selfplay.sh --prepare    # format guard + export the eval opponent, launch nothing
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
-#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen wave-8 leader
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (s3-gentle)
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=150000000  FRESH timesteps per arm (counters reset at 0
-#                              this wave; resumes still never overshoot)
-#   WAVE8_WINNER=../runs-or-wherever/r4-y3-finish/best_model
-#                              582-format checkpoint stem the champion bin is
-#                              migrated from
-#   Y3_SOURCE=runs/sweep3/y3-batch/best_model   likewise for the donor bin
-#   CHAMP_BIN=runs/sweep4/wave9-champion.bin    migrated champion (built if
-#                              missing, width-fixed in place if 582)
-#   Y3_BIN=runs/sweep4/wave9-y3.bin             migrated donor clone source
-#   EVAL_OPPONENT=runs/sweep4/wave9-eval-opponent.bin
-#                              frozen eval opponent (defaults to a copy of
-#                              $CHAMP_BIN; width-fixed in place if 582)
+#   TOTAL_TIMESTEPS=300000000  CUMULATIVE per-arm target (forks from ~135-150M
+#                              gain ~+150-165M; resumes never overshoot)
+#   FORK_FROM=runs/sweep4/s3-gentle/best_model   champion fork point + baseline
+#   Y3_FORK=runs/sweep4/s4-y3/ckpt_150000000_steps   pinned donor fork stem
+#   EVAL_OPPONENT=runs/sweep4/wave10-eval-opponent.bin
+#                              frozen eval opponent, exported from FORK_FROM on
+#                              first launch (selects best_model; par ~ -0.50)
+#   BASELINE=s3-gentle         run-dir name of the frozen --h2h opponent
 #   SWEEP_DIR=runs/sweep4      root for the per-variant run dirs
-#   NET_WIDTH=128              must match the clone bins' hidden width
+#   NET_WIDTH=128              must match the fork checkpoints' hidden width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
 #   THREADS=3                  torch/OMP threads per variant (8 x 3 = 24 of 28 cores)
 #   COMPARE_GAMES=200  COMPARE_SEED=12345
 #   COMPARE_DETERMINISTIC=1    rank with argmax instead of sampling. Training is
-#                              stochastic, so the sampled numbers remain the
-#                              primary ranking.
+#                              stochastic, so the sampled numbers remain primary.
 #   NICE=10  STAGGER=15  DRY_RUN=1
 #
 set -euo pipefail
@@ -144,20 +135,22 @@ cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep4}
-OLD_SWEEP_DIR=${OLD_SWEEP_DIR:-runs/sweep3}
-WAVE8_WINNER=${WAVE8_WINNER:-$OLD_SWEEP_DIR/r4-y3-finish/best_model}
-Y3_SOURCE=${Y3_SOURCE:-$OLD_SWEEP_DIR/y3-batch/best_model}
-CHAMP_BIN=${CHAMP_BIN:-$SWEEP_DIR/wave9-champion.bin}
-Y3_BIN=${Y3_BIN:-$SWEEP_DIR/wave9-y3.bin}
-EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave9-eval-opponent.bin}
-BASELINE_STEM=${BASELINE_STEM:-$SWEEP_DIR/wave9-baseline/best_model}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-150000000}
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/s3-gentle/best_model}
+Y3_FORK=${Y3_FORK:-$SWEEP_DIR/s4-y3/ckpt_150000000_steps}
+EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave10-eval-opponent.bin}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-300000000}
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
 NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
+
+# The frozen --h2h opponent: the wave-9 champion's best_model — the exact
+# weights the fork arms started from and the eval opponent was exported from.
+# s3-gentle no longer trains (its lr annealed to 0), so this yardstick never
+# moves.
+BASELINE=${BASELINE:-s3-gentle}
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -169,9 +162,9 @@ COMMON=(
     --no-reward-shaping         # terminal reward is the objective (wave 3's
                                 # shaped arm was neutral-to-negative)
     --eval-opponent "$EVAL_OPPONENT"
-                                # selects best_model vs the frozen wave-8
-                                # leader. Par ~25% == mean_reward ~ -0.50,
-                                # so best= in --status is NEGATIVE by design.
+                                # selects best_model vs the frozen champion.
+                                # Par ~25% == mean_reward ~ -0.50, so best= in
+                                # --status is NEGATIVE by design.
     --save-freq 250000          # ~2M timesteps per checkpoint at 8 envs
     --eval-freq 50000           # ~400k timesteps per eval pass
     --eval-episodes 200         # 20 (the trainer default) is too noisy to rank
@@ -179,10 +172,10 @@ COMMON=(
 
 # name|seed|init|pop|hypothesis|extra flags
 #
-# `init` is "clone" (first launch warm-starts from $CHAMP_BIN via
-# --init-policy-from) or "clone=<bin>" (warm-start from that migrated .bin
-# instead). There are no resume/fork arms this wave: 582-format checkpoints
-# cannot be resumed, only cloned through migration.
+# `init` is "resume" (own dir; hard-error if it has no checkpoint), "fork"
+# (first launch --resume-from $FORK_FROM into a fresh dir), or "fork=<stem>"
+# (first launch --resume-from that checkpoint stem instead). After the first
+# launch every arm resumes its OWN checkpoints.
 #
 # `pop` is "peers" (the launch loop appends --league-peers with every OTHER
 # variant's league dir) or "solo" (no peers).
@@ -190,14 +183,14 @@ COMMON=(
 # League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 # The 0.20 bot share is load-bearing (wave-7 q6 faceplant) — do not cut it.
 VARIANTS=(
-"s1-main|801|clone|peers|The population default and decay control: champion clone, constant lr 1e-4, batch 1024, mix 0.40/0.40/0.20. Every other arm reads against this — same food, same clone, no anneal.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"s2-finish|802|clone|peers|The champion-line recipe re-armed a sixth time: s1-main + lr decay 1e-4 -> 0. Decay has finished on top of five straight waves (y4, z3, p2, q4, r4); until it loses, every wave re-arms it from the new champion.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"s3-gentle|803|clone|peers|The fresh-value-head guard: lr 3e-5 -> 0. Every arm starts with a random critic this wave; the --init-policy-from docs recommend a small lr so the first noisy-advantage updates cannot wreck the clone. If s3 holds the clone visibly better than s1/s2 early, gentle starts become the format-migration default.|--learning-rate 3e-5 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"s4-y3|804|clone=Y3_BIN|peers|The donor lineage reconstituted: clone of y3-batch's best (-0.36 at 496M), constant lr, never decayed, never forked. y3's independent never-annealed history is the proven champion factory (q4, then r4 — and r6 showed OTHER donors do not work); this arm rebuilds that resource in the new format for future cross-decays.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"s5-placement|805|clone|peers|s2-finish + --terminal-reward placement: terminal reward = final rank on +1..-1 instead of win/loss. The new section-22 features expose the powered/money/cities race that decides ranks; placement pays partial credit for climbing it, giving the race features a denser gradient than the 25%-of-episodes win signal. Eval envs stay winloss, so best= reads on the same scale as every other arm.|--learning-rate 1e-4 --lr-final 0 --terminal-reward placement --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"s6-explore|806|clone|peers|s1-main + ent-coef 0.045 (1.5x default): the 18 race inputs enter with zero weights, so only behavioral exploration can surface the end-game-push lines that make them pay. This arm buys extra entropy to look; if it lags s1 at equal steps the knob just adds noise — close it.|--learning-rate 1e-4 --ent-coef 0.045 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"s7-exploit|807|clone|peers|The exploiter, kept a fourth wave: mix 0.10/0.70/0.20, past_k 12 — barely plays itself, lives on the population. Its job is hardening everyone else's opponents, not winning the wave.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.10,0.70,0.20 --league-past-k 12"
-"s8-sharp|808|clone|peers|s2-finish + ent-coef 0.015: wave 8's r5 probe re-armed — entropy eased 0.25 -> 0.21 nats with no collapse before the stop, verdict pending. Collapse guard: if entropy dives toward ~0.1 nats early, kill the arm — that is the old collapse signature.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"s4-y3|804|resume|peers|The donor lineage: constant lr 1e-4 + batch 1024, never decayed, never forked — reconstituted at the obs-600 reset and now compounding again. Joins the wave-10 pool unchanged; t3 separately decays a fresh copy of its pinned @150M state. Keeping it alive is what gives future waves an independent history to cross-decay.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t1-main|1001|fork|peers|The population default and this wave's decay/gentle control: champion weights (warm value head), batch 1024, constant lr, mix 0.40/0.40/0.20. Every finisher reads against this — same food, same fork, no anneal.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t2-finish|1002|fork|peers|The champion-line recipe re-armed a seventh time: t1-main + lr decay 1e-4 -> 0. Decay has finished on top of six straight champions (y4, z3, p2, q4, r4, and s3's gentle variant); until it loses, every wave re-arms it from the new champion.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t3-y3-finish|1003|fork=$SWEEP_DIR/s4-y3/ckpt_150000000_steps|peers|Cross-lineage decay: fork the never-annealed donor's pinned @150M state + lr decay -> 0. This is the exact recipe that won wave 7 (q4) and led wave 8 (r4). The donor was reconstituted only this epoch, so its history is young; a top finish means the factory survived the format reset, a mid finish means it just needs more donor steps (which s4-y3 is banking).|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t4-small-finish|1004|fork|peers|Batch 512 + decay: the small-batch recipe stays in play — it co-won wave 6 (p3) and fought to the wire in wave 7 (q3). Half the batch is different update noise and doubles as the pool's most distinct default-lineage opponent.|--learning-rate 1e-4 --lr-final 0 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t5-gentle-finish|1005|fork|peers|THE key question: fork the champion (WARM value head) with lr 3e-5 -> 0 — the wave-9 winner's recipe minus the fresh-value-head confound. If t5 beats t2-finish from a warm head, lower peak lr is a genuine lever and the next wave pushes it further; if it ties/loses, s3-gentle's win was a migration guard and gentle retires. Watch t5 vs t2 head to head at wave end.|--learning-rate 3e-5 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t6-sharp-finish|1006|fork|peers|t2-finish + ent-coef 0.015 (default 0.03). Low-entropy's third and final test — safe and mildly good in waves 8 (r5) and 9 (s8) but never a champion. Beat t2 this wave or the entropy knob closes. Collapse guard: if entropy dives toward ~0.1 nats early, kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"t7-exploit|1007|fork|peers|The exploiter, kept a fifth wave: mix 0.10/0.70/0.20, past_k 12 — barely plays itself, lives on the population. Below-par h2h as a candidate; its job is hardening everyone else's opponents, not winning the wave.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.10,0.70,0.20 --league-past-k 12"
 )
 
 
@@ -205,8 +198,8 @@ variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
 
 # Comma-separated league dirs of every variant EXCEPT $1 (by name) — the
 # --league-peers value for a "peers" arm. Dirs may not exist yet; the trainer
-# tolerates that (empty pool slice until the peer launches). NEVER add an old
-# 582-format league dir here — its snapshots would crash a new-format trainer.
+# tolerates that (empty pool slice until the peer launches). Only wave-10 arms
+# are peered — never an inert wave-9 dir, and never a 582-format runs/sweep3.
 peer_league_dirs() {
     local self=$1 i name out=""
     for i in "${!VARIANTS[@]}"; do
@@ -273,13 +266,13 @@ latest_checkpoint() {
     return 0
 }
 
-# --- format / migration helpers -------------------------------------------
+# --- format guard ----------------------------------------------------------
 
 # Hard guard: the venv must be built for the 600-format encoding. Launching a
-# 582-format trainer into this wave's dirs (or vice versa) corrupts nothing
-# but wastes a run; refuse instead.
+# stale 582-format trainer into this epoch's dirs corrupts nothing but wastes a
+# run; refuse instead.
 check_format() {
-    "$PY" - <<'EOF' || { echo "venv is not built for the current encoding (run 'make develop')" >&2; exit 1; }
+    "$PY" - <<'EOF' || { echo "venv is not built for the obs-600 encoding (run 'make develop')" >&2; exit 1; }
 from powergrid_env.constants import OBS_SIZE
 import powergrid_py, numpy as np
 assert OBS_SIZE == 600, f"constants OBS_SIZE={OBS_SIZE}, expected 600"
@@ -290,26 +283,26 @@ assert n == 600, f"native obs is {n}-wide, expected 600 (stale powergrid_py buil
 EOF
 }
 
-# Width-fix an existing .bin in place (no-op if already current-width).
-migrate_bin_inplace() {
-    "$PY" scripts/migrate_policy_obs.py "$1"
-}
+# All pre-launch setup: format guard + export the frozen eval opponent from the
+# champion fork point. Idempotent; exposed as --prepare so it can be staged
+# (e.g. on a dev box, then synced to the training machine) without launching.
+prepare() {
+    check_format
+    mkdir -p "$SWEEP_DIR"
 
-# Ensure a migrated clone .bin exists at $2: width-fix it if present, else
-# build it from the 582-format checkpoint stem $1.
-ensure_clone_bin() {
-    local src=$1 out=$2
-    if [[ -f $out ]]; then
-        migrate_bin_inplace "$out"
-        return 0
+    # Export the frozen eval opponent from the champion. Once exported it is
+    # never touched again; the golden sidecar goes next to it, NOT into assets/
+    # (export_policy.py's default).
+    if [[ ! -f $EVAL_OPPONENT ]]; then
+        if [[ ! -f ${FORK_FROM}.zip ]]; then
+            echo "cannot export eval opponent: no checkpoint at ${FORK_FROM}.zip" >&2
+            echo "(set FORK_FROM/EVAL_OPPONENT, or sync the champion's run dir)" >&2
+            exit 1
+        fi
+        echo "exporting frozen eval opponent: ${FORK_FROM}.zip -> $EVAL_OPPONENT"
+        "$PY" scripts/export_policy.py --model "$FORK_FROM" \
+            --out "$EVAL_OPPONENT" --golden "${EVAL_OPPONENT}.golden.json"
     fi
-    if [[ ! -f ${src}.zip ]]; then
-        echo "cannot build $out: no checkpoint at ${src}.zip" >&2
-        echo "(sync the wave-8 run dirs, or point WAVE8_WINNER/Y3_SOURCE elsewhere)" >&2
-        exit 1
-    fi
-    echo "migrating $(basename "$src").zip -> $out"
-    "$PY" scripts/migrate_policy_obs.py --from-ckpt "$src" --out "$out"
 }
 
 list_variants() {
@@ -325,9 +318,8 @@ list_variants() {
 }
 
 status() {
-    # NOTE: best= is eval/mean_reward vs 3x the frozen wave-8 leader
-    # (win_rate = (best+1)/2; par ~ -0.50). Negative values are normal, and
-    # early values will sag while each arm's fresh value head warms up.
+    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (s3-gentle);
+    # win_rate = (best+1)/2, par ~ -0.50. Negative values are normal.
     for i in "${!VARIANTS[@]}"; do
         local name dir pid state ckpt best when
         name=$(variant_field "$i" 1); dir="$SWEEP_DIR/$name"
@@ -358,9 +350,8 @@ status() {
 # ABSOLUTE yardstick: each variant's best_model in seat 0 against three `hard`
 # bots — the bar the whole project aims at. The all-bots row gives seat 0's
 # structural share (~25% plus seat bias), so read a variant against that, not
-# against 0. Saturated for ranking since wave 6 (the 582-format field crowded
-# 63-72%); kept for wave-end reporting and cross-wave comparability — and to
-# confirm the migrated clones actually re-attain the wave-8 numbers.
+# against 0. Saturated for ranking since wave 6 (the field crowds 68-79%);
+# kept for wave-end reporting and cross-wave comparability.
 compare() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
@@ -379,27 +370,27 @@ compare() {
 }
 
 # RELATIVE ranking: each variant in seat 0 against three copies of the frozen
-# wave-8 leader — materialised as a real checkpoint (wave9-baseline) because
-# the 582-format original cannot run under the new env. This is the primary
-# ranking. Above-par here == genuinely past the clone point. Measure the
-# mirror par (the self-baseline row) before reading small edges; expect
-# ~25 +/- 2%. At wave end, run the FULL tiebreak: direct matches between the
-# leaders + a fresh-seed 800-game h2h (wave 7's one-shot 400-game samples
-# flipped ranks).
+# champion (s3-gentle best_model) — the primary ranking. Above-par here ==
+# genuinely past the champion. Measure the mirror par (the self-baseline row)
+# before reading small edges; expect ~25 +/- 2%. At wave end, run the FULL
+# tiebreak: direct matches between the leaders + a fresh-seed 800-game h2h
+# (wave 7's one-shot 400-game samples flipped ranks, and wave 9's seed-12345
+# and seed-99999 h2h disagreed at the top).
 h2h() {
     local games=${COMPARE_GAMES:-200} seed=${COMPARE_SEED:-12345}
     local det=(); [[ ${COMPARE_DETERMINISTIC:-0} == 1 ]] && det=(--deterministic)
-    local base=$BASELINE_STEM
-    [[ -f ${base}.zip ]] || { echo "no baseline at ${base}.zip — run the script once (it materialises the frozen champion)" >&2; exit 1; }
-    echo "=== self-baseline: 4x wave-8 leader clone ($games games) — mirror par ==="
+    local base="$SWEEP_DIR/$BASELINE/best_model"
+    [[ -f ${base}.zip ]] || { echo "baseline $BASELINE has no best_model (sync $SWEEP_DIR/$BASELINE)" >&2; exit 1; }
+    echo "=== self-baseline: 4x $BASELINE ($games games) — mirror par ==="
     "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
         --player "$base" --player "$base" --player "$base" --player "$base"
     for i in "${!VARIANTS[@]}"; do
         local name model
         name=$(variant_field "$i" 1); model="$SWEEP_DIR/$name/best_model"
+        [[ $name == "$BASELINE" ]] && continue
         [[ -f ${model}.zip ]] || continue
         echo
-        echo "=== $name (seat 0) vs 3x wave-8 leader ($games games) ==="
+        echo "=== $name (seat 0) vs 3x $BASELINE ($games games) ==="
         "$PY" scripts/evaluate_lineup.py --games "$games" --seed "$seed" --quiet "${det[@]}" \
             --player "$model" --player "$base" --player "$base" --player "$base"
     done
@@ -417,40 +408,13 @@ stop_all() {
     done
 }
 
-# All pre-launch setup: format guard + every auto-migration. Idempotent; also
-# exposed as --prepare so the wave-9 artifacts can be staged (e.g. on a dev
-# box, then synced to the training machine) without launching anything.
-prepare() {
-    check_format
-    mkdir -p "$SWEEP_DIR"
-
-    # Donor clones (auto-migrated; idempotent).
-    ensure_clone_bin "$WAVE8_WINNER" "$CHAMP_BIN"
-    ensure_clone_bin "$Y3_SOURCE" "$Y3_BIN"
-
-    # The frozen eval opponent every arm's best_model selection runs against:
-    # the wave-8 leader, i.e. exactly the champion clone bin.
-    if [[ -f $EVAL_OPPONENT ]]; then
-        migrate_bin_inplace "$EVAL_OPPONENT"
-    else
-        echo "freezing eval opponent: $CHAMP_BIN -> $EVAL_OPPONENT"
-        cp "$CHAMP_BIN" "$EVAL_OPPONENT"
-    fi
-
-    # Materialise the frozen champion as a runnable checkpoint for --h2h.
-    if [[ ! -f ${BASELINE_STEM}.zip ]]; then
-        echo "materialising --h2h baseline: $CHAMP_BIN -> ${BASELINE_STEM}.zip"
-        "$PY" scripts/migrate_policy_obs.py --bin-to-ckpt "$CHAMP_BIN" --out "$BASELINE_STEM"
-    fi
-}
-
 case "${1:-}" in
     --list)    list_variants; exit 0 ;;
     --status)  status;        exit 0 ;;
     --stop)    stop_all;      exit 0 ;;
     --compare) compare;       exit 0 ;;
     --h2h)     h2h;           exit 0 ;;
-    --prepare) prepare; echo "wave-9 artifacts ready in $SWEEP_DIR"; exit 0 ;;
+    --prepare) prepare; echo "wave-10 eval opponent ready in $SWEEP_DIR"; exit 0 ;;
 esac
 
 # Which variants to launch (1-based indices; default all).
@@ -462,22 +426,18 @@ fi
 
 [[ -x $PY ]] || { echo "no interpreter at $PY (run 'make develop' first)" >&2; exit 1; }
 
-# Refuse to write the new-format wave into the old sweep root.
-if [[ $(realpath -m "$SWEEP_DIR") == $(realpath -m "$OLD_SWEEP_DIR") ]]; then
-    echo "SWEEP_DIR must not be the 582-format $OLD_SWEEP_DIR (it is history + donor source)" >&2
-    exit 1
-fi
-
 [[ $DRY_RUN == 1 ]] || prepare
 
-echo "champion clone : $CHAMP_BIN (from $WAVE8_WINNER)"
-echo "donor clone    : $Y3_BIN (from $Y3_SOURCE)"
+echo "fork point     : $FORK_FROM (fork arms' first launch only)"
+echo "donor fork stem: $Y3_FORK (t3's first launch only)"
 echo "eval opponent  : $EVAL_OPPONENT (frozen; selects best_model)"
-echo "h2h baseline   : ${BASELINE_STEM}.zip"
-echo "target         : $TOTAL_TIMESTEPS fresh timesteps per variant"
+echo "h2h baseline   : $SWEEP_DIR/$BASELINE/best_model"
+echo "target         : $TOTAL_TIMESTEPS cumulative timesteps per variant"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
 echo
+
+mkdir -p "$SWEEP_DIR"
 
 for n in "${SELECTED[@]}"; do
     i=$(( n - 1 ))
@@ -491,15 +451,11 @@ for n in "${SELECTED[@]}"; do
     read -r -a extra <<< "$(variant_field "$i" 6)"
     dir="$SWEEP_DIR/$name"
 
-    # Per-arm clone source: "clone" uses $CHAMP_BIN, "clone=Y3_BIN" the donor
-    # bin (symbolic name, resolved here so the table stays override-friendly).
-    clone_src=$CHAMP_BIN
-    if [[ $init == clone=* ]]; then
-        case ${init#clone=} in
-            Y3_BIN) clone_src=$Y3_BIN ;;
-            *)      clone_src=${init#clone=} ;;
-        esac
-        init=clone
+    # Per-arm fork source: "fork" uses $FORK_FROM, "fork=<stem>" its own.
+    fork_src=$FORK_FROM
+    if [[ $init == fork=* ]]; then
+        fork_src=${init#fork=}
+        init=fork
     fi
 
     # Already running? Never start a second writer on the same run dir. The
@@ -511,8 +467,23 @@ for n in "${SELECTED[@]}"; do
         continue
     fi
 
+    # One-time wave-10 migration for the continued donor: s4-y3's stored best
+    # bar was earned vs the wave-9 eval opponent (the frozen wave-8 leader) and
+    # is not comparable with the new frozen champion (s3-gentle). Set the old
+    # best aside, drop the bar, and let the new metric re-earn best_model.zip.
+    # The marker file makes re-runs a no-op.
+    if [[ $init == resume && $DRY_RUN != 1 && -f $dir/best_mean_reward.json \
+          && ! -f $dir/.wave10-eval-opponent ]]; then
+        [[ -f $dir/best_model.zip && ! -f $dir/best_model.wave9-vs-champion.zip ]] \
+            && cp "$dir/best_model.zip" "$dir/best_model.wave9-vs-champion.zip"
+        rm "$dir/best_mean_reward.json"
+        touch "$dir/.wave10-eval-opponent"
+        echo "migrated $name to the wave-10 eval metric (old best kept as best_model.wave9-vs-champion.zip)"
+    fi
+
     # Auto-resume: continue from the arm's own furthest readable checkpoint.
-    # Only the very first launch clones from the migrated .bin.
+    # Only a fork arm's very first launch uses its fork source; a continuation
+    # arm with no checkpoint is an error, not a fresh start.
     start_args=()
     ckpt_stem=""; done_steps=""
     read -r ckpt_stem done_steps < <(latest_checkpoint "$dir") || true
@@ -524,14 +495,25 @@ for n in "${SELECTED[@]}"; do
         fi
         start_args=(--resume-from "$ckpt_stem")
         echo "resuming $name from $(basename "$ckpt_stem").zip @ $done_steps (+$steps)"
-    else
-        if [[ $DRY_RUN != 1 && ! -f $clone_src ]]; then
-            echo "cannot clone $name: no migrated bin at $clone_src" >&2
+    elif [[ $init == fork ]]; then
+        if [[ ! -f ${fork_src}.zip ]]; then
+            echo "cannot fork $name: no checkpoint at ${fork_src}.zip" >&2
+            echo "(set FORK_FROM, or sync the fork source's run dir first)" >&2
             exit 1
         fi
-        steps=$TOTAL_TIMESTEPS
-        start_args=(--init-policy-from "$clone_src")
-        echo "cloning $name from $(basename "$clone_src") (+$steps, fresh value head)"
+        fork_steps=$(zip_steps "${fork_src}.zip") || {
+            echo "cannot fork $name: ${fork_src}.zip is unreadable" >&2; exit 1; }
+        steps=$(( TOTAL_TIMESTEPS - fork_steps ))
+        if (( steps <= 0 )); then
+            echo "skip $name: fork point already at $fork_steps >= target $TOTAL_TIMESTEPS" >&2
+            continue
+        fi
+        start_args=(--resume-from "$fork_src")
+        echo "forking $name from $(basename "$fork_src").zip @ $fork_steps (+$steps)"
+    else
+        echo "refusing to start $name: it continues an earlier run but $dir has no" >&2
+        echo "readable checkpoint. Sync the earlier run dir (or fix SWEEP_DIR)." >&2
+        exit 1
     fi
 
     # Population wiring: peers arms sample every other variant's league dir.
@@ -556,7 +538,7 @@ for n in "${SELECTED[@]}"; do
     {
         echo
         echo "# $name — $why"
-        echo "# launched: $(date -Is)  init: $init  pop: $pop  target: $TOTAL_TIMESTEPS fresh"
+        echo "# launched: $(date -Is)  init: $init  pop: $pop  target: $TOTAL_TIMESTEPS cumulative"
         printf '%q ' "${cmd[@]}"; echo
     } >> "$dir/variant.txt"
 
@@ -575,13 +557,13 @@ done
 cat <<EOF
 
 Monitor:
-  ./scripts/sweep_selfplay.sh --status     # best= is vs the frozen wave-8 leader: win = (best+1)/2, par ~ -0.50
-  tail -f $SWEEP_DIR/s2-finish/train.log
+  ./scripts/sweep_selfplay.sh --status     # best= is vs the frozen champion: win = (best+1)/2, par ~ -0.50
+  tail -f $SWEEP_DIR/t2-finish/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # league/peer_size, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/s2-finish
+  $PY scripts/run_report.py $SWEEP_DIR/t2-finish
 Rank the variants:
-  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (reporting; watch clones re-attain ~70%)
-  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen wave-8 leader (primary ranking)
+  ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (reporting; saturated)
+  ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen $BASELINE best (primary ranking)
 Stop everything:
   ./scripts/sweep_selfplay.sh --stop
 EOF
