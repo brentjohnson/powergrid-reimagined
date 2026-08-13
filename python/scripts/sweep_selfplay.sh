@@ -1,89 +1,97 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — wave 10: the first WITHIN-format wave since the obs-600
-# reset. Every arm either RESUMES its own 600-format checkpoints or FORKS
-# (--resume-from, warm value head) from a pinned 600-format checkpoint. No
-# .bin migration anywhere — that machinery was wave 9's format-reset artifact
-# and is gone.
+# sweep_selfplay.sh — wave 11: the LINEAGE x ENTROPY 2x2. Every arm RESUMES its
+# own 600-format checkpoints or FORKS (--resume-from, warm policy+value head)
+# from a pinned 600-format checkpoint — the proven waves-4-8/10 structure.
 #
-# WAVE 10 (2026-08-09).
+# WAVE 11 (2026-08-12).
 #
-# Wave 9 (the obs-600 reset, all 8 arms to a fresh 150M budget) is settled.
-# Every arm was a fresh run warm-started via --init-policy-from from a MIGRATED
-# clone of the wave-8 leader, so every arm carried a FRESH (random) value head.
-# What that measured:
+# Wave 10 (the first within-format wave, all 8 arms to a 300M cumulative budget)
+# is settled. Every fork carried a WARM value head (--resume-from), so the wave
+# measured recipes, not format-migration guards. What it measured:
 #
-#   Frozen-champion eval (best mean_reward vs 3x the wave-8 leader, par ~-0.50):
-#     s3-gentle -0.19  s8-sharp -0.21  s2-finish -0.26  s5-placement -0.31
-#     s7-exploit -0.32  s4-y3 -0.33  s1-main -0.34  s6-explore -0.43
+#   Frozen-champion eval (best mean_reward vs 3x s3-gentle, par ~-0.50):
+#     t3-y3-finish -0.20  t6-sharp -0.27  t5-gentle -0.30  t4-small -0.31
+#     t2-finish -0.32  s4-y3 -0.33  t7-exploit -0.40  t1-main -0.42
 #   Primary h2h (seat 0 vs 3x the frozen champion; combined 600 games over
-#   seeds 12345+99999, mirror par ~25%):
-#     s2-finish ~34.2   s3-gentle ~32.5   s8-sharp ~31.9   s1-main ~29.6 (par)
-#   The two boards disagreed at the top (eval liked s3, h2h liked s2), so a
-#   DIRECT head-to-head broke it (seed 77777, 400 games each direction):
-#     s3-gentle @seat0 vs 3x s2 = 25.5%   s2-finish @seat0 vs 3x s3 = 21.2%
-#   → s3-gentle wins the direct match both ways (its pool also suppressed lone
-#   s2 harder). s3-gentle is the wave-9 champion and the new embedded Expert
-#   (80% native vs 3x hard, ~+9pp above the frozen wave-8 champion).
+#   seeds 12345+99999, mirror par ~24.5%):
+#     t6-sharp ~32.0  t3-y3-finish ~31.5  t5-gentle ~29.0  t4-small ~28.5
+#     t2-finish ~28.0  t1-main ~26.0  t7-exploit ~25.5  s4-y3 ~25.0 (par)
+#   The boards disagreed at the top (eval liked t3 clearly; h2h had t6 ahead of
+#   t3 by ~0.5pp = 1 game), so the full tiebreak decided it. DIRECT head-to-head
+#   (seed 77777, 400 games each direction, 4-way par 25%):
+#     t3-y3-finish @seat0 vs 3x t6 = 24.8%  BEAT  t6-sharp @seat0 vs 3x t3 = 22.5%
+#   → t3 challenges to ~par and suppresses t6 below par; t6 challenges only to
+#   22.5%. t3-y3-finish wins the direct match both ways. Combined with its
+#   decisive eval (-0.20) and compare (80.5% vs hard) leads, t3-y3-finish is the
+#   wave-10 champion and the new embedded Expert (86% native vs 3x hard, 43/50,
+#   up from s3-gentle's 80%).
 #
-# What wave 9 SETTLED (knobs closed / opened):
-#   * GENTLE lr (3e-5 -> 0) WON. But every wave-9 arm had a fresh value head,
-#     so the win may be nothing more than "a small lr protects the clone while
-#     the random critic warms up" — exactly the fresh-value-head guard it was
-#     armed to test. Wave 10 forks a WARM value head, so t5-gentle-finish
-#     re-runs the recipe with that confound removed: if gentle still beats
-#     standard decay from a warm head, lower peak lr is a real lever; if it
-#     ties/loses, gentle was format-migration-only. RESOLVE THIS.
-#   * DECAY held (s2-finish, s8-sharp both healthy, top of h2h/eval besides
-#     s3). Re-armed a SEVENTH straight wave as t2-finish.
-#   * ENTROPY UP is dead: s6-explore (ent 0.045) was worst on BOTH boards.
-#     Knob closed for good — do not re-arm high entropy.
-#   * ENTROPY DOWN (ent 0.015) is safe and mildly good, never a champion:
-#     s8-sharp was healthy (0.25 -> 0.19 nats, no collapse) and 3rd. Third and
-#     final test as t6-sharp-finish: beat t2 this wave or the knob closes.
-#   * PLACEMENT reward did nothing again (s5 ~ s2's parent). Closed a 4th time.
-#   * CONSTANT lr is the weakest of the update recipes (s1-main last-but-one on
-#     eval); kept only as the t1-main control.
+# What wave 10 SETTLED (knobs closed / opened):
+#   * CROSS-LINEAGE DECAY is confirmed THE champion factory — fork the
+#     never-annealed y3 donor + lr decay -> 0. It won wave 7 (q4), led wave 8
+#     (r4), and now won wave 10 (t3), surviving the obs-600 format reset. The
+#     donor s4-y3 is THE fork material; re-arm the recipe from its freshest
+#     pinned state every wave.
+#   * LOW ENTROPY (ent 0.015) is finally VALIDATED. t6-sharp beat its parent
+#     t2-finish on ALL THREE boards (h2h 31.5>28.0, eval -0.27>-0.32, compare
+#     76.5>73.0) and tied t3 for h2h #1 — losing only the champion tiebreak.
+#     After three waves of "safe but never a champion", it is now a positive
+#     lever. Wave 11 STACKS it onto the winning recipes (u4, u5) rather than
+#     retesting it alone. Collapse guard still stands: entropy diving toward
+#     ~0.1 nats = kill the arm.
+#   * GENTLE lr (3e-5 -> 0) RETIRES. From a WARM value head t5-gentle only tied
+#     t2-finish (h2h 29.0~28.0, eval -0.30~-0.32) — so wave-9's gentle win was a
+#     fresh-value-head migration guard, not a genuine lower-peak-lr lever. Knob
+#     closed; do not re-arm gentle lr.
+#   * DECAY held (t2-finish healthy mid-pack; the champion t3 IS decay, on the
+#     donor line). Re-armed an EIGHTH straight wave as u2-finish.
+#   * CONSTANT lr is the weakest recipe (t1-main last on eval and compare, ~par
+#     h2h); kept only as the u1-main control.
+#   * PLACEMENT / ENTROPY-UP remain dead — never re-armed.
 #
-# THE STRUCTURE (why wave 10 looks like waves 4-8 again):
-#   * The obs-600 format is stable now. Wave-9 checkpoints are 600-wide sb3
-#     zips, so forks use --resume-from (full checkpoint: warm policy AND value
-#     head, step counter continues) instead of --init-policy-from. No fresh
-#     value head, no early eval dip, no gentle-lr guard needed by default.
-#   * FORK_FROM = the new champion s3-gentle/best_model (@135.2M). It is
-#     RETIRED (its lr annealed to ~0), so its best_model is a stable fork
-#     point and the frozen --h2h/--eval yardstick — it never trains again.
-#   * The DONOR lineage lives on: s4-y3 (wave 9's reconstituted never-annealed
-#     y3 clone, constant lr) RESUMES and keeps compounding, exactly as y3-batch
-#     did through waves 4-8. t3-y3-finish forks its PINNED @150M checkpoint and
-#     decays — the cross-lineage-decay recipe that won waves 7 (q4) and led
-#     wave 8 (r4). It is young again (the format reset restarted y3's clock at
-#     150M), so this wave rebuilds the lineage as much as it races it.
-#   * runs/sweep3 remains INERT 582-format history + donor archaeology — never
-#     resume it, never peer into it (its snapshots would crash a 600 trainer).
-#     runs/sweep4 is this epoch's home; wave-9 dirs s1/s2/s5/s6/s7/s8 stay as
-#     inert history and are NOT peered (only the wave-10 arms peer each other).
+# THE STRUCTURE — wave 11 is a clean LINEAGE x ENTROPY 2x2 plus scaffolding:
+#   * The obs-600 format is stable. Forks use --resume-from (warm policy AND
+#     value head, step counter continues) from a pinned 600-format checkpoint.
+#   * FORK_FROM = the new champion t3-y3-finish/best_model (@~285M). It is
+#     RETIRED (lr annealed to ~0), so its best_model is a stable fork point and
+#     the frozen --h2h/--eval yardstick — it never trains again.
+#   * The DONOR lineage lives on: s4-y3 (never-annealed, constant lr) RESUMES
+#     and compounds to 450M, exactly as y3-batch did through waves 4-8. The
+#     cross-lineage-decay arms fork its PINNED @300M checkpoint — the freshest
+#     donor state, one wave newer than the @150M that produced t3.
+#   * The 2x2: {champion line = u2, donor cross-decay = u3} x {normal entropy,
+#     low entropy = u4, u5}. u2/u3 are the normal-entropy cells (both decay);
+#     u4/u5 add ent 0.015. Both entropy main effects and the lineage x entropy
+#     interaction are estimable, with u3-y3-finish (donor, normal ent) the
+#     control for the stacked u5-y3-sharp-finish (donor, low ent) — the arm that
+#     combines the two winning recipes and is the wave's headline experiment.
+#   * runs/sweep3 remains INERT 582-format history — never resume, never peer.
+#     runs/sweep4 is this epoch's home; the wave-9 dirs (s1-s3,s5-s8) and the
+#     wave-10 dirs (t1-t7) stay as inert history and are NOT peered (only the
+#     wave-11 arms + the resuming donor s4-y3 peer each other).
 #
 # Arm roles (all lr 1e-4, n-steps/batch 1024, mix 0.40/0.40/0.20, past_k 8,
 # all peers, unless noted):
 #   s4-y3          RESUME the donor: constant lr, never decayed, never forked.
 #                  The fork material for this and future cross-lineage decays.
-#   t1-main        fork champion; constant lr — the decay/gentle control.
-#   t2-finish      t1 + lr decay -> 0. The champion recipe, 7th re-arm.
-#   t3-y3-finish   fork=s4-y3 @150M + decay -> 0. Cross-lineage decay from the
-#                  never-annealed donor (the q4/r4 champion factory).
-#   t4-small-finish  fork champion, batch 512 + decay. Small-batch+decay
-#                  co-won wave 6 (p3); keep both batch sizes and a distinct
-#                  default-lineage pool opponent.
-#   t5-gentle-finish  fork champion, lr 3e-5 -> 0 (warm value head). The wave-9
-#                  winner's recipe with the fresh-value-head confound removed.
-#                  vs t2-finish: is lower peak lr a real lever or was it a
-#                  migration guard? This is the wave's key question.
-#   t6-sharp-finish  t2 + ent-coef 0.015. Low-entropy's third and final test;
-#                  promote (beats t2) or retire the knob. Collapse guard:
-#                  entropy diving toward ~0.1 nats = kill the arm.
-#   t7-exploit     mix 0.10/0.70/0.20, past_k 12: the pool hardener, kept a
-#                  fifth wave. Hardens everyone's opponents, not a candidate.
+#   u1-main        fork champion; constant lr — the decay/entropy control.
+#   u2-finish      u1 + lr decay -> 0. The champion-line recipe, 8th re-arm;
+#                  the champion x normal-entropy cell of the 2x2.
+#   u3-y3-finish   fork=s4-y3 @300M + decay -> 0. Cross-lineage decay from the
+#                  never-annealed donor (the q4/r4/t3 champion factory); the
+#                  donor x normal-entropy cell and u5's control.
+#   u4-sharp-finish  u2 + ent-coef 0.015. Low entropy on the champion line —
+#                  re-arm of t6's winning recipe from the new champion; the
+#                  champion x low-entropy cell.
+#   u5-y3-sharp-finish  fork=s4-y3 @300M + decay + ent 0.015. THE headline:
+#                  the two winning recipes stacked (cross-lineage decay x low
+#                  entropy); the donor x low-entropy cell.
+#   u6-small-finish  fork champion, batch 512 + decay. Small-batch+decay co-won
+#                  wave 6 (p3), healthy in wave 10 (t4); keep both batch sizes
+#                  and a distinct default-lineage pool opponent.
+#   u7-exploit     mix 0.10/0.70/0.20, past_k 12: the pool hardener, kept a
+#                  sixth wave. Hardens everyone's opponents, not a candidate.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -108,18 +116,18 @@
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
-#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (s3-gentle)
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (t3-y3-finish)
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=300000000  CUMULATIVE per-arm target (forks from ~135-150M
+#   TOTAL_TIMESTEPS=450000000  CUMULATIVE per-arm target (forks from ~285-300M
 #                              gain ~+150-165M; resumes never overshoot)
-#   FORK_FROM=runs/sweep4/s3-gentle/best_model   champion fork point + baseline
-#   Y3_FORK=runs/sweep4/s4-y3/ckpt_150000000_steps   pinned donor fork stem
-#   EVAL_OPPONENT=runs/sweep4/wave10-eval-opponent.bin
+#   FORK_FROM=runs/sweep4/t3-y3-finish/best_model   champion fork point + baseline
+#   Y3_FORK=runs/sweep4/s4-y3/ckpt_300000000_steps   pinned donor fork stem
+#   EVAL_OPPONENT=runs/sweep4/wave11-eval-opponent.bin
 #                              frozen eval opponent, exported from FORK_FROM on
 #                              first launch (selects best_model; par ~ -0.50)
-#   BASELINE=s3-gentle         run-dir name of the frozen --h2h opponent
+#   BASELINE=t3-y3-finish      run-dir name of the frozen --h2h opponent
 #   SWEEP_DIR=runs/sweep4      root for the per-variant run dirs
 #   NET_WIDTH=128              must match the fork checkpoints' hidden width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
@@ -135,10 +143,10 @@ cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep4}
-FORK_FROM=${FORK_FROM:-$SWEEP_DIR/s3-gentle/best_model}
-Y3_FORK=${Y3_FORK:-$SWEEP_DIR/s4-y3/ckpt_150000000_steps}
-EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave10-eval-opponent.bin}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-300000000}
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/t3-y3-finish/best_model}
+Y3_FORK=${Y3_FORK:-$SWEEP_DIR/s4-y3/ckpt_300000000_steps}
+EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave11-eval-opponent.bin}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-450000000}
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
@@ -146,11 +154,11 @@ NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
-# The frozen --h2h opponent: the wave-9 champion's best_model — the exact
+# The frozen --h2h opponent: the wave-10 champion's best_model — the exact
 # weights the fork arms started from and the eval opponent was exported from.
-# s3-gentle no longer trains (its lr annealed to 0), so this yardstick never
+# t3-y3-finish no longer trains (its lr annealed to 0), so this yardstick never
 # moves.
-BASELINE=${BASELINE:-s3-gentle}
+BASELINE=${BASELINE:-t3-y3-finish}
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -183,14 +191,14 @@ COMMON=(
 # League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 # The 0.20 bot share is load-bearing (wave-7 q6 faceplant) — do not cut it.
 VARIANTS=(
-"s4-y3|804|resume|peers|The donor lineage: constant lr 1e-4 + batch 1024, never decayed, never forked — reconstituted at the obs-600 reset and now compounding again. Joins the wave-10 pool unchanged; t3 separately decays a fresh copy of its pinned @150M state. Keeping it alive is what gives future waves an independent history to cross-decay.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t1-main|1001|fork|peers|The population default and this wave's decay/gentle control: champion weights (warm value head), batch 1024, constant lr, mix 0.40/0.40/0.20. Every finisher reads against this — same food, same fork, no anneal.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t2-finish|1002|fork|peers|The champion-line recipe re-armed a seventh time: t1-main + lr decay 1e-4 -> 0. Decay has finished on top of six straight champions (y4, z3, p2, q4, r4, and s3's gentle variant); until it loses, every wave re-arms it from the new champion.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t3-y3-finish|1003|fork=$SWEEP_DIR/s4-y3/ckpt_150000000_steps|peers|Cross-lineage decay: fork the never-annealed donor's pinned @150M state + lr decay -> 0. This is the exact recipe that won wave 7 (q4) and led wave 8 (r4). The donor was reconstituted only this epoch, so its history is young; a top finish means the factory survived the format reset, a mid finish means it just needs more donor steps (which s4-y3 is banking).|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t4-small-finish|1004|fork|peers|Batch 512 + decay: the small-batch recipe stays in play — it co-won wave 6 (p3) and fought to the wire in wave 7 (q3). Half the batch is different update noise and doubles as the pool's most distinct default-lineage opponent.|--learning-rate 1e-4 --lr-final 0 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t5-gentle-finish|1005|fork|peers|THE key question: fork the champion (WARM value head) with lr 3e-5 -> 0 — the wave-9 winner's recipe minus the fresh-value-head confound. If t5 beats t2-finish from a warm head, lower peak lr is a genuine lever and the next wave pushes it further; if it ties/loses, s3-gentle's win was a migration guard and gentle retires. Watch t5 vs t2 head to head at wave end.|--learning-rate 3e-5 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t6-sharp-finish|1006|fork|peers|t2-finish + ent-coef 0.015 (default 0.03). Low-entropy's third and final test — safe and mildly good in waves 8 (r5) and 9 (s8) but never a champion. Beat t2 this wave or the entropy knob closes. Collapse guard: if entropy dives toward ~0.1 nats early, kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"t7-exploit|1007|fork|peers|The exploiter, kept a fifth wave: mix 0.10/0.70/0.20, past_k 12 — barely plays itself, lives on the population. Below-par h2h as a candidate; its job is hardening everyone else's opponents, not winning the wave.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.10,0.70,0.20 --league-past-k 12"
+"s4-y3|804|resume|peers|The donor lineage: constant lr 1e-4 + batch 1024, never decayed, never forked — compounding since the obs-600 reset (now @300M, on to 450M). Joins the wave-11 pool unchanged; u3 and u5 separately decay a fresh copy of its pinned @300M state. Keeping it alive is what gives every wave an independent, never-annealed history to cross-decay.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u1-main|1101|fork|peers|The population default and this wave's decay/entropy control: champion weights (warm value head), batch 1024, constant lr, mix 0.40/0.40/0.20. Every finisher reads against this — same food, same fork, no anneal.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u2-finish|1102|fork|peers|The champion-line recipe re-armed an eighth time: u1-main + lr decay 1e-4 -> 0. Decay has finished on top of seven straight champions (y4, z3, p2, q4, r4, s3, t3); until it loses, every wave re-arms it from the new champion. The champion x normal-entropy cell of the 2x2 (u4 adds low entropy to it).|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u3-y3-finish|1103|fork=$SWEEP_DIR/s4-y3/ckpt_300000000_steps|peers|Cross-lineage decay: fork the never-annealed donor's pinned @300M state + lr decay -> 0. This is the exact recipe that won waves 7 (q4), 8 (r4), and 10 (t3 -> current Expert). Forks a donor one wave newer than the @150M that produced t3, so a top finish is the factory compounding, not just repeating. The donor x normal-entropy cell of the 2x2 and u5's control.|--learning-rate 1e-4 --lr-final 0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u4-sharp-finish|1104|fork|peers|Low entropy on the champion line: u2-finish + ent-coef 0.015 (default 0.03). Re-arm of wave-10's t6-sharp, which beat its parent t2 on all three boards and tied t3 for h2h #1 — now validated from the new champion. The champion x low-entropy cell. Collapse guard: entropy diving toward ~0.1 nats = kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u5-y3-sharp-finish|1105|fork=$SWEEP_DIR/s4-y3/ckpt_300000000_steps|peers|THE headline: the two winning recipes stacked — cross-lineage decay (fork donor @300M + decay -> 0) x low entropy (ent 0.015). The donor x low-entropy cell of the 2x2; beats u3-y3-finish (its normal-entropy control) means the champion factory and the entropy lever compound. Same collapse guard as u4.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u6-small-finish|1106|fork|peers|Batch 512 + decay: the small-batch recipe stays in play — it co-won wave 6 (p3) and was healthy in wave 10 (t4, 28.5 h2h). Half the batch is different update noise and doubles as the pool's most distinct default-lineage opponent.|--learning-rate 1e-4 --lr-final 0 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"u7-exploit|1107|fork|peers|The exploiter, kept a sixth wave: mix 0.10/0.70/0.20, past_k 12 — barely plays itself, lives on the population. Below-par h2h as a candidate; its job is hardening everyone else's opponents, not winning the wave.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.10,0.70,0.20 --league-past-k 12"
 )
 
 
@@ -198,8 +206,9 @@ variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
 
 # Comma-separated league dirs of every variant EXCEPT $1 (by name) — the
 # --league-peers value for a "peers" arm. Dirs may not exist yet; the trainer
-# tolerates that (empty pool slice until the peer launches). Only wave-10 arms
-# are peered — never an inert wave-9 dir, and never a 582-format runs/sweep3.
+# tolerates that (empty pool slice until the peer launches). Only wave-11 arms
+# (the u* arms + the resuming donor s4-y3) are peered — never an inert wave-9 or
+# wave-10 dir, and never a 582-format runs/sweep3.
 peer_league_dirs() {
     local self=$1 i name out=""
     for i in "${!VARIANTS[@]}"; do
@@ -318,7 +327,7 @@ list_variants() {
 }
 
 status() {
-    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (s3-gentle);
+    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (t3-y3-finish);
     # win_rate = (best+1)/2, par ~ -0.50. Negative values are normal.
     for i in "${!VARIANTS[@]}"; do
         local name dir pid state ckpt best when
@@ -370,7 +379,7 @@ compare() {
 }
 
 # RELATIVE ranking: each variant in seat 0 against three copies of the frozen
-# champion (s3-gentle best_model) — the primary ranking. Above-par here ==
+# champion (t3-y3-finish best_model) — the primary ranking. Above-par here ==
 # genuinely past the champion. Measure the mirror par (the self-baseline row)
 # before reading small edges; expect ~25 +/- 2%. At wave end, run the FULL
 # tiebreak: direct matches between the leaders + a fresh-seed 800-game h2h
@@ -414,7 +423,7 @@ case "${1:-}" in
     --stop)    stop_all;      exit 0 ;;
     --compare) compare;       exit 0 ;;
     --h2h)     h2h;           exit 0 ;;
-    --prepare) prepare; echo "wave-10 eval opponent ready in $SWEEP_DIR"; exit 0 ;;
+    --prepare) prepare; echo "wave-11 eval opponent ready in $SWEEP_DIR"; exit 0 ;;
 esac
 
 # Which variants to launch (1-based indices; default all).
@@ -429,7 +438,7 @@ fi
 [[ $DRY_RUN == 1 ]] || prepare
 
 echo "fork point     : $FORK_FROM (fork arms' first launch only)"
-echo "donor fork stem: $Y3_FORK (t3's first launch only)"
+echo "donor fork stem: $Y3_FORK (u3/u5's first launch only)"
 echo "eval opponent  : $EVAL_OPPONENT (frozen; selects best_model)"
 echo "h2h baseline   : $SWEEP_DIR/$BASELINE/best_model"
 echo "target         : $TOTAL_TIMESTEPS cumulative timesteps per variant"
@@ -467,18 +476,18 @@ for n in "${SELECTED[@]}"; do
         continue
     fi
 
-    # One-time wave-10 migration for the continued donor: s4-y3's stored best
-    # bar was earned vs the wave-9 eval opponent (the frozen wave-8 leader) and
-    # is not comparable with the new frozen champion (s3-gentle). Set the old
+    # One-time wave-11 migration for the continued donor: s4-y3's stored best
+    # bar was earned vs the wave-10 eval opponent (the frozen s3-gentle) and is
+    # not comparable with the new frozen champion (t3-y3-finish). Set the old
     # best aside, drop the bar, and let the new metric re-earn best_model.zip.
     # The marker file makes re-runs a no-op.
     if [[ $init == resume && $DRY_RUN != 1 && -f $dir/best_mean_reward.json \
-          && ! -f $dir/.wave10-eval-opponent ]]; then
-        [[ -f $dir/best_model.zip && ! -f $dir/best_model.wave9-vs-champion.zip ]] \
-            && cp "$dir/best_model.zip" "$dir/best_model.wave9-vs-champion.zip"
+          && ! -f $dir/.wave11-eval-opponent ]]; then
+        [[ -f $dir/best_model.zip && ! -f $dir/best_model.wave10-vs-champion.zip ]] \
+            && cp "$dir/best_model.zip" "$dir/best_model.wave10-vs-champion.zip"
         rm "$dir/best_mean_reward.json"
-        touch "$dir/.wave10-eval-opponent"
-        echo "migrated $name to the wave-10 eval metric (old best kept as best_model.wave9-vs-champion.zip)"
+        touch "$dir/.wave11-eval-opponent"
+        echo "migrated $name to the wave-11 eval metric (old best kept as best_model.wave10-vs-champion.zip)"
     fi
 
     # Auto-resume: continue from the arm's own furthest readable checkpoint.
@@ -558,9 +567,9 @@ cat <<EOF
 
 Monitor:
   ./scripts/sweep_selfplay.sh --status     # best= is vs the frozen champion: win = (best+1)/2, par ~ -0.50
-  tail -f $SWEEP_DIR/t2-finish/train.log
+  tail -f $SWEEP_DIR/u2-finish/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # league/peer_size, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/t2-finish
+  $PY scripts/run_report.py $SWEEP_DIR/u2-finish
 Rank the variants:
   ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (reporting; saturated)
   ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen $BASELINE best (primary ranking)
