@@ -108,9 +108,7 @@ fn handle_start(state: &mut GameState, actor: PlayerId) -> Result<(), ActionErro
         4 => 4,
         _ => 5, // 5 or 6 players
     };
-    let mut all_regions = state.map.regions.clone();
-    all_regions.shuffle(&mut rng);
-    state.active_regions = all_regions.into_iter().take(region_count).collect();
+    state.active_regions = select_contiguous_regions(&state.map, region_count, &mut rng);
     state.log(format!(
         "Active regions: {}",
         state.active_regions.join(", ")
@@ -121,6 +119,88 @@ fn handle_start(state: &mut GameState, actor: PlayerId) -> Result<(), ActionErro
     begin_auction(state);
     state.log("Game started!".to_string());
     Ok(())
+}
+
+/// Choose `count` active regions that form a *contiguous* area in the map's
+/// region-adjacency graph. Power Grid's setup rules require the playable regions
+/// to be connected: on a disconnected set, spanning the gap costs a prohibitive
+/// route through inactive territory, so networks strand and the game stalls
+/// (bots correctly refuse unaffordable builds — see `handle_start`).
+///
+/// Grows a random connected subgraph: seed with one random region, then
+/// repeatedly add a random region on the frontier (adjacent to the set but not
+/// yet in it). All candidate lists are sorted before the RNG draws so a fixed
+/// seed reproduces the same set (paired evaluation in `powergrid-evolve`/RL
+/// depends on this). Falls back to plain random fill if the region graph can't
+/// supply enough connected regions (e.g. a pathological map), so it never
+/// returns fewer than `min(count, region_count)`.
+fn select_contiguous_regions(
+    map: &crate::map::Map,
+    count: usize,
+    rng: &mut rand::rngs::SmallRng,
+) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let adj = map.region_adjacency();
+    let count = count.min(map.regions.len());
+    if count == 0 {
+        return Vec::new();
+    }
+
+    let mut all: Vec<String> = map.regions.clone();
+    all.sort();
+
+    let mut chosen: Vec<String> = Vec::with_capacity(count);
+    let mut in_set: BTreeSet<String> = BTreeSet::new();
+    // Frontier = regions adjacent to the chosen set, not yet chosen.
+    let mut frontier: BTreeSet<String> = BTreeSet::new();
+
+    // Seed with a uniformly random region.
+    let start = all
+        .choose(rng)
+        .cloned()
+        .expect("region list is non-empty when count > 0");
+    in_set.insert(start.clone());
+    chosen.push(start.clone());
+    if let Some(ns) = adj.get(&start) {
+        frontier.extend(ns.iter().cloned());
+    }
+
+    while chosen.len() < count {
+        let candidates: Vec<String> = frontier.iter().cloned().collect();
+        let Some(next) = candidates.choose(rng).cloned() else {
+            break; // frontier exhausted before reaching `count` (disconnected map)
+        };
+        frontier.remove(&next);
+        in_set.insert(next.clone());
+        chosen.push(next.clone());
+        if let Some(ns) = adj.get(&next) {
+            for n in ns {
+                if !in_set.contains(n) {
+                    frontier.insert(n.clone());
+                }
+            }
+        }
+    }
+
+    // Pathological fallback: top up with random unchosen regions if the
+    // connected component was too small.
+    if chosen.len() < count {
+        let mut rest: Vec<String> = all
+            .iter()
+            .filter(|r| !in_set.contains(*r))
+            .cloned()
+            .collect();
+        rest.shuffle(rng);
+        for r in rest {
+            if chosen.len() >= count {
+                break;
+            }
+            chosen.push(r);
+        }
+    }
+
+    chosen
 }
 
 // ---------------------------------------------------------------------------
@@ -1806,6 +1886,76 @@ mod tests {
             determine_winner(&state).is_none(),
             !end_game_triggered(&state)
         );
+    }
+
+    /// Active regions must always form a *contiguous* area in the region graph.
+    /// A disconnected set strands networks (spanning the gap costs a prohibitive
+    /// route through inactive territory) and stalls the game — every difficulty
+    /// of bot then correctly refuses unaffordable builds and stops building for
+    /// rounds. Before `select_contiguous_regions`, ~half of random 4-region USA
+    /// draws were disconnected (`northeast` is only adjacent to `east`).
+    #[test]
+    fn active_regions_are_contiguous() {
+        use crate::map::default_map;
+        use std::collections::BTreeSet;
+
+        const COLORS: [PlayerColor; 6] = [
+            PlayerColor::Red,
+            PlayerColor::Blue,
+            PlayerColor::Green,
+            PlayerColor::Yellow,
+            PlayerColor::Purple,
+            PlayerColor::White,
+        ];
+        let adj = default_map().region_adjacency();
+        // Cover 2..=6 players (region_count 3, 4, 5) across many seeds.
+        for player_count in 2..=6usize {
+            for seed in 0..300u64 {
+                let mut state = GameState::new_with_seed(default_map(), player_count, seed);
+                let ids: Vec<PlayerId> = (0..player_count)
+                    .map(|i| PlayerId::from_u128(((seed as u128) << 8) | (i + 1) as u128))
+                    .collect();
+                for (i, id) in ids.iter().enumerate() {
+                    apply_action(
+                        &mut state,
+                        *id,
+                        Action::JoinGame {
+                            name: format!("P{i}"),
+                            color: COLORS[i],
+                        },
+                    )
+                    .unwrap();
+                }
+                apply_action(&mut state, ids[0], Action::StartGame).unwrap();
+
+                let active: BTreeSet<&str> =
+                    state.active_regions.iter().map(|s| s.as_str()).collect();
+                assert!(!active.is_empty());
+                // BFS over the active subgraph from an arbitrary member.
+                let start = *active.iter().next().unwrap();
+                let mut seen: BTreeSet<&str> = BTreeSet::new();
+                let mut stack = vec![start];
+                while let Some(r) = stack.pop() {
+                    if !seen.insert(r) {
+                        continue;
+                    }
+                    if let Some(neighbors) = adj.get(r) {
+                        for n in neighbors {
+                            let n = n.as_str();
+                            if active.contains(n) && !seen.contains(n) {
+                                stack.push(n);
+                            }
+                        }
+                    }
+                }
+                assert_eq!(
+                    seen.len(),
+                    active.len(),
+                    "disconnected active regions for {player_count}p seed {seed}: {:?}",
+                    state.active_regions
+                );
+            }
+        }
     }
 
     fn test_map() -> Map {

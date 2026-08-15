@@ -235,6 +235,39 @@ impl Map {
         dist
     }
 
+    /// Region adjacency graph: `region → sorted list of directly-adjacent
+    /// regions` (two regions are adjacent when any inter-city connection joins
+    /// them). Used to select a *contiguous* set of active regions at game start
+    /// — Power Grid is unplayable on a disconnected region set, since building
+    /// across an inactive gap costs a prohibitive route. Every region in
+    /// `self.regions` gets an entry (possibly empty). Neighbor lists are sorted
+    /// so downstream random selection is reproducible.
+    pub fn region_adjacency(&self) -> HashMap<String, Vec<String>> {
+        use std::collections::BTreeSet;
+        let mut adj: HashMap<String, BTreeSet<String>> = self
+            .regions
+            .iter()
+            .map(|r| (r.clone(), BTreeSet::new()))
+            .collect();
+        for (from, neighbors) in &self.edges {
+            let Some(rf) = self.cities.get(from).map(|c| &c.region) else {
+                continue;
+            };
+            for (to, _) in neighbors {
+                let Some(rt) = self.cities.get(to).map(|c| &c.region) else {
+                    continue;
+                };
+                if rf != rt {
+                    adj.entry(rf.clone()).or_default().insert(rt.clone());
+                    adj.entry(rt.clone()).or_default().insert(rf.clone());
+                }
+            }
+        }
+        adj.into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect()
+    }
+
     /// Cheapest network connection cost from any city a player owns to `target`.
     /// Uses Dijkstra's algorithm.
     pub fn connection_cost_to(&self, owned_cities: &[String], target: &str) -> Option<u32> {
