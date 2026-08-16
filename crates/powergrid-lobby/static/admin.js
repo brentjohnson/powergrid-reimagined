@@ -547,8 +547,8 @@ function fmtDuration(start, end) {
 
 // ---- Fuel-kind palette + labels ----
 const KIND_COLORS = {
-  coal: "#8a7355", oil: "#4a4a4a", gasoroil: "#c07b3a", gas: "#e0a53a",
-  uranium: "#2fb47a", wind: "#4fa3e0",
+  coal: "#8a5a2b", oil: "#6b6b6b", gasoroil: "#5f7d9e", gas: "#3987e5",
+  uranium: "#d03b3b", wind: "#199e70",
 };
 const KIND_LABELS = {
   coal: "Coal", oil: "Oil", gasoroil: "Gas/Oil", gas: "Gas",
