@@ -25,8 +25,16 @@ pub(in crate::ui) fn auction_panel(
     let room_owned = state.current_room.clone();
     let room = room_owned.as_deref();
 
-    // Per-player status column in turn order
-    for pid in &gs.player_order {
+    // Per-player status column. During bidding the rotation goes clockwise around
+    // the table (seating order, `gs.players`), so order the column that way while a
+    // bid is live; otherwise fall back to turn order for the nominate step.
+    let column_order: Vec<PlayerId> = if active_bid.is_some() {
+        gs.players.iter().map(|p| p.id).collect()
+    } else {
+        gs.player_order.clone()
+    };
+
+    for pid in &column_order {
         if let Some(p) = gs.player(*pid) {
             let is_me = p.id == my_id;
             let active = is_active_player(gs, p.id);
