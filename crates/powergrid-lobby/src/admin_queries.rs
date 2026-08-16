@@ -65,6 +65,7 @@ pub struct FinishPositionAvg {
     pub finish_position: i16,
     pub seats: i64,
     pub avg_cities: Option<f64>,
+    pub avg_capacity: Option<f64>,
     pub avg_money: Option<f64>,
     pub avg_powered: Option<f64>,
     pub avg_plants: Option<f64>,
@@ -551,19 +552,24 @@ impl Db {
         .await?;
 
         let finish_position_averages: Vec<FinishPositionAvg> = sqlx::query_as(
-            "SELECT finish_position, COUNT(*) AS seats, \
-                    AVG(cities)::float8 AS avg_cities, \
-                    AVG(money)::float8 AS avg_money, \
-                    AVG(powered)::float8 AS avg_powered, \
-                    AVG(plants)::float8 AS avg_plants, \
-                    AVG(plants_bought)::float8 AS avg_plants_bought, \
-                    AVG(spent_on_plants)::float8 AS avg_spent_on_plants, \
-                    AVG(resources_bought)::float8 AS avg_resources_bought, \
-                    AVG(spent_on_resources)::float8 AS avg_spent_on_resources, \
-                    AVG(cities_bought)::float8 AS avg_cities_bought, \
-                    AVG(spent_on_cities)::float8 AS avg_spent_on_cities \
-             FROM game_players \
-             GROUP BY finish_position ORDER BY finish_position",
+            "SELECT gp.finish_position, COUNT(*) AS seats, \
+                    AVG(gp.cities)::float8 AS avg_cities, \
+                    AVG(cap.total_capacity)::float8 AS avg_capacity, \
+                    AVG(gp.money)::float8 AS avg_money, \
+                    AVG(gp.powered)::float8 AS avg_powered, \
+                    AVG(gp.plants)::float8 AS avg_plants, \
+                    AVG(gp.plants_bought)::float8 AS avg_plants_bought, \
+                    AVG(gp.spent_on_plants)::float8 AS avg_spent_on_plants, \
+                    AVG(gp.resources_bought)::float8 AS avg_resources_bought, \
+                    AVG(gp.spent_on_resources)::float8 AS avg_spent_on_resources, \
+                    AVG(gp.cities_bought)::float8 AS avg_cities_bought, \
+                    AVG(gp.spent_on_cities)::float8 AS avg_spent_on_cities \
+             FROM game_players gp \
+             LEFT JOIN ( \
+                 SELECT game_id, finish_position, SUM(capacity) AS total_capacity \
+                 FROM game_player_plants GROUP BY game_id, finish_position \
+             ) cap ON cap.game_id = gp.game_id AND cap.finish_position = gp.finish_position \
+             GROUP BY gp.finish_position ORDER BY gp.finish_position",
         )
         .fetch_all(&self.pool)
         .await?;

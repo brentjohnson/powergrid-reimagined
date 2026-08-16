@@ -607,6 +607,7 @@ function finishAvgTable(rows) {
   const metrics = [
     ["Seats (n)", (r) => r.seats, 0],
     ["Cities (end)", (r) => r.avg_cities, 1],
+    ["Capacity (end)", (r) => r.avg_capacity, 1],
     ["Powered", (r) => r.avg_powered, 1],
     ["Money (end)", (r) => r.avg_money, 0],
     ["Plants (end)", (r) => r.avg_plants, 1],
@@ -614,7 +615,6 @@ function finishAvgTable(rows) {
     ["Spent on plants", (r) => r.avg_spent_on_plants, 0],
     ["Resources bought", (r) => r.avg_resources_bought, 1],
     ["Spent on resources", (r) => r.avg_spent_on_resources, 0],
-    ["Cities built", (r) => r.avg_cities_bought, 1],
     ["Spent on cities", (r) => r.avg_spent_on_cities, 0],
   ];
   const head = el("tr", {}, el("th", {}, "Metric"),
