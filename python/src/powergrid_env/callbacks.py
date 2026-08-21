@@ -183,10 +183,19 @@ class LeagueSnapshotCallback(BaseCallback):
     def _build_pool(self) -> list[tuple[str, bytes | str, float]]:
         p_latest, p_past, p_bots = self.mix
         pool: list[tuple[str, bytes | str, float]] = []
-        latest_step, latest_path = self._snapshots[-1]
-        with open(latest_path, "rb") as f:
-            pool.append(("policy", f.read(), p_latest))
-        past = [p for _, p in self._snapshots[:-1]] + self._peer_snapshots
+        # Newest *readable* own snapshot as LATEST. A snapshot truncated by a
+        # crash (e.g. power loss mid-write) can outrank the freshly written one
+        # by timestep — its filename step is higher than the last checkpoint —
+        # so validate and fall back to the next-newest readable file instead of
+        # handing an empty/corrupt blob straight to load_opponent_policy. The
+        # PAST/peer path below already guards this way via _read_snapshot.
+        latest_i = len(self._snapshots)
+        for i in range(len(self._snapshots) - 1, -1, -1):
+            if (blob := self._read_snapshot(self._snapshots[i][1])) is not None:
+                pool.append(("policy", blob, p_latest))
+                latest_i = i
+                break
+        past = [p for _, p in self._snapshots[:latest_i]] + self._peer_snapshots
         if past and self.past_k > 0 and p_past > 0:
             picks = self._rng.choice(len(past), size=min(self.past_k, len(past)),
                                      replace=False)

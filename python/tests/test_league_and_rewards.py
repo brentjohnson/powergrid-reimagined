@@ -197,6 +197,34 @@ def test_league_build_pool_single_snapshot(tmp_path):
     assert [k for k, _, _ in pool] == ["policy", "bots"]  # no past snapshots yet
 
 
+def test_league_build_pool_skips_corrupt_latest(tmp_path):
+    # A power outage left a zero-byte snapshot whose filename step (500) is
+    # newer than every good one AND newer than the last checkpoint. LATEST must
+    # fall back to the newest *readable* snapshot instead of handing the empty
+    # blob to load_opponent_policy (which raises BadMagic). Regression for the
+    # wave-13 resume failure of w3-gamma995 / w5-y3-gamma.
+    rng = np.random.default_rng(0)
+    league = tmp_path / "league"
+    league.mkdir()
+    good = {}
+    for steps in (100, 200, 300, 400):
+        good[steps] = make_policy_bytes(rng)
+        (league / f"snap_{steps}.bin").write_bytes(good[steps])
+    (league / "snap_500.bin").write_bytes(b"")  # truncated mid-write
+
+    cb = LeagueSnapshotCallback(train_env=None, snapshot_every=1000,
+                                league_dir=str(league), past_k=2,
+                                mix=(0.5, 0.3, 0.2), seed=0)
+    cb._scan_league()
+    pool = cb._build_pool()
+    # LATEST is the newest readable snapshot (400), not the corrupt 500.
+    assert pool[0] == ("policy", good[400], 0.5)
+    # The corrupt file never enters PAST, and every entry is loadable.
+    env = selfplay_env()
+    env.set_opponent_pool(pool)
+    env.reset()
+
+
 def test_league_peer_pool(tmp_path):
     rng = np.random.default_rng(0)
     league = tmp_path / "league"
