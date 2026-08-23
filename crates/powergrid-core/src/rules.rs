@@ -1367,7 +1367,7 @@ fn handle_power_cities_fuel(
         return Err(ActionError::NotYourTurn);
     }
 
-    if gas + oil != hybrid_cost {
+    if u16::from(gas) + u16::from(oil) != u16::from(hybrid_cost) {
         return Err(ActionError::InvalidFuelSplit);
     }
 
@@ -1401,8 +1401,8 @@ fn handle_power_cities_fuel(
 
     // Validate the split is feasible.
     if pure_coal_cost > player.resources.coal
-        || pure_oil_cost + oil > player.resources.oil
-        || pure_gas_cost + gas > player.resources.gas
+        || u16::from(pure_oil_cost) + u16::from(oil) > u16::from(player.resources.oil)
+        || u16::from(pure_gas_cost) + u16::from(gas) > u16::from(player.resources.gas)
         || pure_uranium_cost > player.resources.uranium
     {
         return Err(ActionError::InvalidFuelSplit);
@@ -4356,6 +4356,64 @@ mod tests {
         // Phase and resources unchanged.
         assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
         assert_eq!(state.player(p1).unwrap().resources.gas, 3);
+    }
+
+    /// A client-supplied split whose gas+oil overflows u8 must be rejected, not
+    /// panic (debug) or wrap into a spuriously-valid total (release).
+    /// Regression for the u8-overflow in handle_power_cities_fuel.
+    #[test]
+    fn test_power_cities_fuel_rejects_u8_overflow_split() {
+        use crate::types::{PlantKind, PowerPlant};
+
+        let (mut state, p1, _p2) = two_player_game();
+        apply_action(&mut state, p1, Action::StartGame).unwrap();
+
+        state.phase = Phase::Bureaucracy {
+            remaining: vec![p1],
+        };
+
+        give_player_cities(&mut state, p1, &["a", "b"]);
+        let player = state.player_mut(p1).unwrap();
+        player.plants = vec![PowerPlant {
+            number: 5,
+            kind: PlantKind::GasOrOil,
+            cost: 2,
+            cities: 2,
+        }];
+        player.resources = PlayerResources {
+            coal: 0,
+            oil: 3,
+            gas: 3,
+            uranium: 0,
+        };
+
+        apply_action(
+            &mut state,
+            p1,
+            Action::PowerCities {
+                plant_numbers: vec![5],
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
+
+        // gas(200) + oil(200) = 400, which overflows u8. The hybrid_cost is 2,
+        // and 400 wrapped mod 256 == 144 != 2, but the point is the addition
+        // must not panic and must reject the split.
+        let result = apply_action(
+            &mut state,
+            p1,
+            Action::PowerCitiesFuel { gas: 200, oil: 200 },
+        );
+        assert!(
+            matches!(result, Err(ActionError::InvalidFuelSplit)),
+            "expected InvalidFuelSplit, got {result:?}"
+        );
+        // Phase and resources unchanged.
+        assert!(matches!(state.phase, Phase::PowerCitiesFuel { .. }));
+        assert_eq!(state.player(p1).unwrap().resources.gas, 3);
+        assert_eq!(state.player(p1).unwrap().resources.oil, 3);
     }
 
     /// When only gas is available for hybrids the choice is forced and no prompt appears.
