@@ -1,125 +1,126 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — wave 14: triangulate the gamma peak INSIDE the winning
-# cross-lineage recipe + two CRAZY probes. Six "progress" arms RESUME their own
-# 600-format checkpoints or FORK (--resume-from, warm policy+value head) from a
-# pinned 600-format checkpoint — the proven waves-4-8/10-13 structure. Two arms
-# go off-script (pure Monte-Carlo return, and a placement terminal reward).
+# sweep_selfplay.sh — wave 15: lock in gamma 0.999 on the CHAMPION line and
+# sweep the levers a high-gamma regime actually needs (rollout length, league
+# depth, value emphasis) + two CRAZY probes (a weight-space model soup, and a
+# targeted exploiter). Six "progress" arms RESUME their own 600-format
+# checkpoints or FORK (--resume-from, warm policy+value head) from a pinned
+# 600-format checkpoint — the proven waves-4-8/10-14 structure. One crazy arm
+# goes off-script as a fresh clone warm-started from an averaged policy.
 #
-# WAVE 14 (2026-08-23).
+# WAVE 15 (2026-08-26).
 #
-# WAVE 13 (map the gamma curve + two crazy probes) is settled. All 8 arms
-# reached their targets (forks/resumes 750M-900M; the wide clone 300M). Results:
+# WAVE 14 (triangulate the gamma peak inside the cross-lineage recipe + two
+# crazy probes) is settled. All 8 arms reached their targets (forks/resumes
+# 865M-900M). Results:
 #
-#   Frozen-champion eval (best mean_reward vs 3x v7-gamma, par ~-0.50):
-#     w5-y3-gamma -0.26  w4-gamma-nent -0.29  w1-champ-gamma -0.33
-#     w6-gamma-max -0.34  w2-gamma999 -0.35  w3-gamma995 -0.37
-#     s4-y3 -0.40  v6-wide -0.65
+#   Frozen-champion eval (best mean_reward vs 3x w5-y3-gamma, par ~-0.50):
+#     x3-y3-g999 -0.24  x5-champ-g999 -0.26  x4-y3-g9995 -0.28
+#     x1-champ -0.30  x2-y3-g997 -0.30  y7-placement -0.31
+#     y6-mc-return -0.38  s4-y3 -0.41
 #   Compare vs 3x hard (saturated, reporting-only, seat-0 all-bots par ~21.5%):
-#     w6-gamma-max 85.0  w1-champ-gamma 83.5  w2-gamma999 81.5  w5-y3-gamma 81.0
-#     w3-gamma995 80.5  w4-gamma-nent 80.5  s4-y3 80.0  v6-wide 66.0
-#   Primary h2h (seat 0 vs 3x the frozen champion v7-gamma; mirror par ~26.5%):
-#     w5-y3-gamma 33.0  w2-gamma999 28.5  w3-gamma995 25.5  w4-gamma-nent 25.0
-#     s4-y3 24.0  w6-gamma-max 24.0  w1-champ-gamma 23.0  v6-wide 10.0
-#   w5-y3-gamma LED BOTH meaningful boards (eval -0.26 and h2h 33.0, +6.5pp over
-#   par — the largest margin). The DIRECT decider (seed 77777, 400 games each
-#   way, 4-way par 25%) confirmed it both directions of both matches:
-#     w5 @seat0 vs 3x v7 = 29.0%  BEAT  v7 @seat0 vs 3x w5 = 21.2%
-#     w5 @seat0 vs 3x w2 = 26.2%  BEAT  w2 @seat0 vs 3x w5 = 18.5%
-#   w5-y3-gamma is the wave-13 champion and the new embedded Expert; it beat the
-#   OUTGOING champion v7-gamma decisively both ways (29.0% vs par 25% as
-#   challenger; v7 sank to 21.2% as challenger against it).
+#     x1-champ 85.5  x4-y3-g9995 84.0  x2-y3-g997 82.5  x3-y3-g999 82.0
+#     s4-y3 80.5  y7-placement 80.5  x5-champ-g999 79.5  y6-mc-return 75.0
+#   Primary h2h (seat 0 vs 3x the frozen champion w5-y3-gamma; seat-0 par ~23.5%):
+#     x5-champ-g999 31.0  x4-y3-g9995 28.5  x1-champ 26.5  x3-y3-g999 26.5
+#     x2-y3-g997 24.0  y7-placement 23.0  s4-y3 21.0  y6-mc-return 20.5
+#   The three boards DISAGREED at the top (x3 led eval, x5 led h2h, x4 was the
+#   all-round runner-up), so a DIRECT decider ran between the top three (seed
+#   77777, 400 games each way, 4-way par 25%):
+#     x5 vs 3x x3 = 27.8  |  x3 vs 3x x5 = 26.8   -> x5 edges x3
+#     x5 vs 3x x4 = 27.0  |  x4 vs 3x x5 = 22.5   -> x5 DOMINATES x4 (x4 < par)
+#     x3 vs 3x x4 = 26.2  |  x4 vs 3x x3 = 27.5   -> x4 edges x3
+#   x5-champ-g999 has the best offense (avg 27.4 as challenger) AND the best
+#   defense (opponents held to avg 24.65, below par). x5-champ-g999 is the
+#   wave-14 champion and the new embedded Expert.
 #
-# What wave 13 SETTLED / OPENED:
-#   * *** CROSS-LINEAGE DECAY WON. *** w5-y3-gamma forks the never-annealed
-#     DONOR (s4-y3, constant lr, gamma 0.99) at @600M, then adds decay -> 0 +
-#     gamma 0.997 + NORMAL entropy. It beat the champion-line re-arm
-#     w1-champ-gamma (the exact wave-12 recipe, fork v7-gamma) on every board
-#     (h2h 33 vs 23, eval -0.26 vs -0.33). Second straight wave the cross-
-#     lineage line led the pack (v4-y3 was 3rd in wave 12); now it is #1. The
-#     donor's independent, never-annealed history is the best fork material we
-#     have. KEEP THE DONOR ALIVE and keep cross-lineage forks central.
-#   * GAMMA still climbs, but the peak and the lineage are CONFOUNDED. On the
-#     champion-line re-arms the h2h ordering was w3-995 (25.5) / w1-997 (23.0,
-#     a noisy dip) / w2-999 (28.5), and w6-1.0 (24.0) < w2-999 — so gamma wants
-#     to be HIGHER than 0.997 (~0.999) but 1.0 starts to hurt. BUT the decider
-#     showed the gamma-0.997 cross-lineage w5 beats the gamma-0.999 champion-
-#     line w2 both directions, so we cannot tell whether w5 won on lineage or on
-#     gamma. Wave 14's core job: sweep gamma (0.997 / 0.999 / 0.9995) INSIDE the
-#     winning cross-lineage recipe to find the true peak, un-confounded, with
-#     champion-line controls at the same gammas.
-#   * NORMAL ENTROPY >= LOW ENTROPY now. w4-gamma-nent (ent 0.03) >= w1 (ent
-#     0.015) on h2h (25.0 vs 23.0) and the winner w5 used normal entropy. Low
-#     entropy no longer earns its place in the high-gamma regime; every wave-14
-#     arm runs the trainer-default ent 0.03. (Low-entropy line retired.)
-#   * DECAY held (10th straight champion is a decay arm). The constant-lr donor
-#     s4-y3 is useful ONLY as fork material, never a contender (eval -0.40, h2h
-#     24.0). Kept alive as the cross-lineage supply.
-#   * *** WIDE NET (192) FAILED. *** v6-wide, the capacity-ceiling probe, was
-#     dead last both waves it ran (h2h 10.0, compare 66.0) even at 300M. The 128
-#     field is NOT capacity-bound; the 2.25x net just needs far more data than a
-#     150-300M clone wave and never caught up. RETIRED — no wide arm in wave 14
-#     (its 192-wide snapshots stay on disk but never train or peer again).
+# What wave 14 SETTLED / OPENED:
+#   * *** GAMMA PEAK IS 0.999. *** The cross-lineage eval curve is a clean
+#     inverted-U: 0.997 (-0.30) -> 0.999 (-0.24) -> 0.9995 (-0.28), and wave 13
+#     already showed 1.0 hurts. 0.999 is the peak; every wave-15 continuation
+#     and lever arm runs gamma 0.999. (Gamma is now a SETTLED constant, no
+#     longer swept.)
+#   * *** LINEAGE REVERSED AT THE PEAK GAMMA. *** Wave 13 found cross-lineage
+#     (fork the never-annealed donor) beat champion-line at gamma 0.997. At the
+#     BETTER gamma 0.999 it flips: champion-line x5 beat cross-lineage x3 on
+#     h2h (31.0 vs 26.5) and won the decider; x3 led only the (noisier) eval
+#     proxy. The likely mechanism is VALUE-HEAD GAMMA-CONTINUITY: re-arming at a
+#     new gamma forces the critic to re-learn the return scale, and the champion
+#     w5 was trained at 0.997 (a small 0.997->0.999 shift) while the donor was
+#     trained at 0.99 (a large 0.99->0.999 shift). Fork the checkpoint whose
+#     gamma is CLOSEST to the target. So wave 15's presumptive champion is the
+#     CHAMPION-LINE continuation (fork x5, already @0.999 — zero gamma shift);
+#     cross-lineage is demoted to a control/hedge, not the presumptive winner.
+#   * BOTH CRAZIES UNDERPERFORMED. y6-mc-return (gamma 1.0 + gae-lambda 1.0, pure
+#     Monte-Carlo return, no bootstrap) was worst-but-one on every board — no
+#     bootstrap horizon clearly hurts, confirming the value net matters. That
+#     motivates wave 15's z5-vf (STRENGTHEN the critic, don't remove it).
+#     y7-placement (finish-rank terminal reward) was middling (-0.31 eval, h2h
+#     23.0 ~ par) — no edge over winloss; retired.
+#   * DECAY held (11th straight champion is a decay arm). The constant-lr donor
+#     s4-y3 stays weak-but-useful as cross-lineage fork material (eval -0.41,
+#     h2h 21.0). KEEP THE DONOR ALIVE.
+#   * WIDE NET (192) stays retired (failed twice; 128 field is not
+#     capacity-bound).
 #
 # 150M per-arm convergence budget still holds — eval peaks land in the back
-# third as lr-decay anneals to 0. Forks from w5-y3-gamma @~748M gain ~+150M to
-# 900M cumulative; the donor s4-y3 resumes 750M -> 900M.
+# third as lr-decay anneals to 0. Forks from x5-champ-g999/best_model @~894M
+# gain ~+156M to 1050M cumulative; the donor s4-y3 resumes 900M -> 1050M.
 #
 # THE STRUCTURE — six progress arms + two crazy arms:
-#   * FORK_FROM = the new champion w5-y3-gamma/best_model (@~748M). RETIRED (lr
+#   * FORK_FROM = the new champion x5-champ-g999/best_model (@~894M). RETIRED (lr
 #     annealed to ~0), so its best_model is a stable fork point AND the frozen
-#     --h2h/--eval yardstick AND the embedded Expert — it never trains.
+#     --h2h/--eval yardstick AND the embedded Expert — it never trains. It was
+#     trained at gamma 0.999, so a gamma-0.999 fork of it is value-continuous.
 #   * The DONOR lineage lives on: s4-y3 (never-annealed, constant lr, gamma 0.99)
-#     RESUMES 750M -> 900M. The three cross-lineage arms (x2/x3/x4) fork its
-#     PINNED @750M checkpoint — the freshest donor state — and add decay + a
-#     gamma from the swept curve. This is the recipe that produced w5.
+#     RESUMES 900M -> 1050M. The cross-lineage control z2 forks its PINNED @900M
+#     checkpoint + decay + gamma 0.999 — the hedge in case champion-line's edge
+#     is data-limited, not permanent.
 #   * runs/sweep4 is this epoch's home. Inert history NOT peered: wave-9 (s*),
-#     wave-10 (t*), wave-11 (u*), wave-12 (v1-v7), wave-13 losers kept for
-#     reference only. runs/sweep3 is inert 582-format — never resume, never peer.
-#     Only wave-14 arms + the resuming donor s4-y3 peer.
+#     wave-10 (t*), wave-11 (u*), wave-12 (v1-v7), wave-13 (w*), wave-14 losers
+#     kept for reference only. runs/sweep3 is inert 582-format — never resume,
+#     never peer. Only wave-15 arms + the resuming donor s4-y3 peer.
 #
-# Arm roles (all lr 1e-4, n-steps/batch 1024, mix 0.40/0.40/0.20, past_k 8,
-# ent 0.03, all peers, all fork the champion w5-y3-gamma @~748M, unless noted):
+# Arm roles (all lr 1e-4->0, gamma 0.999, n-steps/batch 1024, mix 0.40/0.40/0.20,
+# past_k 8, ent 0.03, all peers, all fork the champion x5 @~894M, unless noted):
 #   s4-y3          RESUME the donor: constant lr, never decayed, never forked,
-#                  gamma 0.99. The fork material for the cross-lineage arms.
-#   x1-champ       THE wave-13 winning recipe re-armed on the CHAMPION's own
-#                  line: fork the champion (w5-y3-gamma) + decay -> 0 + gamma
-#                  0.997. Control against x2 (same recipe, cross-lineage) and
-#                  the champion-line anchor of the gamma sweep.
-#   x2-y3-g997     Cross-lineage @ gamma 0.997: fork the donor's pinned @750M +
-#                  decay -> 0 + gamma 0.997. Reproduces w5's EXACT recipe from
-#                  the advanced donor state; the factory continuity + center of
-#                  the cross-lineage gamma sweep.
-#   x3-y3-g999     Cross-lineage @ gamma 0.999: x2 but gamma 0.999. THE
-#                  combination bet — the winning lineage carried to the higher
-#                  gamma the champion-line board pointed at. Presumptive next
-#                  champion.
-#   x4-y3-g9995    Cross-lineage @ gamma 0.9995: x2 but gamma 0.9995, bracketing
-#                  the peak just below the 1.0 that hurt. x2/x3/x4 triangulate
-#                  the gamma curve (0.997/0.999/0.9995) INSIDE the winning
-#                  cross-lineage, un-confounded from lineage.
-#   x5-champ-g999  Champion line @ gamma 0.999: fork the champion + decay +
-#                  gamma 0.999. The clean lineage control against x3 (same gamma
-#                  0.999, champion vs cross-lineage) — re-confirms cross-
-#                  lineage's edge at the new gamma.
-#   y6-mc-return   *** CRAZY #1: the pure Monte-Carlo return. *** fork champion +
-#                  decay + gamma 1.0 AND gae-lambda 1.0 together. w6-gamma-max
-#                  tried gamma 1.0 with lambda 0.95 (GAE still bootstraps through
-#                  the value net) and it slightly hurt; setting lambda 1.0 too
-#                  makes the advantage the ACTUAL full-game return with zero
-#                  bootstrapping — the true limit of the gamma breakthrough.
-#                  Value learning may destabilize with no bootstrap horizon —
-#                  watch value_loss/explained_variance/approx-kl; entropy toward
-#                  ~0.1 nats = kill it. gamma/lambda never touch the exported net.
-#   y7-placement   *** CRAZY #2: the placement terminal reward. *** fork champion
-#                  + decay + gamma 0.999 + --terminal-reward placement. The whole
-#                  sweep has used winloss (+1/-1); placement maps finish rank
-#                  onto [+1, +1/3, -1/3, -1], a denser gradient that values 2nd
-#                  over last. Combined with high gamma it propagates a finer
-#                  finish-position signal through the whole game (does teaching
-#                  "climb from 4th to 2nd" build better positioning than pure
-#                  win/lose?). EVAL STAYS WINLOSS, so eval/mean_reward and the
-#                  exported artifact stay comparable to every other arm.
+#                  gamma 0.99. The fork material for the cross-lineage control.
+#   z1-champ-cont  THE presumptive champion: fork x5 (already @0.999) + fresh lr
+#                  decay 1e-4 -> 0 + gamma 0.999. A pure, value-continuous
+#                  continuation of the winning line — zero gamma shift. The
+#                  main bet and the champion-line anchor for the lever arms.
+#   z2-y3-g999     Cross-lineage control: fork the donor's pinned @900M + decay +
+#                  gamma 0.999. Re-tests lineage at the settled gamma from an
+#                  advanced donor state — does cross-lineage ever catch up, or is
+#                  champion-line's value-continuity edge permanent? The hedge.
+#   z3-nsteps      Lever: z1 but n-steps 2048 / batch 2048. Longer rollouts cut
+#                  GAE truncation bias and gradient variance — the fix for the
+#                  harder value fitting at gamma 0.999. Champion line, @0.999.
+#   z4-deep-league Lever: z1 but league-past-k 16 and mix 0.35/0.45/0.20 (deeper,
+#                  more PAST-weighted pool). More diverse opponents -> a more
+#                  robust champion. Champion line, @0.999.
+#   z5-vf          Lever: z1 but vf-coef 1.0 (default 0.5). High gamma stresses
+#                  the critic (y6 showed removing the bootstrap hurts); give the
+#                  value loss more weight so explained_variance stays high and
+#                  advantages are better estimated. Champion line, @0.999.
+#   z6-soup        *** CRAZY #1: the model soup. *** A fresh clone warm-started
+#                  (--init-policy-from) from the UNIFORM WEIGHT-SPACE AVERAGE of
+#                  the three shared-init cross-lineage arms x2/x3/x4 (all fork
+#                  the donor @750M, spanning the gamma peak 0.997/0.999/0.9995),
+#                  then trained with GENTLE lr 3e-5 -> 0 (protect the soup while
+#                  the fresh value head re-learns) + gamma 0.999. Souping only
+#                  works among fine-tunes of a shared checkpoint (they share a
+#                  loss basin); x2/x3/x4 are exactly that. Does the average of
+#                  the gamma sweep sit in a flatter/better minimum than any
+#                  single gamma? scripts/make_soup.py builds the .bin in prepare.
+#   z7-exploiter   *** CRAZY #2: the targeted exploiter. *** fork x5 + gamma
+#                  0.999 + league-mix 0.70/0.10/0.20 — train almost entirely
+#                  against LATEST (the current champion/self), à la AlphaStar
+#                  exploiters, keeping the load-bearing 0.20 bot share and
+#                  cutting PAST to 0.10. Deliberately overfits the h2h opponent.
+#                  If it wins the h2h decisively AND holds vs hard bots it is a
+#                  real champion; if it wins h2h but tanks --compare it overfit,
+#                  which the decider will catch. gamma 0.999, champion line.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -144,18 +145,19 @@
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
-#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (w5-y3-gamma)
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (x5-champ-g999)
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   TOTAL_TIMESTEPS=900000000  CUMULATIVE per-arm target (forks from ~748-750M
-#                              gain ~+150M; resumes never overshoot)
-#   FORK_FROM=runs/sweep4/w5-y3-gamma/best_model   champion fork point + baseline
-#   Y3_FORK=runs/sweep4/s4-y3/ckpt_750000000_steps   pinned donor fork stem
-#   EVAL_OPPONENT=runs/sweep4/wave14-eval-opponent.bin
+#   TOTAL_TIMESTEPS=1050000000 CUMULATIVE per-arm target (forks from ~894M
+#                              gain ~+156M; resumes never overshoot)
+#   FORK_FROM=runs/sweep4/x5-champ-g999/best_model   champion fork point + baseline
+#   Y3_FORK=runs/sweep4/s4-y3/ckpt_900000000_steps   pinned donor fork stem
+#   EVAL_OPPONENT=runs/sweep4/wave15-eval-opponent.bin
 #                              frozen eval opponent, exported from FORK_FROM on
 #                              first launch (selects best_model; par ~ -0.50)
-#   BASELINE=w5-y3-gamma       run-dir name of the frozen --h2h opponent
+#   SOUP=runs/sweep4/soup-x234.bin   averaged x2/x3/x4 policy, built in prepare
+#   BASELINE=x5-champ-g999     run-dir name of the frozen --h2h opponent
 #   SWEEP_DIR=runs/sweep4      root for the per-variant run dirs
 #   NET_WIDTH=128              must match the fork checkpoints' hidden width
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
@@ -171,12 +173,12 @@ cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep4}
-FORK_FROM=${FORK_FROM:-$SWEEP_DIR/w5-y3-gamma/best_model}
-Y3_FORK=${Y3_FORK:-$SWEEP_DIR/s4-y3/ckpt_750000000_steps}
-EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave14-eval-opponent.bin}
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-900000000}
-WAVE_STEPS=${WAVE_STEPS:-300000000}   # fresh-clone arms' cumulative target (none this wave; generic machinery kept)
-CLONE_192=${CLONE_192:-$SWEEP_DIR/clone-192.bin}   # retired wide-net warm start (no clone arm in wave 14)
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/x5-champ-g999/best_model}
+Y3_FORK=${Y3_FORK:-$SWEEP_DIR/s4-y3/ckpt_900000000_steps}
+EVAL_OPPONENT=${EVAL_OPPONENT:-$SWEEP_DIR/wave15-eval-opponent.bin}
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-1050000000}
+WAVE_STEPS=${WAVE_STEPS:-300000000}   # fresh-clone arms' cumulative target (the z6-soup crazy arm)
+SOUP=${SOUP:-$SWEEP_DIR/soup-x234.bin}   # model soup: averaged x2/x3/x4 policy, built in prepare (z6-soup warm start)
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
@@ -184,11 +186,11 @@ NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
-# The frozen --h2h opponent: the wave-13 champion's best_model — the exact
+# The frozen --h2h opponent: the wave-14 champion's best_model — the exact
 # weights the fork arms started from and the eval opponent was exported from.
-# w5-y3-gamma no longer trains (its lr annealed to 0), so this yardstick never
+# x5-champ-g999 no longer trains (its lr annealed to 0), so this yardstick never
 # moves. It is also the new embedded Expert.
-BASELINE=${BASELINE:-w5-y3-gamma}
+BASELINE=${BASELINE:-x5-champ-g999}
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -213,10 +215,11 @@ COMMON=(
 # `init` is "resume" (own dir; hard-error if it has no checkpoint), "fork"
 # (first launch --resume-from $FORK_FROM into a fresh dir), "fork=<stem>"
 # (first launch --resume-from that checkpoint stem instead), or "clone" (first
-# launch is a FRESH run warm-started from a behavior clone via --init-policy-from
-# — the crazy wide-net arm, whose --net-width/--init-policy-from live in its
-# extra flags and are ignored by the trainer on any later --resume-from). After
-# the first launch every arm resumes its OWN checkpoints.
+# launch is a FRESH run warm-started from a policy .bin via --init-policy-from
+# — the crazy model-soup arm z6, whose --init-policy-from lives in its extra
+# flags and is ignored by the trainer on any later --resume-from; the soup is
+# 128-wide so --net-width comes from COMMON). After the first launch every arm
+# resumes its OWN checkpoints.
 #
 # `pop` is "peers" (the launch loop appends --league-peers with every OTHER
 # variant's league dir) or "solo" (no peers).
@@ -224,14 +227,14 @@ COMMON=(
 # League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 # The 0.20 bot share is load-bearing (wave-7 q6 faceplant) — do not cut it.
 VARIANTS=(
-"s4-y3|804|resume|peers|The donor lineage: constant lr 1e-4 + batch 1024, gamma 0.99, never decayed, never forked — compounding since the obs-600 reset (now @750M, on to 900M). The three cross-lineage arms (x2/x3/x4) fork a fresh copy of its pinned @750M state and add decay + a swept gamma. Keeping it alive is what gives every wave an independent, never-annealed history to cross-decay — and it produced wave 13's champion (w5-y3-gamma).|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"x1-champ|1401|fork|peers|THE wave-13 winning recipe re-armed on the CHAMPION's own line: fork the champion (w5-y3-gamma) + lr decay 1e-4 -> 0 + gamma 0.997 + normal ent (0.03). Control against x2 (same recipe, cross-lineage) and the champion-line anchor of the gamma sweep. Collapse guard: entropy diving toward ~0.1 nats = kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.997 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"x2-y3-g997|1402|fork=$SWEEP_DIR/s4-y3/ckpt_750000000_steps|peers|Cross-lineage @ gamma 0.997: fork the never-annealed donor's pinned @750M state + lr decay -> 0 + gamma 0.997 + normal ent. Reproduces w5's EXACT winning recipe from the advanced donor state — the factory continuity AND the center of the cross-lineage gamma sweep (x2/x3/x4 = 0.997/0.999/0.9995).|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.997 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"x3-y3-g999|1403|fork=$SWEEP_DIR/s4-y3/ckpt_750000000_steps|peers|Cross-lineage @ gamma 0.999: x2 but gamma 0.999 (0.999^50 ~= 0.95 vs 0.997^50 ~= 0.86). THE combination bet — the winning lineage carried to the higher gamma the wave-13 champion-line board pointed at (w2-gamma999 was 2nd there). Presumptive next champion. Watch value_loss/approx-kl — less discounting is harder to fit.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"x4-y3-g9995|1404|fork=$SWEEP_DIR/s4-y3/ckpt_750000000_steps|peers|Cross-lineage @ gamma 0.9995: x2 but gamma 0.9995, bracketing the peak just below the gamma 1.0 that HURT in wave 13 (w6-gamma-max h2h 24.0 < w2-gamma999 28.5). x2/x3/x4 triangulate the gamma curve INSIDE the winning cross-lineage so the peak is chosen from a measured curve, un-confounded from lineage.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.9995 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"x5-champ-g999|1405|fork|peers|Champion line @ gamma 0.999: fork the champion (w5-y3-gamma) + decay -> 0 + gamma 0.999 + normal ent. The clean LINEAGE control against x3 (same gamma 0.999, champion vs cross-lineage) — the wave-13 decider could not separate lineage from gamma, so this pins the lineage effect at the new gamma. If x3 > x5, cross-lineage's edge holds at 0.999.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"y6-mc-return|1406|fork|peers|CRAZY #1 — the pure Monte-Carlo return. fork the champion + decay + normal ent + gamma 1.0 AND gae-lambda 1.0 together. w6-gamma-max tried gamma 1.0 with lambda 0.95 (GAE still bootstraps through the value net) and it slightly hurt; setting lambda 1.0 too makes the advantage the ACTUAL full-game return with zero bootstrapping — the true limit of the gamma breakthrough. x3 is the discounted control. Value learning may destabilize with no bootstrap horizon — watch value_loss/explained_variance/approx-kl; entropy toward ~0.1 nats = kill it. gamma/lambda never touch the exported net.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 1.0 --gae-lambda 1.0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"y7-placement|1407|fork|peers|CRAZY #2 — the placement terminal reward. fork the champion + decay + normal ent + gamma 0.999 + --terminal-reward placement. The whole sweep has used winloss (+1/-1); placement maps finish rank onto [+1, +1/3, -1/3, -1], a denser gradient that values 2nd over last. Combined with high gamma it propagates a finer finish-position signal through the whole game — does teaching 'climb from 4th to 2nd' build better positioning than pure win/lose? x3 is the winloss control at the same gamma. EVAL STAYS WINLOSS, so eval/mean_reward and the exported artifact stay comparable to every other arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --terminal-reward placement --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"s4-y3|804|resume|peers|The donor lineage: constant lr 1e-4 + batch 1024, gamma 0.99, never decayed, never forked — compounding since the obs-600 reset (now @900M, on to 1050M). The cross-lineage control z2 forks a fresh copy of its pinned @900M state and adds decay + gamma 0.999. Keeping it alive is what gives every wave an independent, never-annealed history to cross-decay.|--learning-rate 1e-4 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"z1-champ-cont|1501|fork|peers|THE presumptive champion: fork x5-champ-g999 (already trained at gamma 0.999) + fresh lr decay 1e-4 -> 0 + gamma 0.999 + normal ent (0.03). A pure, value-CONTINUOUS continuation of the winning line — zero gamma shift, so the forked critic already speaks the target return scale. The main bet and the champion-line anchor the lever arms (z3/z4/z5) vary one knob from. Collapse guard: entropy diving toward ~0.1 nats = kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"z2-y3-g999|1502|fork=$SWEEP_DIR/s4-y3/ckpt_900000000_steps|peers|Cross-lineage control / hedge: fork the never-annealed donor's pinned @900M state + lr decay -> 0 + gamma 0.999 + normal ent. Wave 14 showed champion-line beat cross-lineage at gamma 0.999 (x5 > x3), likely on value-head gamma-continuity (the donor was trained at 0.99, a big shift to 0.999). This re-tests it from a MORE-advanced donor state: does cross-lineage catch up with more donor data, or is champion-line's edge permanent?|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"z3-nsteps|1503|fork|peers|LEVER (rollout length): z1 but n-steps 2048 / batch 2048 (2x). At gamma 0.999 the effective horizon is long and GAE truncates the return at n-steps; doubling the rollout cuts truncation bias and halves gradient variance per update — the direct fix for the harder value fitting the high gamma demands. Champion line, fork x5, gamma 0.999. If it clears z1 on both boards, longer rollouts are the free lunch at high gamma.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 2048 --batch-size 2048 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"z4-deep-league|1504|fork|peers|LEVER (opponent diversity): z1 but league-past-k 16 (deeper PAST pool) and mix 0.35,0.45,0.20 (more PAST-weighted, load-bearing 0.20 bots kept). A more diverse set of past selves should build a champion that is robust rather than tuned to the few latest snapshots — potentially a higher, less brittle h2h. Champion line, fork x5, gamma 0.999.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 1024 --batch-size 1024 --league-mix 0.35,0.45,0.20 --league-past-k 16"
+"z5-vf|1505|fork|peers|LEVER (value emphasis): z1 but vf-coef 1.0 (default 0.5). Gamma 0.999 stresses the critic and y6-mc-return showed that REMOVING the bootstrap hurts, so the value net matters — give the value loss 2x weight so explained_variance stays high and the advantages PPO clips on are better estimated. Champion line, fork x5, gamma 0.999. Watch that policy entropy is not crowded out.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --vf-coef 1.0 --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"z6-soup|1506|clone|peers|CRAZY #1 — the model soup. A FRESH clone warm-started (--init-policy-from) from the UNIFORM WEIGHT-SPACE AVERAGE of the three shared-init cross-lineage arms x2/x3/x4 (all fork the donor @750M, differing only in gamma 0.997/0.999/0.9995 — exactly the fine-tunes-of-a-shared-checkpoint setting where model soups sit in one loss basin). Trained with GENTLE lr 3e-5 -> 0 (protect the averaged policy while the fresh value head re-learns, the s3-gentle recipe) + gamma 0.999. Does the average across the gamma sweep land in a flatter/better minimum than any single gamma? scripts/make_soup.py builds soup-x234.bin in --prepare. Fresh run: 300M (WAVE_STEPS) budget, not the 1050M cumulative target.|--learning-rate 3e-5 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $SOUP --n-steps 1024 --batch-size 1024 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"z7-exploiter|1507|fork|peers|CRAZY #2 — the targeted exploiter. fork x5 + gamma 0.999 + league-mix 0.70,0.10,0.20: train almost entirely against LATEST (the current champion/self), à la AlphaStar exploiters, keeping the load-bearing 0.20 bot share and cutting PAST to 0.10. Deliberately OVERFITS the h2h opponent to squeeze the promotion metric. If it wins the h2h decisively AND holds vs hard bots (--compare) it is a real champion; if it wins h2h but tanks --compare it overfit, which the wave-end decider catches. Champion line.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 1024 --batch-size 1024 --league-mix 0.70,0.10,0.20 --league-past-k 8"
 )
 
 
@@ -348,6 +351,27 @@ prepare() {
         "$PY" scripts/export_policy.py --model "$FORK_FROM" \
             --out "$EVAL_OPPONENT" --golden "${EVAL_OPPONENT}.golden.json"
     fi
+
+    # Build the z6-soup warm start: the uniform weight-space average of the three
+    # shared-init cross-lineage arms x2/x3/x4 (all fork the donor @750M, spanning
+    # the gamma peak). Idempotent; only their best_model exports are read, so it
+    # is safe to rebuild. Skipped (with a warning) if an input is missing —
+    # z6-soup then hard-errors at launch on the absent --init-policy-from path.
+    if [[ ! -f $SOUP ]]; then
+        local soup_in=(x2-y3-g997 x3-y3-g999 x4-y3-g9995) missing=0 m
+        for m in "${soup_in[@]}"; do
+            [[ -f $SWEEP_DIR/$m/best_model.zip ]] || { echo "soup input missing: $SWEEP_DIR/$m/best_model.zip" >&2; missing=1; }
+        done
+        if [[ $missing == 0 ]]; then
+            echo "building model soup: mean(x2,x3,x4) -> $SOUP"
+            "$PY" scripts/make_soup.py --out "$SOUP" \
+                --model "$SWEEP_DIR/x2-y3-g997/best_model" \
+                --model "$SWEEP_DIR/x3-y3-g999/best_model" \
+                --model "$SWEEP_DIR/x4-y3-g9995/best_model"
+        else
+            echo "skipping soup build (missing inputs); z6-soup will error at launch" >&2
+        fi
+    fi
 }
 
 list_variants() {
@@ -363,7 +387,7 @@ list_variants() {
 }
 
 status() {
-    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (v7-gamma);
+    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (x5-champ-g999);
     # win_rate = (best+1)/2, par ~ -0.50. Negative values are normal.
     for i in "${!VARIANTS[@]}"; do
         local name dir pid state ckpt best when
@@ -415,7 +439,7 @@ compare() {
 }
 
 # RELATIVE ranking: each variant in seat 0 against three copies of the frozen
-# champion (v7-gamma best_model) — the primary ranking. Above-par here ==
+# champion (x5-champ-g999 best_model) — the primary ranking. Above-par here ==
 # genuinely past the champion. Measure the mirror par (the self-baseline row)
 # before reading small edges; expect ~25 +/- 2%. At wave end, run the FULL
 # tiebreak: direct matches between the leaders + a fresh-seed 800-game h2h
@@ -459,7 +483,7 @@ case "${1:-}" in
     --stop)    stop_all;      exit 0 ;;
     --compare) compare;       exit 0 ;;
     --h2h)     h2h;           exit 0 ;;
-    --prepare) prepare; echo "wave-14 eval opponent ready in $SWEEP_DIR"; exit 0 ;;
+    --prepare) prepare; echo "wave-15 eval opponent ready in $SWEEP_DIR"; exit 0 ;;
 esac
 
 # Which variants to launch (1-based indices; default all).
@@ -474,7 +498,7 @@ fi
 [[ $DRY_RUN == 1 ]] || prepare
 
 echo "fork point     : $FORK_FROM (fork arms' first launch only)"
-echo "donor fork stem: $Y3_FORK (w5-y3-gamma's first launch only)"
+echo "donor fork stem: $Y3_FORK (z2-y3-g999's first launch only)"
 echo "eval opponent  : $EVAL_OPPONENT (frozen; selects best_model)"
 echo "h2h baseline   : $SWEEP_DIR/$BASELINE/best_model"
 echo "target         : $TOTAL_TIMESTEPS cumulative timesteps per variant"
@@ -512,19 +536,19 @@ for n in "${SELECTED[@]}"; do
         continue
     fi
 
-    # One-time wave-14 migration for any arm continuing from an earlier wave
-    # (the resuming donor s4-y3): its stored best bar was earned vs the wave-13
-    # eval opponent (the frozen v7-gamma) and is not comparable with the new
-    # frozen champion (w5-y3-gamma). Set the old best aside, drop the bar, and
+    # One-time wave-15 migration for any arm continuing from an earlier wave
+    # (the resuming donor s4-y3): its stored best bar was earned vs the wave-14
+    # eval opponent (the frozen w5-y3-gamma) and is not comparable with the new
+    # frozen champion (x5-champ-g999). Set the old best aside, drop the bar, and
     # let the new metric re-earn best_model.zip. Fresh fork arms have no best bar
     # yet, so they skip this. The marker makes re-runs a no-op.
     if [[ $DRY_RUN != 1 && -f $dir/best_mean_reward.json \
-          && ! -f $dir/.wave14-eval-opponent ]]; then
-        [[ -f $dir/best_model.zip && ! -f $dir/best_model.wave13-vs-champion.zip ]] \
-            && cp "$dir/best_model.zip" "$dir/best_model.wave13-vs-champion.zip"
+          && ! -f $dir/.wave15-eval-opponent ]]; then
+        [[ -f $dir/best_model.zip && ! -f $dir/best_model.wave14-vs-champion.zip ]] \
+            && cp "$dir/best_model.zip" "$dir/best_model.wave14-vs-champion.zip"
         rm "$dir/best_mean_reward.json"
-        touch "$dir/.wave14-eval-opponent"
-        echo "migrated $name to the wave-14 eval metric (old best kept as best_model.wave13-vs-champion.zip)"
+        touch "$dir/.wave15-eval-opponent"
+        echo "migrated $name to the wave-15 eval metric (old best kept as best_model.wave14-vs-champion.zip)"
     fi
 
     # Per-arm cumulative target. Fork/resume arms aim at TOTAL_TIMESTEPS (the
@@ -631,9 +655,9 @@ cat <<EOF
 
 Monitor:
   ./scripts/sweep_selfplay.sh --status     # best= is vs the frozen champion: win = (best+1)/2, par ~ -0.50
-  tail -f $SWEEP_DIR/w1-champ-gamma/train.log
+  tail -f $SWEEP_DIR/z1-champ-cont/train.log
   $PY -m tensorboard.main --logdir $SWEEP_DIR      # league/peer_size, eval/mean_reward
-  $PY scripts/run_report.py $SWEEP_DIR/w1-champ-gamma
+  $PY scripts/run_report.py $SWEEP_DIR/z1-champ-cont
 Rank the variants:
   ./scripts/sweep_selfplay.sh --compare    # absolute: vs 3x hard bots (reporting; saturated)
   ./scripts/sweep_selfplay.sh --h2h        # relative: vs 3x the frozen $BASELINE best (primary ranking)
