@@ -279,6 +279,162 @@ strategy (a human, or a Phase-2/3 learned agent) could still find a blind spot. 
 further we need a richer strategy space (Phase 2 macro-actions, with this champion as the
 DAgger teacher) or play-time search (Phase 3).
 
+---
+
+## 3.5 The macro-action rebuild and the Great Reset (2026-07-25/26)
+
+*Everything in Section 3 above ends here as a self-consistent record — but the numbers in
+it (including the "60% macro PPO" milestone) were measured on a macro action space that was
+about to be torn down and a training loop that was about to be declared unsound. Read them
+as history, not as the current baseline.*
+
+**The macro menus were rebuilt around quantity ladders (2026-07-25), `N_ACTIONS = 26`.**
+The first macro space (the one that produced the 2026-07-13 milestone) was replaced by a
+cleaner design that settled the shapes of the two menus on principle:
+
+- **Build is an absolute count** — "build the *n* cheapest cities" for n = 0..6 (ids 8–14).
+  Cities are interchangeable; one more is one more income step wherever it sits.
+- **Buy is a bitmask over plant slots** (ids 15–22): choose *which plants you intend to
+  fire*, then top each up to a firing's worth counting current stock. Declaring the subset
+  is what makes a purchase well-defined on a *shared* fuel pool ("top plant A up" is
+  ambiguous when B also burns coal; "these plants fire" fixes the requirement as the sum
+  over the declared set). Because it tops up rather than adds, the full-rack mask reproduces
+  the champion's buy bit-for-bit — so no `BUY_DEFAULT` escape hatch is needed, and this is
+  the one phase where the rebuild turned a *constant* imitation label into a *varied* one
+  (the teacher spreads across all 8 masks).
+- **Powering has no macro at all** — `Bureaucracy`, fuel splits, and resource discards are
+  auto-resolved with the heuristic (the teacher fired the optimal subset 100% of the time;
+  "power nothing" was legal everywhere and correct nowhere). Removing it cut episodes ~18%
+  (52 → 43 macro-decisions per seat).
+- **No `*_DEFAULT` ids remain**; both ladders reproduce the champion bit-exactly on their
+  own (Gate 0), and `legal_macros` dedups so a given intent always maps to the same id.
+  Stockpiling is deliberately unrepresentable (CMA-ES had pinned `stockpile_rounds` at its
+  floor). New format epoch: **PGRLPOL6** (the magic is a *layout* guard — bump it whenever
+  ids are renumbered even at unchanged `N_ACTIONS`, so a dims-only check can't silently load
+  a scrambled action map).
+
+**The Great Reset (2026-07-26): all prior RL *findings* are void, not just the checkpoints.**
+An audit concluded the earlier sweeps (waves 1–2) had run against broken rules, a broken
+environment, and a mis-mapped action space, so their conclusions describe a system that no
+longer exists. Explicitly *not* evidence any more: "big batch beats base 39% vs 26%",
+"constant lr helps", "entropy 0.10 collapses a converged policy", "a mostly-historical
+league regresses", "the embedded expert wins ~30% vs normal", and every pre-reset AlphaZero
+/ curriculum / shaping conclusion. The danger was operational: those numbers had been baked
+into the sweep script's `COMMON` block, so an unvalidated recipe was being applied silently
+to *every* arm of a supposedly controlled comparison. What survived the reset is
+methodology, not results: measure jitter-0, fixed-seed, ≥600 games; `--init-policy-from`
+leaves the value head random; a clone of `hard` saturates an eval against `normal`. Training
+restarts from a fresh **behavior clone** of the evolved-hard champion.
+
+## 3.6 The self-play sweep grind (waves 3–15, 2026-07-28 → 2026-08-26)
+
+With the reset, the project settled into a disciplined loop: `sweep_selfplay.sh` runs 8
+parallel arms, each forked from the *pinned* checkpoint of the reigning champion, trains a
+growing step budget (50M → ~1.05B cumulative over the waves), and the wave winner becomes
+the next fork point *and* the next embedded Expert. This has now run **thirteen waves** and
+is the source of every current result.
+
+**How arms are ranked (this took several waves to get right).** The `--compare` yardstick
+(arm in seat 0 vs 3× `hard`) **saturates** once arms pass ~68% and can even *anti-correlate*
+with true strength — so from wave 7 on, checkpoint selection and ranking use a **frozen
+copy of the reigning champion** as the eval opponent (`--eval-opponent`), plus a head-to-head
+`--h2h` (arm vs 3× the frozen champion). When the two boards disagree at the top, the wave is
+decided by a **full tiebreak**: direct arm-vs-arm matches in both seat orders plus a
+fresh-seed 800-game h2h. Every champion since has had to win that tiebreak, not just top one
+board.
+
+**The recipe that keeps winning: cross-lineage decay.** Fork the *never-annealed* "y3" donor
+lineage (a constant-lr arm that is deliberately never decayed and kept alive as pure fork
+material) and finetune it with **lr decay → 0**. This "cross-lineage decay" factory won
+waves 7, 8, 10, and 13, and *decay in some form* has produced ~11 straight champions. The
+mechanism: the donor banks raw exploration at constant lr; a fresh fork then anneals it to a
+sharp, converged policy whose approx-KL falls to ~0. The eval peak reliably lands in the
+**back third** of each 150M budget, exactly where the lr finishes annealing — which is why
+the budget was kept at 150M/wave rather than cut to 100M.
+
+**The gamma breakthrough (wave 12).** Reward is terminal-only (win/loss at game end) over
+~50 macro-decisions. At the sweep-long `gamma 0.99`, that finish is discounted to
+0.99^50 ≈ 0.61 by turn 1 — the early game barely feels the outcome. Raising gamma
+propagates the finish backward: 0.997 → ~0.86, **0.999 → ~0.95**. Sweeping it found a clean
+inverted-U with the **peak at 0.999** (1.0 undiscounted hurts). This was the single biggest
+lever of the whole grind, and — crucially — **gamma is training-only; it never touches the
+exported net**, so gamma-varied arms stay bit-faithfully exportable. Wave 14 added a subtle
+finding: at the peak gamma the **lineage advantage reversed** (champion-line beat
+cross-lineage), best explained as *value-head gamma-continuity* — re-arming at a new gamma
+forces the critic to re-learn the return scale, so fork the checkpoint whose training gamma
+is *closest* to the target.
+
+**Other levers, settled:**
+- **Population play pays (wave 6).** `--league-peers` lets the 8 arms train against each
+  other's evolving snapshots. The clean control (identical recipe, no peers) never left its
+  fork point; the peered twin beat it on both metrics. Peers on by default since.
+- **The 0.20 bot anchor is load-bearing.** Every attempt to drop bots from the opponent mix
+  (BOTS=0, or trading half the anchor for more peers) landed at h2h par and below 50% vs
+  hard — across *four* waves. The 20% heuristic share is what keeps self-play grounded.
+- **Low entropy (ent-coef 0.015)** was validated as a champion-line lever (wave 11), after
+  three waves of "safe but never winning".
+- **Dead knobs (do not re-test):** entropy-UP (collapses a good policy, every time),
+  placement reward (neutral 4×), gentle-lr (turned out to be only a fresh-value-head
+  migration guard, not a real lever), a **wide net (192-wide)** (failed at 300M — the
+  plateau is not capacity-bound), target-KL, and tight clip.
+
+**Observation growth without invalidation (2026-08-06).** Obs grew 582 → 600 with
+**section 22, "the end-game race"** (18 features: per-seat trigger progress and saturating
+deficits, powerable-right-now for every seat — the exact quantity `finish_ranks` ranks by —
+self last-cities-powered, powered margin, and can-finish-now cost from the same greedy walk
+`BUILD_n` uses). The key infrastructure lesson: **append-only obs growth is checkpoint-safe.**
+The policy header carries `obs_size`; `migrate_policy_obs.py` zero-pads the first-layer rows
+(and the golden `obs`) to the new width for bit-identical outputs, so the embedded champion
+and every fork warm-started right through the change. Only a *reordering* of obs features
+would invalidate checkpoints.
+
+**The succession of embedded Experts** (each the wave winner, PGRLPOL6, net-width 128, with
+its matching value net re-exported so Phase-3 search leaf values track the policy):
+
+| Date | Embedded | Wave | Recipe headline | Native vs 3× hard |
+|---|---|---|---|---|
+| 2026-07-28 | w3-low-lr | 3 | freeze policy until random value head means something | ~52% |
+| 2026-07-31 | y4-lr-decay | 4 | lr decay → 0 (the finisher) | 76% |
+| 2026-08-01 | z3-batch-decay | 5 | batch 1024 + decay | 68% |
+| 2026-08-03 | p2-finish | 6 | population play + decay | 74% |
+| 2026-08-05 | q4-y3-finish | 7 | **cross-lineage decay** (donor fork + decay) | 78% |
+| 2026-08-09 | s3-gentle | 9 | first obs-600 champion (gentle warm-start) | 80% |
+| 2026-08-12 | t3-y3-finish | 10 | cross-lineage decay, post-reset | 86% |
+| 2026-08-15 | u4-sharp-finish | 11 | champion-line decay + low entropy | 80% |
+| 2026-08-18 | v7-gamma | 12 | **gamma 0.997** | 84% |
+| 2026-08-23 | w5-y3-gamma | 13 | cross-lineage decay + gamma 0.997 | 88% |
+| **2026-08-26** | **x5-champ-g999** | **14** | **champion-line decay + gamma 0.999** | **84%** |
+
+(The native 50-game harness carries ±~6–7pp noise and is a sanity check only; wave winners
+are decided by the torch `--compare` + full tiebreak, not this number. x5-champ-g999's 84%
+is *below* the outgoing w5's 88%, but x5 won the meaningful boards — it led the wave-14 h2h
+vs frozen w5 and won the fresh-seed decider — the native dip being the expected
+champion-line-vs-hard trade-off. Committed after the user tested it in-game.) **Wave 15**
+(gamma 0.999 locked; champion-line anchor + cross-lineage hedge + one-knob levers + a
+weight-average "soup" and an exploiter probe) is configured and running toward ~1.05B steps.
+
+**Interpretability tooling (2026-08-26).** `analyze_policy.py` reads the Expert `.bin` and,
+numpy-only, reports what a net computes in *game terms*: an exact input→macro attribution
+Jacobian grouped by the 18 obs sections ("Build keys off self cities/plants/resources;
+Nominate off the plant market + opponent cities; Buy-Nothing is strongly −by money"), plus a
+`--compare` behavioral/attribution diff between two champions (valid because the lineage is a
+warm-started, index-aligned chain). First run showed wave 14's champion mostly re-tuned
+**opponent-cities** sensitivity of Build/Nominate — i.e. opponent-aware end-game build timing.
+
+## 3.7 Current state (2026-08-27)
+
+The deployed Expert bot is **x5-champ-g999** (the wave-14 winner), playing **Phase-3
+determinized MCTS-100 over macros** with this policy as prior and its exported value net for
+leaf evaluation. It is a *learned* agent, decisively the strongest in the project — it beats
+the ~50% evolved-hard champion head-to-head and every heuristic bot. Across thirteen sweep
+waves the single throughline is that the wins came from **training-loop hygiene, not new
+algorithms**: cross-lineage decay, the right gamma, a load-bearing bot anchor, population
+play, rigorous frozen-champion evaluation, and append-only obs growth. The self-play-doesn't-
+bootstrap verdict of Section 3 is not contradicted — this loop is *frozen-opponent /
+league / bot-anchored* finetuning of a competent clone, not open-ended self-play, and the
+0.20 bot anchor is exactly what keeps it grounded. The open frontier is unchanged and
+untested: whether any of this beats strong **humans** (no automated proxy exists).
+
 ## 4. Lessons that survived everything
 
 1. **Check the action interface before the algorithm.** One encoding bug (1 fuel/turn)
@@ -297,7 +453,21 @@ DAgger teacher) or play-time search (Phase 3).
    (relative). The curriculum designed to soften it turned out to make the game *harder*.
 6. **Long-horizon primitive-action credit assignment is the recurring villain.** ~600
    decisions, one win/loss bit, four seats. PPO, AZ, and BC all broke against this same
-   wall in different ways.
+   wall in different ways. (The macro rebuild — ~50 decisions/game — is what finally let
+   PPO learn; every post-reset gain lives on that shorter horizon.)
+7. **The eval opponent must not saturate.** `--compare` vs `hard` tops out and can *invert*
+   the true ranking once arms pass ~68%; checkpoint selection then tracks eval noise. The
+   fix that stuck: eval against a *frozen copy of the reigning champion*, and decide close
+   waves by a full tiebreak (direct matches in both seat orders + a fresh-seed 800-game h2h),
+   never by one 200-game board.
+8. **The improvements came from training-loop hygiene, not new algorithms.** Cross-lineage
+   decay (fork a never-annealed donor, anneal lr → 0), the right discount (gamma 0.999 to
+   propagate a terminal reward across ~50 macros), population play (arms in a shared league),
+   and a load-bearing 0.20 bot anchor each moved the needle; entropy-up, placement reward,
+   gentle-lr, a wider net, and dropping the bot anchor each did not. Gamma is training-only,
+   so it never costs deployability.
+9. **Append-only observation growth is checkpoint-safe.** Zero-padding the first layer to a
+   wider obs gives bit-identical outputs; only *reordering* features invalidates a policy.
 
 ---
 
