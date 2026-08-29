@@ -409,9 +409,31 @@ its matching value net re-exported so Phase-3 search leaf values track the polic
 are decided by the torch `--compare` + full tiebreak, not this number. x5-champ-g999's 84%
 is *below* the outgoing w5's 88%, but x5 won the meaningful boards — it led the wave-14 h2h
 vs frozen w5 and won the fresh-seed decider — the native dip being the expected
-champion-line-vs-hard trade-off. Committed after the user tested it in-game.) **Wave 15**
-(gamma 0.999 locked; champion-line anchor + cross-lineage hedge + one-knob levers + a
-weight-average "soup" and an exploiter probe) is configured and running toward ~1.05B steps.
+champion-line-vs-hard trade-off. Committed after the user tested it in-game.)
+
+**Wave 15 (2026-08-29) — a NULL WAVE; the champion-continuation line has plateaued.**
+Gamma 0.999 locked; the arms were the champion-line anchor (z1), a cross-lineage hedge (z2),
+four one-knob levers (rollout length z3, deep league z4, value-emphasis z5, exploiter mix
+z7), and a weight-average "soup" (z6). Seven arms reached 1.05B; z6-soup stalled at 190M.
+**Nothing beat the incumbent x5-champ-g999.** The two arms that flickered above h2h par —
+z3-nsteps (n-steps 2048, eval leader) and z7-exploiter (mix 0.70/0.10/0.20, h2h+compare
+leader) — both by <1.5pp, inside the ±5pp noise. A fresh-seed decider (88888, 400 games/dir)
+was decisive: **x5 dominates both** (x5→z3 29.8 vs z3→x5 25.5; x5→z7 26.5 vs z7→x5 22.0;
+best offense 28.15 AND best defense 23.75). The most telling arm was z1-champ-cont, the
+presumptive winner: a pure value-continuous fork of x5 that landed *below* par. **Forking x5
+and annealing at lr 1e-4 converges back to x5, not past it.** The Expert is unchanged.
+
+**Wave 16 (2026-08-29) — plateau-break, configured.** Since small one-knob continuations
+provably collapse back to x5, wave 16 swings bigger: 1 control (a1, the champion continuation
+baseline) + 5 *distinct, larger* perturbations each on a different axis — a2 lr restart 3e-4
+(SGDR basin-escape), a3 rollout 4096 (push wave 15's longest-lived lever), a4 relative
+shaping annealed off over 100M (different objective), a5 n-epochs 8 + target-kl 0.03
+(optimization intensity), a6 gae-lambda 0.98 (advantage horizon) — plus **two crazy
+weight-space soups**, the one config-only lever that reaches weights x5 cannot *train* its
+way to: z6 continues the gamma-sweep soup mean(x2,x3,x4), and z8 is a new
+champion-survivors soup mean(x5, z3, z7). The donor s4-y3 is retired to disk (no wave-16 arm
+forks it — cross-lineage keeps losing at the peak gamma). Eval opponent + h2h baseline stay
+x5 (unchanged champion), so continuing arms' best bars stay comparable.
 
 **Interpretability tooling (2026-08-26).** `analyze_policy.py` reads the Expert `.bin` and,
 numpy-only, reports what a net computes in *game terms*: an exact input→macro attribution
@@ -421,9 +443,10 @@ Nominate off the plant market + opponent cities; Buy-Nothing is strongly −by m
 warm-started, index-aligned chain). First run showed wave 14's champion mostly re-tuned
 **opponent-cities** sensitivity of Build/Nominate — i.e. opponent-aware end-game build timing.
 
-## 3.7 Current state (2026-08-27)
+## 3.7 Current state (2026-08-29)
 
-The deployed Expert bot is **x5-champ-g999** (the wave-14 winner), playing **Phase-3
+The deployed Expert bot is **x5-champ-g999** (the wave-14 winner, unbeaten through wave 15's
+decider), playing **Phase-3
 determinized MCTS-100 over macros** with this policy as prior and its exported value net for
 leaf evaluation. It is a *learned* agent, decisively the strongest in the project — it beats
 the ~50% evolved-hard champion head-to-head and every heuristic bot. Across thirteen sweep
