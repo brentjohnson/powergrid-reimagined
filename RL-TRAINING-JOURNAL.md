@@ -403,7 +403,8 @@ its matching value net re-exported so Phase-3 search leaf values track the polic
 | 2026-08-15 | u4-sharp-finish | 11 | champion-line decay + low entropy | 80% |
 | 2026-08-18 | v7-gamma | 12 | **gamma 0.997** | 84% |
 | 2026-08-23 | w5-y3-gamma | 13 | cross-lineage decay + gamma 0.997 | 88% |
-| **2026-08-26** | **x5-champ-g999** | **14** | **champion-line decay + gamma 0.999** | **84%** |
+| 2026-08-26 | x5-champ-g999 | 14 | champion-line decay + gamma 0.999 | 84% |
+| **2026-09-01** | **a3-nsteps4096** | **16** | **rollout length (n-steps 4096)** | *(pending user test)* |
 
 (The native 50-game harness carries ±~6–7pp noise and is a sanity check only; wave winners
 are decided by the torch `--compare` + full tiebreak, not this number. x5-champ-g999's 84%
@@ -423,17 +424,38 @@ best offense 28.15 AND best defense 23.75). The most telling arm was z1-champ-co
 presumptive winner: a pure value-continuous fork of x5 that landed *below* par. **Forking x5
 and annealing at lr 1e-4 converges back to x5, not past it.** The Expert is unchanged.
 
-**Wave 16 (2026-08-29) — plateau-break, configured.** Since small one-knob continuations
-provably collapse back to x5, wave 16 swings bigger: 1 control (a1, the champion continuation
-baseline) + 5 *distinct, larger* perturbations each on a different axis — a2 lr restart 3e-4
-(SGDR basin-escape), a3 rollout 4096 (push wave 15's longest-lived lever), a4 relative
-shaping annealed off over 100M (different objective), a5 n-epochs 8 + target-kl 0.03
-(optimization intensity), a6 gae-lambda 0.98 (advantage horizon) — plus **two crazy
-weight-space soups**, the one config-only lever that reaches weights x5 cannot *train* its
-way to: z6 continues the gamma-sweep soup mean(x2,x3,x4), and z8 is a new
-champion-survivors soup mean(x5, z3, z7). The donor s4-y3 is retired to disk (no wave-16 arm
-forks it — cross-lineage keeps losing at the peak gamma). Eval opponent + h2h baseline stay
-x5 (unchanged champion), so continuing arms' best bars stay comparable.
+**Wave 16 (2026-09-01) — the plateau BREAKS: rollout length is real.** Bigger perturbations:
+1 control (a1) + 5 distinct larger levers (a2 lr restart 3e-4, a3 rollout 4096, a4 relative
+shaping, a5 n-epochs 8 + target-kl, a6 gae-lambda 0.98) + 2 soups (z6 continued, z8 new).
+Six a* arms hit 1.05B; z6 finished (350M); z8 stalled at 212M. **a3-nsteps4096 WINS** — the
+first successor to x5 in three waves. It led **all three boards** (compare 87.5%, h2h 30.0%,
+eval −0.28) and a two-seed decider vs the incumbent confirmed a *sign-stable* edge (seed
+161616: a3 23.2 vs x5 21.8, +1.4; seed 24242: a3 27.0 vs x5 24.2, +2.8; combined 800 games/dir
+a3 offense 25.1 vs x5 23.0, **+2.1pp**). Unlike wave 15's z3 (led reporting, then the decider
+flipped to x5), nothing flips for a3. **Key finding: ROLLOUT LENGTH IS A REAL LEVER** — the
+identical idea at n-steps 2048 (z3) flickered-then-lost last wave, but 4096 wins; at gamma
+0.999 the return horizon is long and GAE truncates at n-steps, so longer rollouts cut
+truncation bias. n-steps 4096 is now the champion default. gae-lambda 0.98 (a6) also edged x5
+(the same advantage-horizon idea from the other side). **Dead levers** (do not re-test): lr
+restart 3e-4 (a2 worst everywhere — x5 is a real basin, not an escapable local optimum),
+relative shaping (a4 below par), n-epochs+kl (a5 below par). Soups sat at par. a3-nsteps4096
+is the new embedded Expert (export staged, pending user in-game test).
+
+**Wave 17 (2026-09-01) — exploit the rollout win + two weight-space bets, configured.** Fork
+the new champion a3 @1.049B (eval opponent + h2h baseline move to a3; every arm is a fresh
+fork/clone so no best-bar migration). 6 progress arms map the rollout-length curve and stack
+the live levers: b1 control (a3 continuation, n-steps 4096); **b2 n-steps 8192** and **b3
+n-steps 2048** bracket the peak (2048/4096/8192 → one clean curve on shared peers); b4
+gae-lambda 0.98 stacked onto the champion (do the two horizon levers add?); b5 ent 0.015
+(champion-line sharpen); b6 a second control on a different seed (measure the ±2pp noise floor
+directly, since wave 16 was decided by +2.1pp). **2 crazy weight-space arms** (replacing the
+stale x5-basin soups z6/z8): **c1-extrapolate** — a fresh clone from merge `−0.5·x5 + 1.5·a3`,
+i.e. step 1.5× *past* a3 along the demonstrated x5→a3 improvement direction (task arithmetic /
+extrapolation, since interpolating soups only reach par), gentle lr 3e-5→0 as the safety net;
+**c2-swa-wave16** — SWA soup mean(a1,a3,a6), the three best-behaved wave-16 forks (all fork x5
+→ shared basin). New tool `scripts/make_merge.py` does the weighted/extrapolated merge; both
+crazy warm starts are built by `--prepare`. Donor/cross-lineage stays retired (gamma-continuity
+predicts a 0.999 fork of the gamma-0.99 donor lands at par — wave 15's z2 confirmed).
 
 **Interpretability tooling (2026-08-26).** `analyze_policy.py` reads the Expert `.bin` and,
 numpy-only, reports what a net computes in *game terms*: an exact input→macro attribution
@@ -443,16 +465,18 @@ Nominate off the plant market + opponent cities; Buy-Nothing is strongly −by m
 warm-started, index-aligned chain). First run showed wave 14's champion mostly re-tuned
 **opponent-cities** sensitivity of Build/Nominate — i.e. opponent-aware end-game build timing.
 
-## 3.7 Current state (2026-08-29)
+## 3.7 Current state (2026-09-01)
 
-The deployed Expert bot is **x5-champ-g999** (the wave-14 winner, unbeaten through wave 15's
-decider), playing **Phase-3
+The deployed Expert bot is **a3-nsteps4096** (the wave-16 winner; export staged, pending the
+user's in-game test — the outgoing x5-champ-g999 held from wave 14 through the wave-15/16
+plateau), playing **Phase-3
 determinized MCTS-100 over macros** with this policy as prior and its exported value net for
 leaf evaluation. It is a *learned* agent, decisively the strongest in the project — it beats
-the ~50% evolved-hard champion head-to-head and every heuristic bot. Across thirteen sweep
+the ~50% evolved-hard champion head-to-head and every heuristic bot. Across sixteen sweep
 waves the single throughline is that the wins came from **training-loop hygiene, not new
-algorithms**: cross-lineage decay, the right gamma, a load-bearing bot anchor, population
-play, rigorous frozen-champion evaluation, and append-only obs growth. The self-play-doesn't-
+algorithms**: cross-lineage decay, the right gamma, longer rollouts at that gamma, a
+load-bearing bot anchor, population play, rigorous frozen-champion evaluation, and
+append-only obs growth. The self-play-doesn't-
 bootstrap verdict of Section 3 is not contradicted — this loop is *frozen-opponent /
 league / bot-anchored* finetuning of a competent clone, not open-ended self-play, and the
 0.20 bot anchor is exactly what keeps it grounded. The open frontier is unchanged and
