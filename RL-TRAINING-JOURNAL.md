@@ -441,20 +441,36 @@ restart 3e-4 (a2 worst everywhere — x5 is a real basin, not an escapable local
 relative shaping (a4 below par), n-epochs+kl (a5 below par). Soups sat at par. a3-nsteps4096
 is the new embedded Expert (export staged, pending user in-game test).
 
-**Wave 17 (2026-09-01) — exploit the rollout win + two weight-space bets, configured.** Fork
-the new champion a3 @1.049B (eval opponent + h2h baseline move to a3; every arm is a fresh
-fork/clone so no best-bar migration). 6 progress arms map the rollout-length curve and stack
-the live levers: b1 control (a3 continuation, n-steps 4096); **b2 n-steps 8192** and **b3
-n-steps 2048** bracket the peak (2048/4096/8192 → one clean curve on shared peers); b4
-gae-lambda 0.98 stacked onto the champion (do the two horizon levers add?); b5 ent 0.015
-(champion-line sharpen); b6 a second control on a different seed (measure the ±2pp noise floor
-directly, since wave 16 was decided by +2.1pp). **2 crazy weight-space arms** (replacing the
-stale x5-basin soups z6/z8): **c1-extrapolate** — a fresh clone from merge `−0.5·x5 + 1.5·a3`,
-i.e. step 1.5× *past* a3 along the demonstrated x5→a3 improvement direction (task arithmetic /
-extrapolation, since interpolating soups only reach par), gentle lr 3e-5→0 as the safety net;
-**c2-swa-wave16** — SWA soup mean(a1,a3,a6), the three best-behaved wave-16 forks (all fork x5
-→ shared basin). New tool `scripts/make_merge.py` does the weighted/extrapolated merge; both
-crazy warm starts are built by `--prepare`. Donor/cross-lineage stays retired (gamma-continuity
+**Observation growth #2 — obs 600 → 624 (2026-09-01).** Section 23 adds four **derived
+per-actual-slot market decision features** (affordable, effective min-bid, powering headroom,
+is-upgrade) for the 6 Nominate slots — facts the heuristic's `evaluate_plant` uses but the net
+had to reconstruct through two tanh layers from the raw market attributes (sections 9/10) plus
+its own money/plants. Motivated by the analysis question "is the slot-positional market
+encoding inefficient?": the layout is fine (the market is canonically sorted by number, so
+slots are stable roles and identity is already encoded), but the raw-attributes-vs-decisions
+gap is real, and this is the same append-only pattern that worked for section 22. Wired into
+Rust `build_observation` (authoritative), the Python `encode_observation` mirror, `constants.py`,
+and the netviz layout; parity + section tests green. **This forces wave 17 into a wave-9-style
+format reset** (below): a 600-wide `.zip` can't be resumed under the 624 env, so every arm
+becomes a fresh clone of the *migrated* champion (`migrate_policy_obs.py` zero-pads l1 → plays
+a3 bit-for-bit; the embedded expert was migrated the same way and stays behavior-identical).
+
+**Wave 17 (2026-09-01) — OBS-624 MIGRATION + exploit the rollout win + two weight-space bets,
+configured.** Because of the obs growth above, every arm is a **fresh clone**
+(`--init-policy-from`) of the migrated a3 @624 (`wave17-champion.bin`), fresh value head, step 0,
+WAVE_STEPS 250M (up from the 150M fork increments — a fresh value head must refit before the
+lr-decay peak, and there are 24 new inputs to learn). The eval opponent is the migrated a3; the
+`--h2h` baseline is the same weights as a 624 sb3 ckpt (`--bin-to-ckpt`). 6 progress arms: b1
+control (re-establish a3 under obs-624, n-steps 4096); **b2 n-steps 8192** and **b3 n-steps
+2048** bracket the rollout peak (2048/4096/8192 → one curve on shared peers); b4 gae-lambda 0.98
+stacked on the champion; b5 ent 0.015 sharpen; **b6-gentle** (lr 3e-5→0) — the fresh-value-head
+migration guard (b6 vs b1 says whether the standard-lr clones are healthy). **2 crazy
+weight-space arms** (replacing the stale x5-basin soups z6/z8): **c1-extrapolate** — clone from
+merge `−0.5·x5 + 1.5·a3`, i.e. step 1.5× *past* a3 along the demonstrated x5→a3 improvement
+direction (task arithmetic / extrapolation, since interpolating soups only reach par), gentle lr
+as the safety net; **c2-swa-wave16** — SWA soup mean(a1,a3,a6). New tool `scripts/make_merge.py`
+does the weighted/extrapolated merge (and, with make_soup, now reads migrated `.bin` inputs so
+`--prepare` rebuilds the merges at 624). Donor/cross-lineage stays retired (gamma-continuity
 predicts a 0.999 fork of the gamma-0.99 donor lands at par — wave 15's z2 confirmed).
 
 **Interpretability tooling (2026-08-26).** `analyze_policy.py` reads the Expert `.bin` and,

@@ -26,10 +26,17 @@ import zipfile
 
 import torch
 
-from powergrid_env.export import policy_state_dict_to_bytes
+from powergrid_env.export import policy_bytes_to_state_dict, policy_state_dict_to_bytes
 
 
 def load_policy_state_dict(model_path: str) -> dict:
+    # A PGRLPOL6 .bin (migrated to the current OBS_SIZE) carries only the three
+    # policy layers — exactly what the soup averages — so accept it directly,
+    # which lets prepare() rebuild soups after an obs bump when the source .zip
+    # checkpoints are the old width and can no longer be re-serialized.
+    if model_path.endswith(".bin"):
+        with open(model_path, "rb") as f:
+            return policy_bytes_to_state_dict(f.read())
     if not model_path.endswith(".zip"):
         model_path += ".zip"
     with zipfile.ZipFile(model_path) as zf:

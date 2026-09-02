@@ -90,7 +90,7 @@ pub const N_REGIONS: usize = REGION_NAMES.len();
 // actual market + future market + market meta + resource market +
 // phase/step/round/end-game/turn-order scalars + phase scratch +
 // per-city connection cost + opponent per-resource fuel demand + opponent plants
-// + end-game race.
+// + end-game race + per-actual-slot market decision features.
 pub const OBS_SIZE: usize = 1
     + 4
     + 15
@@ -108,7 +108,12 @@ pub const OBS_SIZE: usize = 1
     + N_CITIES // 19. connection cost from the actor's network to each city
     + 4 // 20. opponent per-resource fuel demand (coal, oil, gas, uranium)
     + 5 * 3 * 5 // 21. opponent plants (5 opp × 3 slots × 5 feats)
-    + 18; // 22. end-game race (trigger proximity, powerable-now, finish affordability)
+    + 18 // 22. end-game race (trigger proximity, powerable-now, finish affordability)
+    + N_MARKET_SLOTS * 4; // 23. per-actual-slot market decision features
+
+/// Actual-market slots the Nominate macros index (0..=5): 4 in Steps 1/2, 6 in
+/// Step 3. Section 23 emits four derived decision features per slot.
+pub const N_MARKET_SLOTS: usize = 6;
 
 /// The action space is the **macro** space (`crate::macro_actions`): the policy
 /// chooses one complete phase-plan per turn, not a primitive micro-action. The
@@ -796,6 +801,43 @@ pub fn build_observation(state: &GameState, actor_id: PlayerId) -> Vec<f32> {
     }
     idx += 18;
 
+    // 23. Per-actual-slot market decision features (N_MARKET_SLOTS × 4 = 24).
+    // Sections 9/10 give each market plant's *raw* attributes (number, kind,
+    // cost, cities); the Nominate decision actually turns on *derived* facts the
+    // net otherwise has to reconstruct through two tanh layers from those raw
+    // attributes plus the actor's own money/plants: is the plant affordable, at
+    // what minimum bid, how much powering headroom it would add, and whether it
+    // upgrades the rack (which at the 3-plant cap forces a discard). Surfaced
+    // here per ACTUAL slot in the same order the Nominate[slot i] macros index
+    // (`state.market.actual`, sorted by number), so obs slot i and the Nominate
+    // head for slot i line up. Slots past the current actual count stay 0.
+    // Cheap and exact — no fuel accounting; `plant.cities` is the powering
+    // ceiling the plant adds.
+    let my_plant_count = me.plants.len();
+    let my_min_plant_cities = me.plants.iter().map(|p| p.cities).min().unwrap_or(0);
+    for (slot, plant) in state.market.actual.iter().take(N_MARKET_SLOTS).enumerate() {
+        let base = idx + slot * 4;
+        let min_bid = effective_min_bid(&state.market, plant.number);
+        // [0] affordable at the minimum bid; [1] that minimum bid, normalized.
+        obs[base] = if me.money >= min_bid { 1.0 } else { 0.0 };
+        obs[base + 1] = min_bid as f32 / 60.0;
+        // [2] powering headroom the plant adds: its full capacity if the rack
+        // has room, else only what it gains over the weakest plant it replaces.
+        let gain = if my_plant_count < 3 {
+            plant.cities
+        } else {
+            plant.cities.saturating_sub(my_min_plant_cities)
+        };
+        obs[base + 2] = gain as f32 / 8.0;
+        // [3] is an upgrade: rack full AND this plant out-powers the weakest.
+        obs[base + 3] = if my_plant_count >= 3 && plant.cities > my_min_plant_cities {
+            1.0
+        } else {
+            0.0
+        };
+    }
+    idx += N_MARKET_SLOTS * 4;
+
     debug_assert_eq!(idx, OBS_SIZE, "observation size mismatch");
     // Clamp into the Box bounds: a few features (e.g. player stockpiles, late
     // rounds) can exceed their nominal denominator in extreme games.
@@ -946,11 +988,47 @@ mod tests {
         }
     }
 
+    /// Section 23 (per-actual-slot market decision features): affordability,
+    /// min-bid, powering gain, and the upgrade flag, aligned with Nominate slots.
+    #[test]
+    fn market_slot_decision_features() {
+        let sec = OBS_SIZE - N_MARKET_SLOTS * 4;
+        let (state, ids) = start_game(7);
+
+        // Fresh game: 4 actual plants; the actor has 0 plants, so every plant
+        // adds its full capacity (rack has room, no discard forced) and none is
+        // an upgrade. min-bid follows the discount token (present on the cheapest
+        // plant under the setup rules), so mirror it with effective_min_bid.
+        let me = state.players.iter().find(|p| p.id == ids[0]).unwrap();
+        assert!(me.plants.is_empty());
+        let obs = build_observation(&state, ids[0]);
+
+        for (slot, plant) in state.market.actual.iter().enumerate() {
+            let base = sec + slot * 4;
+            let min_bid = effective_min_bid(&state.market, plant.number);
+            let affordable = if me.money >= min_bid { 1.0 } else { 0.0 };
+            assert_eq!(obs[base], affordable, "slot {slot} affordable");
+            assert_eq!(obs[base + 1], min_bid as f32 / 60.0, "slot {slot} min-bid");
+            // Empty rack -> full capacity gain, no upgrade forced.
+            assert_eq!(obs[base + 2], plant.cities as f32 / 8.0, "slot {slot} gain");
+            assert_eq!(
+                obs[base + 3],
+                0.0,
+                "slot {slot} not an upgrade with 0 plants"
+            );
+        }
+        // Actual has 4 plants; slots 4-5 have no plant, so their block stays 0.
+        for v in &obs[sec + 4 * 4..sec + N_MARKET_SLOTS * 4] {
+            assert_eq!(*v, 0.0, "unused actual slots stay zero");
+        }
+    }
+
     /// Section 22 (end-game race) sanity: trigger proximity, powerable-now,
     /// and the can-finish-now affordability flag.
     #[test]
     fn end_game_race_section_encodes_push_condition() {
-        let base = OBS_SIZE - 18;
+        // Section 22 (18 dims) sits just before section 23 (per-slot market, 24).
+        let base = OBS_SIZE - N_MARKET_SLOTS * 4 - 18;
         let (mut state, ids) = start_game(42);
 
         // Fresh 2p game: no cities, no plants, trigger 21.

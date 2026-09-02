@@ -19,6 +19,7 @@ const PLANT_FEATS: [&str; 5] = ["number", "kind", "cost", "cities", "capacity"];
 const ACTUAL_FEATS: [&str; 6] = ["number", "kind", "cost", "cities", "present", "discount"];
 const FUTURE_FEATS: [&str; 5] = ["number", "kind", "cost", "cities", "present"];
 const OPP_FEATS: [&str; 4] = ["plants", "cities", "capacity", "last_powered"];
+const MARKET_SLOT_FEATS: [&str; 4] = ["affordable", "min_bid", "powering_gain", "is_upgrade"];
 const RESOURCE_NAMES: [&str; 4] = ["coal", "oil", "gas", "uranium"];
 const MARKET_META: [&str; 3] = ["step3_triggered", "in_step3", "deck_size"];
 const PHASE_SCALARS: [&str; 5] = [
@@ -167,6 +168,12 @@ pub fn sections() -> Vec<ObsSection> {
             start: 454 + N_CITIES + 4 + 75,
             len: 18,
             label: |i| ENDGAME_FEATS[i].to_string(),
+        },
+        ObsSection {
+            name: "Market slot decision",
+            start: 454 + N_CITIES + 4 + 75 + 18,
+            len: 6 * 4,
+            label: |i| format!("actual slot {}: {}", i / 4, MARKET_SLOT_FEATS[i % 4]),
         },
     ]
 }

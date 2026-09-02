@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from .constants import (
     OBS_SIZE, CITY_IDS, CITY_INDEX, REGION_NAMES,
-    KIND_IDS, PHASE_IDS, RESOURCE_IDX, MAX_CITIES,
+    KIND_IDS, PHASE_IDS, RESOURCE_IDX, MAX_CITIES, N_MARKET_SLOTS,
 )
 
 # ---------------------------------------------------------------------------
@@ -419,6 +419,31 @@ def encode_observation(state: dict, actor_id: str) -> np.ndarray:
             obs[idx + 16] = 1.0
             obs[idx + 17] = (me["money"] - cost) / 500
     idx += 18
+
+    # 23. Per-actual-slot market decision features (N_MARKET_SLOTS × 4 = 24).
+    # Derived Nominate facts that sections 9/10 leave the net to reconstruct from
+    # raw attributes + own money/plants: affordability, the minimum bid, the
+    # powering headroom the plant adds, and whether it upgrades the rack. Emitted
+    # per ACTUAL slot in the same order the Nominate[slot i] macros index, so obs
+    # slot and Nominate head line up. Mirrors Rust `build_observation` section 23.
+    actual = state["market"].get("actual", [])
+    my_plants = me["plants"]
+    my_plant_count = len(my_plants)
+    my_min_plant_cities = min((p["cities"] for p in my_plants), default=0)
+    for slot, plant in enumerate(actual[:N_MARKET_SLOTS]):
+        base = idx + slot * 4
+        min_bid = 1 if plant["number"] == discount_tok else plant["number"]
+        obs[base] = 1.0 if me["money"] >= min_bid else 0.0
+        obs[base + 1] = min_bid / 60
+        if my_plant_count < 3:
+            gain = plant["cities"]
+        else:
+            gain = max(0, plant["cities"] - my_min_plant_cities)
+        obs[base + 2] = gain / 8
+        obs[base + 3] = (
+            1.0 if my_plant_count >= 3 and plant["cities"] > my_min_plant_cities else 0.0
+        )
+    idx += N_MARKET_SLOTS * 4
 
     assert idx == OBS_SIZE, f"Observation size mismatch: expected {OBS_SIZE}, got {idx}"
     # Clamp into the Box bounds: a few features (e.g. player stockpiles, late

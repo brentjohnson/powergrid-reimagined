@@ -92,11 +92,16 @@ N_DISCARD_PLANT = 3
 # legal everywhere and correct nowhere).
 N_ACTIONS       = 26
 
+# Actual-market slots the Nominate macros index (0..5); section 23 emits four
+# derived decision features per slot. Mirrors Rust `encoding::N_MARKET_SLOTS`.
+N_MARKET_SLOTS = 6
+
 # Observation vector size (flat float32): money + resources + self plants +
 # self cities + opponent summary + opponent cities + city slot counts +
 # active regions + actual market + future market + market meta +
 # resource market + phase/step/round/end-game/turn-order scalars + scratch +
-# per-city connection cost + opponent per-resource fuel demand + opponent plants.
+# per-city connection cost + opponent per-resource fuel demand + opponent plants
+# + end-game race + per-actual-slot market decision features.
 OBS_SIZE = (
     1 + 4 + 15 + MAX_CITIES + 20 + 5 * MAX_CITIES + MAX_CITIES + N_REGIONS
     + 24 + 20 + 3 + 4 + 5 + 8
@@ -105,7 +110,9 @@ OBS_SIZE = (
     + 5 * 3 * 5   # 21. opponent plants (5 opp × 3 slots × 5 feats)
     + 18          # 22. end-game race (trigger proximity, powerable-now,
                   #     finish affordability) — 2026-08-06, obs 582 -> 600.
-                  #     Append-only: older 582-wide policies are migrated by
-                  #     zero-padding l1 rows (scripts/migrate_policy_obs.py),
-                  #     which leaves their logits bit-identical.
+    + N_MARKET_SLOTS * 4  # 23. per-actual-slot market decision features
+                  #     (affordable, min-bid, powering gain, is-upgrade) —
+                  #     2026-09-01, obs 600 -> 624. Append-only: older policies
+                  #     are migrated by zero-padding l1 rows
+                  #     (scripts/migrate_policy_obs.py), logits bit-identical.
 )
