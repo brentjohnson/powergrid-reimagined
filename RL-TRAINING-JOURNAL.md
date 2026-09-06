@@ -404,7 +404,8 @@ its matching value net re-exported so Phase-3 search leaf values track the polic
 | 2026-08-18 | v7-gamma | 12 | **gamma 0.997** | 84% |
 | 2026-08-23 | w5-y3-gamma | 13 | cross-lineage decay + gamma 0.997 | 88% |
 | 2026-08-26 | x5-champ-g999 | 14 | champion-line decay + gamma 0.999 | 84% |
-| **2026-09-01** | **a3-nsteps4096** | **16** | **rollout length (n-steps 4096)** | *(pending user test)* |
+| 2026-09-01 | a3-nsteps4096 | 16 | rollout length (n-steps 4096) | 86% |
+| **2026-09-06** | **b1-champ-cont** | **17** | **champion recipe refit to obs-624 (§23 market feats)** | *(pending user test)* |
 
 (The native 50-game harness carries ±~6–7pp noise and is a sanity check only; wave winners
 are decided by the torch `--compare` + full tiebreak, not this number. x5-champ-g999's 84%
@@ -473,6 +474,50 @@ does the weighted/extrapolated merge (and, with make_soup, now reads migrated `.
 `--prepare` rebuilds the merges at 624). Donor/cross-lineage stays retired (gamma-continuity
 predicts a 0.999 fork of the gamma-0.99 donor lands at par — wave 15's z2 confirmed).
 
+**Wave 17 (2026-09-01) RESULT (settled 2026-09-06) — b1-champ-cont WINS; the plain champion
+recipe, refit to obs-624, tops every lever.** All 8 arms reached 250M. The plain control (b1)
+led the two boards that count and the field clustered within ±2pp of par — a wave-15-shaped
+near-plateau, but one rung higher: b1 = a3 + the learned §23 market features, a genuine
+successor to the embedded a3.
+- **eval** (best mean_reward vs 3× the frozen migrated-a3, par ~−0.50): b1 −0.31 · b2/b4/c2
+  −0.32 · b5/b6/c1 −0.33 · b3 −0.36.
+- **h2h** (seat 0 vs 3× frozen a3, mirror par 23.0%): **b1 25.0 · b4 25.0** · b5 24.0 · c2 23.0
+  · b3/c1 22.5 · b6 19.5 · b2 18.5.
+- **compare** (vs 3× hard, saturated): c2 87.0 · b1/b5 86.5 · c1 85.5 · b2/b6 84.0 · b4 82.5 ·
+  b3 79.5.
+- **decider** (seed 88888, 400 games/dir): b1 seat-0 vs 3× frozen a3 = 24.8% (≈ +2pp over the
+  seat-0 par, sign-stable with the seed-12345 h2h). b1 vs its only h2h co-leader b4 was
+  decisive both ways — **b1 offense 29.5 vs b4 offense 24.2**, and b1 defense 25.9 > b4 defense
+  23.6. b1 dominates b4 on offense and defense.
+
+Findings: **4096 is the rollout peak** (b3 2048 = 22.5 < b1 4096 = 25.0 > b2 8192 = 18.5; the
+right shoulder falls off hard) — locked, not re-mapped. gae 0.98 (b4) and ent 0.015 (b5)
+tied/near-tied the control but as *cold clones* (value head refitting); wave 18 re-tests both
+warm. **b6-gentle landed below b1** (19.5) → the standard-lr clones were healthy, the fresh
+value head did not damage them; gentle-lr retired again. **Weight-space moves sat at/below par
+a third time** (c1 extrapolation 22.5, c2 SWA 23.0) → the soup/merge family is retired as a
+champion source. b1 is the new champion and embedded Expert (pending the user's in-game test).
+
+**Wave 18 (2026-09-06) — exploit the obs-624 refit + hunt a lever past the plateau + two real
+swings, configured.** NOT a migration wave: obs stays 624, so every fork arm `--resume-from`s
+b1's own 624 `best_model` directly (a new `scratch` init type in the sweep script starts a
+random net with no init). Fork source + eval opponent (b1 exported to `wave18-champion.bin`
+via `export_policy.py` in `--prepare`) + `--h2h` yardstick (b1's frozen dir) + new embedded
+Expert are all **b1**. Budget: forks resume b1 @250M and run to 550M (a +300M full lr-anneal
+cycle); the one from-scratch arm runs 300M from 0, so all eight finish together. **6 progress
+arms** (128-wide forks of b1, peered): d1 control (+300M); **d2 ent 0.015** and **d3 gae 0.98**
+re-test wave-17's two near-ties as *warm* continuations (cleaner than the cold clones);
+**d4-sharp-gae** stacks both; **d5-vf-emphasis** (vf-coef 1.0) leans on the freshly-refit §23
+critic; **d6-epochs6** (n-epochs 6, no target-kl — a5's kl was the dead part) reuses each big
+rollout more. **2 crazy arms**, both moves the 17-wave warm-start lineage has never allowed:
+**e1-scratch** — a random-init 128-wide net at the champion recipe with a bot-heavy league mix
+(0.30/0.10/0.60) so macro-space RL can bootstrap; SOLO, 300M; the never-tested question *can
+macro-space RL reach the lineage champion FROM ZERO?* (a win reframes the whole grind; a loss
+proves the lineage is load-bearing). **e2-wide-clip** — fork b1 + clip-range 0.3, a
+wide-trust-region basin escape (lr-restart failed because its steps stayed clip-capped at 0.2;
+a wider clip is the untested way to take large steps out of the basin). Dead levers (do not
+re-test) now include soups/extrapolation and gentle-lr-as-a-lever alongside the earlier list.
+
 **Interpretability tooling (2026-08-26).** `analyze_policy.py` reads the Expert `.bin` and,
 numpy-only, reports what a net computes in *game terms*: an exact input→macro attribution
 Jacobian grouped by the 18 obs sections ("Build keys off self cities/plants/resources;
@@ -481,14 +526,14 @@ Nominate off the plant market + opponent cities; Buy-Nothing is strongly −by m
 warm-started, index-aligned chain). First run showed wave 14's champion mostly re-tuned
 **opponent-cities** sensitivity of Build/Nominate — i.e. opponent-aware end-game build timing.
 
-## 3.7 Current state (2026-09-01)
+## 3.7 Current state (2026-09-06)
 
-The deployed Expert bot is **a3-nsteps4096** (the wave-16 winner; export staged, pending the
-user's in-game test — the outgoing x5-champ-g999 held from wave 14 through the wave-15/16
-plateau), playing **Phase-3
+The committed Expert bot is **a3-nsteps4096** (the wave-16 winner, embedded 2026-09-01). The
+wave-17 winner **b1-champ-cont** (a3 refit to obs-624 with the §23 market features) is the new
+champion, its export staged pending the user's in-game test. The Expert plays **Phase-3
 determinized MCTS-100 over macros** with this policy as prior and its exported value net for
 leaf evaluation. It is a *learned* agent, decisively the strongest in the project — it beats
-the ~50% evolved-hard champion head-to-head and every heuristic bot. Across sixteen sweep
+the ~50% evolved-hard champion head-to-head and every heuristic bot. Across seventeen sweep
 waves the single throughline is that the wins came from **training-loop hygiene, not new
 algorithms**: cross-lineage decay, the right gamma, longer rollouts at that gamma, a
 load-bearing bot anchor, population play, rigorous frozen-champion evaluation, and

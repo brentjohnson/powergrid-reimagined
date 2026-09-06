@@ -1,131 +1,123 @@
 #!/usr/bin/env bash
 #
-# sweep_selfplay.sh — wave 17: OBS-624 MIGRATION + exploit the rollout-length win
-# + two weight-space bets. TWO things happen this wave. (1) The observation grew
-# 600 -> 624: section 23 adds four DERIVED per-actual-slot market decision
-# features (affordable, min-bid, powering gain, is-upgrade) that sections 9/10
-# left the net to reconstruct from raw attributes. Append-only, so it is
-# checkpoint-safe — but a 600-wide sb3 .zip cannot be --resume-from'd under the
-# 624 env, so (like wave 9's 582->600 reset) EVERY arm is a FRESH clone
-# (--init-policy-from) of the MIGRATED champion .bin: migrate_policy_obs.py
-# zero-pads the champion's l1 rows so it plays a3 bit-for-bit, and training then
-# learns to use the 24 new inputs. (2) Wave 16 broke the two-wave plateau:
-# a3-nsteps4096 (n-steps 4096) beat x5 and is the new champion. Wave 17 maps the
-# rollout-length curve around it (2048 / 4096 / 8192), tests gae-lambda and an
-# entropy sharpen, keeps a gentle-lr migration guard, and spends its two crazy
-# slots on weight-space moves training cannot make: an EXTRAPOLATION past the
-# champion and an SWA soup of this wave's survivors.
+# sweep_selfplay.sh — wave 18: exploit the obs-624 refit + hunt a lever past the
+# plateau + two real swings. NOT a migration wave: the observation stays 624, so
+# every arm can FORK the wave-17 winner's own 624 checkpoint directly (no clone /
+# migrate). Wave 17 re-established the champion under obs-624 and the plain
+# champion recipe (b1) topped every lever it was raced against — the same
+# near-plateau shape as wave 15, but one rung higher: b1 = a3 + the learned
+# section-23 market features, a genuine successor to the embedded a3. Wave 18
+# forks b1, re-tests the two levers that TIED it (gae 0.98, ent 0.015) as warm
+# continuations + stacks them, probes two fresh axes (value emphasis, n-epochs),
+# and spends its two crazy slots on moves the 17-wave warm-start lineage has
+# never allowed: a FROM-SCRATCH run and a wide-trust-region basin escape.
 #
-# WAVE 17 (2026-09-01). Fresh value heads everywhere (the migration cost), so
-# the wave both RE-ESTABLISHES the champion under obs-624 and probes the levers.
+# WAVE 18 (2026-09-06). Fork source + eval opponent + h2h yardstick + new
+# embedded Expert are all b1-champ-cont (the wave-17 winner). Its dir is frozen
+# (no wave-18 arm writes to it), so it is a stable reference.
 #
-# WAVE 16 (plateau-break: 1 control + 5 larger perturbations + 2 soups) is
-# settled. All six a* arms hit 1050M; z6-soup finished (350M); z8-champ-soup
-# stalled at 212M. Result: a3-nsteps4096 WINS — the first successor to x5 in
-# three waves.
+# WAVE 17 (obs-624 migration + rollout-curve + 2 weight-space bets) is settled.
+# All 8 arms reached 250M (fresh clones of the migrated a3 @624). Result:
+# b1-champ-cont WINS — the plain champion recipe, refit to the 24 new section-23
+# market inputs, beat every lever.
 #
-#   Frozen-champion eval (best mean_reward vs 3x x5-champ-g999, par ~-0.50):
-#     a5-epochs-kl -0.26  a1-champ-cont -0.27  a3-nsteps4096 -0.28  z6-soup -0.29
-#     a6-gae98 -0.30  z8-champ-soup -0.34(@212M)  a4-relative-shaping -0.36
-#     a2-hi-lr-restart -0.43
+#   Frozen-champion eval (best mean_reward vs 3x the migrated a3 @624, par ~-0.50):
+#     b1 -0.31  b2/b4/c2 -0.32  b5/b6/c1 -0.33  b3 -0.36
+#   Primary h2h (seat 0 vs 3x the frozen a3 @624; mirror par 23.0%):
+#     b1 25.0  b4 25.0  b5 24.0  c2 23.0  b3/c1 22.5  b6 19.5  b2 18.5
 #   Compare vs 3x hard (saturated, reporting-only, seat-0 all-bots par ~21.5%):
-#     a3-nsteps4096 87.5  z8-champ-soup 85.5(@212M)  a4/a6 85.0
-#     a1/a5 83.0  a2 81.0  z6-soup 80.5
-#   Primary h2h (seat 0 vs 3x the frozen champion x5; mirror par 24.5%):
-#     a3-nsteps4096 30.0  a6-gae98 26.0  z8-champ-soup 26.0(@212M)  z6-soup 25.0
-#     a1-champ-cont 23.5  a4 23.5  a5 23.0  a2-hi-lr-restart 19.5
-#   a3-nsteps4096 LED ALL THREE boards. A two-seed DECIDER vs the incumbent x5
-#   (400 games/dir each, 4-way par 25%) confirmed it — a3's edge is sign-stable:
-#     seed 161616:  a3 vs 3x x5 = 23.2  |  x5 vs 3x a3 = 21.8   -> a3 +1.4
-#     seed 24242 :  a3 vs 3x x5 = 27.0  |  x5 vs 3x a3 = 24.2   -> a3 +2.8
-#     combined (800g/dir): a3 offense 25.1 vs x5 offense 23.0   -> a3 +2.1
-#   Unlike wave 15's z3 (led reporting, then the decider FLIPPED to x5), nothing
-#   flips for a3. a3-nsteps4096 is the champion and the new embedded Expert.
+#     c2 87.0  b1/b5 86.5  c1 85.5  b2/b6 84.0  b4 82.5  b3 79.5
+#   b1 LED the two boards that count (eval #1, h2h tied #1). A fresh-seed decider
+#   (seed 88888, 400 games/dir) confirmed b1 over the incumbent a3 and over its
+#   only h2h co-leader b4 (see the journal). b1 is the champion and new Expert.
 #
-# What wave 16 SETTLED / OPENED:
-#   * *** ROLLOUT LENGTH IS A REAL LEVER. *** n-steps 1024->2048 (z3) flickered
-#     and lost its decider; 1024->4096 (a3) wins. At gamma 0.999 the return
-#     horizon is long and GAE truncates at n-steps, so longer rollouts cut
-#     truncation bias / gradient variance. n-steps 4096 is now the champion
-#     default; wave 17 brackets the PEAK (2048 / 4096 / 8192).
-#   * gae-lambda 0.98 (a6) also edged x5 (h2h 26.0, decider a6 24.5 > x5 23.5) —
-#     the SAME advantage-horizon idea from the other side. Kept and STACKED onto
-#     the new champion (b4). Both live levers are horizon knobs, consistent with
-#     the gamma-0.999 story.
-#   * DEAD LEVERS (wave 16 losers, do not re-test): lr restart 3e-4 (a2, WORST
-#     everywhere — x5 is a real basin, not an escapable local optimum), relative
-#     shaping annealed off (a4, below par — terminal-only holds), n-epochs 8 +
-#     target-kl (a5, below par). GAMMA STAYS 0.999. The 0.20 bot anchor stays.
-#   * SOUPS sat at par (z6 25.0; z8 26.0 but only @212M). The soup family is
-#     alive but not a breakthrough. Wave 17 REPLACES the stale x5-basin soups
-#     (z6 mean(x2,x3,x4), z8 mean(x5,z3,z7)) with soups/merges in the NEW
-#     champion's basin (c1 extrapolation, c2 wave-16 SWA). z6/z8 stay on disk,
-#     not resumed.
-#   * DONOR / CROSS-LINEAGE stays retired: s4-y3 (gamma 0.99) sits at 1050M and
-#     the value-head gamma-continuity finding (wave 14) predicts a gamma-0.999
-#     fork of it must re-learn the return scale — wave 15's z2 confirmed it lands
-#     at par. No wave-17 arm forks the donor. It stays on disk as fork material.
+# What wave 17 SETTLED / OPENED:
+#   * *** 4096 IS THE ROLLOUT PEAK. *** The bracket resolved cleanly: n-steps
+#     2048 (b3, h2h 22.5) < 4096 (b1, 25.0) > 8192 (b2, 18.5). The right shoulder
+#     falls off HARD (8192 is worst on h2h), so wave 18 does NOT re-map the curve
+#     — 4096 is locked as the champion default. gamma STAYS 0.999.
+#   * THE TWO HORIZON LEVERS TIED, DIDN'T WIN. gae-lambda 0.98 (b4) tied b1 on
+#     h2h (25.0) but trailed on eval and was weakest on compare; ent 0.015 (b5)
+#     was a hair back (24.0). Both were tested as FRESH CLONES (value head
+#     refitting from zero over 24 new inputs) — a lever's effect is muddied while
+#     the whole net stabilizes. Wave 18 re-tests both as WARM continuations of
+#     the converged b1 (d3 gae, d2 ent) where a lever operates cleanly, and
+#     STACKS them (d4) to see if the two near-ties combine.
+#   * MIGRATION GUARD not needed: b6-gentle (lr 3e-5) landed BELOW b1 (h2h 19.5),
+#     so the standard lr 1e-4 clones were healthy — the fresh value head did NOT
+#     damage them. Wave 18 uses standard lr 1e-4->0 on all forks (gentle retired).
+#   * WEIGHT-SPACE MOVES sat at/below par again: c1-extrapolate (-0.5*x5+1.5*a3)
+#     h2h 22.5 (extrapolation did not overshoot to a win), c2-swa mean(a1,a3,a6)
+#     h2h 23.0 = par. Three waves of soups/merges now cluster at par. The family
+#     is RETIRED as a champion source; wave 18 spends the crazy slots elsewhere.
+#   * DEAD LEVERS (do not re-test): lr restart 3e-4, relative shaping, n-epochs 8
+#     + target-kl, entropy-UP, placement reward, wide net (192-warm), target-KL,
+#     tight clip, gamma 0.99, cross-lineage fork at a new gamma, gentle-lr as a
+#     lever, soups/extrapolation. The 0.20 bot anchor is load-bearing; keep it.
 #
-# Budget: every arm is a FRESH clone from step 0 (fresh value head), so all share
-# one WAVE_STEPS = 250M budget (up from the 150M fork increments — a fresh value
-# head needs to refit before the lr-decay convergence peak in the back third, and
-# there are 24 new inputs to learn). No fork/resume arms this wave, so
-# TOTAL_TIMESTEPS is unused.
+# Budget: fork arms (d1-d6, e2) resume b1's best_model @250M and run to
+# TOTAL_TIMESTEPS = 550M (a +300M increment = a full fresh lr 1e-4->0 anneal
+# cycle, "the finisher", on the converged champion). The one from-scratch arm
+# (e1) is a clone from step 0 with WAVE_STEPS = 300M, so all eight arms run ~300M
+# of new steps and finish together.
 #
-# THE STRUCTURE — six progress arms (1 control + rollout-curve + 2 levers + guard)
-# + two crazies, ALL fresh clones of the migrated 624 champion:
-#   * CHAMPION_BIN = the migrated a3 @624 (wave17-champion.bin, from
-#     migrate_policy_obs.py --from-ckpt a3/best_model). It plays a3 bit-for-bit
-#     (zero weights on the 24 new inputs) and is BOTH the warm start for b1-b6 AND
-#     the frozen --eval opponent. The frozen --h2h yardstick is wave17-baseline
-#     (the same weights as a 624 sb3 ckpt via --bin-to-ckpt). Neither trains.
-#   * Every b-arm changes ONE axis from the b1 control so its effect is readable
-#     on the shared peers/seeds. The champion default is n-steps/batch 4096.
-#   * runs/sweep4 is this epoch's home. Inert history NOT peered: wave-9 (s*),
-#     wave-10 (t*), wave-11 (u*), wave-12 (v*), wave-13 (w*), wave-14 (x*/y*),
-#     wave-15 (z1-z7), wave-16 (a1-a6, z8) — all now the wrong (600) obs width.
-#     runs/sweep3 is inert 582-format. Never resume, never peer any of them. Only
-#     wave-17 arms (b1-b6 + the crazies c1/c2) peer.
+# THE STRUCTURE — six progress arms (1 control + 2 warm lever re-tests + 1 stack
+# + 2 fresh axes), all 128-wide forks of b1, peered; + two crazies:
+#   * FORK_FROM = b1-champ-cont/best_model (the wave-17 winner, 624 format).
+#     d1-d6/e2 all --resume-from it; d1 is the pure continuation control.
+#   * EVAL_OPPONENT = wave18-champion.bin = b1 exported to a PGRLPOL6 .bin
+#     (--prepare runs export_policy.py). BASELINE = b1-champ-cont's own dir (its
+#     best_model.zip is the frozen --h2h yardstick; nothing trains it this wave).
+#   * runs/sweep4 stays this epoch's home. Only wave-18 arms peer each other; the
+#     from-scratch arm e1 is SOLO (its weak early snapshots stay out of the
+#     progress arms' PAST pool, and it stays a clean "no lineage" test). Inert
+#     history (wave-9..17 s*/t*/u*/v*/w*/x*/y*/z*/a*/b*/c*) is never peered.
 #
-# Arm roles (all gamma 0.999, mix 0.40/0.40/0.20, past_k 8, ent 0.03, fresh clone
-# of the migrated 624 champion, lr 1e-4->0, n-steps/batch 4096, unless noted):
-#   b1-champ-cont     CONTROL: re-establish the champion a3 under obs-624 (clone
-#                     the migrated bin, fresh value head). The incumbent-in-the-
-#                     field baseline every other arm is read against, and the
-#                     reference for how much the 24 new market features buy.
-#   b2-nsteps8192     Rollout curve (upper): b1 but n-steps/batch 8192 (2x). Push
-#                     the winning lever one more notch — is longer still better,
-#                     or is 4096 the peak? Higher gradient variance; watch it.
-#   b3-nsteps2048     Rollout curve (lower): b1 but n-steps/batch 2048 (0.5x).
-#                     Bracket the peak from below on the SAME peers as b1/b2, so
-#                     the three points 2048/4096/8192 map one clean curve.
-#   b4-gae98          Lever stack (advantage horizon): b1 but gae-lambda 0.98
-#                     (from 0.95). Wave 16's a6 edged x5 with this; stack it onto
-#                     the n-steps-4096 champion — do the two horizon levers add?
-#   b5-low-ent        Lever (entropy sharpen): b1 but ent-coef 0.015 (validated
-#                     champion-line lever, wave 11). Sharpen the converged policy.
-#   b6-gentle         MIGRATION GUARD: b1 but gentle lr 3e-5 -> 0 (the wave-9
-#                     recipe that won the last format reset). Every arm has a
-#                     fresh value head over a warm policy; b6 vs b1 tells us
-#                     whether the standard-lr clones are healthy (b6 ~ b1) or the
-#                     fresh value head is damaging them (b6 > b1 -> go gentle).
-#   c1-extrapolate    *** CRAZY #1: weight-space EXTRAPOLATION past the champion.
-#                     *** Fresh clone from merge -0.5*x5 + 1.5*a3 (step 1.5x along
-#                     the demonstrated x5->a3 improvement direction; a3 forks x5
-#                     so the direction is well-defined), migrated to 624.
-#                     Interpolating soups sit at par; extrapolation OVERSHOOTS
-#                     along the improvement vector — a non-gradient move to weights
-#                     beyond a3 that forking+annealing cannot reach (task
-#                     arithmetic, Ilharco et al.). GENTLE lr 3e-5 -> 0 pulls it
-#                     back into a good basin if it overshoots. If it collapses,
-#                     alpha=1.5 is too aggressive; next wave retries a smaller step.
-#   c2-swa-wave16     *** CRAZY #2: wave-16 survivors SWA soup. *** Fresh clone
-#                     from mean(a1, a3, a6) — the three best-behaved wave-16 forks
-#                     (all fork x5 @894M -> shared basin), migrated to 624, gentle
-#                     lr 3e-5 -> 0.
-#                     Stochastic-weight-averaging bet: does averaging this wave's
-#                     survivors land in a flatter minimum than the champion a3
-#                     alone? The current-basin replacement for the retired z8.
+# Arm roles (all gamma 0.999, mix 0.40/0.40/0.20, past_k 8, ent 0.03, lr 1e-4->0,
+# n-steps/batch 4096, vf-coef 0.5, n-epochs 4, clip 0.2, gae 0.95, fork of b1,
+# unless noted):
+#   d1-champ-cont     CONTROL / anchor: fork b1, champion recipe unchanged, +300M
+#                     (a second full lr anneal cycle). Tests whether the champion
+#                     line keeps climbing past 250M, and is the reference every
+#                     other arm is read against on the shared peers/seeds.
+#   d2-low-ent        WARM lever re-test: d1 but ent-coef 0.015 (validated
+#                     champion-line sharpen, wave 11). b5 tested it as a cold
+#                     clone (24.0); re-test on the WARM converged champion where
+#                     sharpening should actually bite. Kill guard: entropy diving
+#                     toward ~0.1 nats = kill the arm.
+#   d3-gae98          WARM lever re-test: d1 but gae-lambda 0.98. b4 tied b1 on
+#                     h2h as a cold clone (25.0); re-test warm to see if the
+#                     advantage-horizon lever separates once the value head is
+#                     converged rather than refitting.
+#   d4-sharp-gae      LEVER STACK: d1 + ent 0.015 + gae 0.98 — the two arms that
+#                     tied/near-tied b1 in wave 17, combined. Do the two
+#                     independent near-ties add to a real edge, or does the field
+#                     just sit at the same converged strength?
+#   d5-vf-emphasis    FRESH AXIS (critic weight): d1 but vf-coef 1.0 (from 0.5).
+#                     The value head was just refit over the 24 new section-23
+#                     market inputs; a stronger critic term may exploit them
+#                     better. Value-emphasis lost in wave 15, but on a long-
+#                     converged critic — here the critic is freshly informative.
+#   d6-epochs6        FRESH AXIS (optimization passes): d1 but n-epochs 6 (from
+#                     4). More reuse of each big 4096 rollout. a5's n-epochs 8
+#                     lost, but only WITH target-kl (the dead part); this is a
+#                     milder plain increase with no kl cap. Watch policy drift.
+#   e1-scratch        *** CRAZY #1 — FROM SCRATCH. *** No warm start: a fresh
+#                     128-wide net at the champion recipe, but a bot-heavy league
+#                     mix 0.30/0.10/0.60 so macro-space self-play can bootstrap
+#                     off the heuristic instead of random-vs-random. SOLO, 300M
+#                     from step 0. The one foundational assumption 17 waves never
+#                     tested: can macro-space RL reach the warm-start lineage
+#                     champion FROM ZERO? A win reframes the whole grind; a loss
+#                     definitively shows the lineage/warm-start is load-bearing.
+#   e2-wide-clip      *** CRAZY #2 — basin escape via a wide trust region. ***
+#                     Fork b1 + clip-range 0.3 (from 0.2), champion recipe
+#                     otherwise, +300M. lr-restart (wave 16 a2) failed to leave
+#                     the x5 basin because its steps stayed clip-capped at 0.2;
+#                     a wider clip is the untested way to take LARGE policy steps
+#                     and reach weights a normal anneal cannot. lr decays to 0 so
+#                     it re-settles. If it just reconverges to b1, the basin is
+#                     clip-robust too; if it lands somewhere new, follow it.
 #
 # Sized for a 28-core machine: 8 variants x THREADS=3 = 24 cores, leaving
 # headroom for the eval passes and the OS.
@@ -133,15 +125,16 @@
 # Re-running is idempotent and self-healing: launching is the same command as
 # resuming. For each selected variant the script inspects its run dir and
 # resumes from the furthest-along readable checkpoint; if there is none, a fork
-# arm starts from its (pinned) fork source and a resume arm hard-errors rather
-# than silently restarting. The running-check verifies the recorded PID is
-# still a train_selfplay.py process for THIS run dir, so a stale pidfile can't
-# block a resume or let two trainers write the same dir. Operational loop:
-# run it; if the box reboots or an arm crashes, run it again.
+# arm starts from its (pinned) fork source, a scratch arm starts fresh, and a
+# resume arm hard-errors rather than silently restarting. The running-check
+# verifies the recorded PID is still a train_selfplay.py process for THIS run
+# dir, so a stale pidfile can't block a resume or let two trainers write the
+# same dir. Operational loop: run it; if the box reboots or an arm crashes, run
+# it again.
 #
 # Resume-lr note: MaskablePPO.load is passed custom_objects built from THIS
 # launch's flags, so an arm's lr schedule is its own across resumes (a fork's
-# fresh lr 1e-4 overrides the decayed lr stored in the champion checkpoint).
+# fresh lr 1e-4 overrides the decayed lr stored in b1's checkpoint).
 #
 # Usage:
 #   ./scripts/sweep_selfplay.sh              # launch/resume all 8 in the background
@@ -150,51 +143,41 @@
 #   ./scripts/sweep_selfplay.sh --list       # show the variant table, launch nothing
 #   ./scripts/sweep_selfplay.sh --status     # per-variant progress / best eval
 #   ./scripts/sweep_selfplay.sh --compare    # ABSOLUTE: each variant vs 3x hard bots
-#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (migrated a3 @624)
+#   ./scripts/sweep_selfplay.sh --h2h        # RELATIVE: each variant vs 3x the frozen champion (b1 @624)
 #   ./scripts/sweep_selfplay.sh --stop       # stop every running variant
 #
 # Env overrides (all optional):
-#   WAVE_STEPS=250000000       per-arm budget; EVERY arm is a fresh clone from 0
-#   CHAMPION_CKPT=runs/sweep4/a3-nsteps4096/best_model   600-wide source, migrated in --prepare
-#   CHAMPION_BIN=runs/sweep4/wave17-champion.bin  migrated a3 @624: b1-b6 warm start + eval opponent
-#   EVAL_OPPONENT=$CHAMPION_BIN   frozen champion @624 (par ~ -0.50)
-#   BASELINE=wave17-baseline   synthetic run dir holding the migrated a3 @624 sb3 ckpt (--h2h yardstick)
-#   EXTRAP=runs/sweep4/extrap-x5a3.bin   merge -0.5*x5 + 1.5*a3 @624 (c1 warm start), built in prepare
-#   SOUP16=runs/sweep4/soup-a1a3a6.bin   averaged a1/a3/a6 @624 (c2 warm start), built in prepare
-#   TOTAL_TIMESTEPS            unused this wave (no fork/resume arms)
-#   BASELINE=a3-nsteps4096     run-dir name of the frozen --h2h opponent
+#   TOTAL_TIMESTEPS=550000000  fork-arm cumulative target (b1 @250M + 300M)
+#   WAVE_STEPS=300000000       from-scratch arm budget (e1, from step 0)
+#   FORK_FROM=runs/sweep4/b1-champ-cont/best_model   wave-17 winner (fork source)
+#   CHAMPION_BIN=runs/sweep4/wave18-champion.bin  b1 exported to .bin (eval opponent), built in --prepare
+#   EVAL_OPPONENT=$CHAMPION_BIN   frozen champion b1 (par ~ -0.50)
+#   BASELINE=b1-champ-cont     run-dir whose best_model is the frozen --h2h yardstick
 #   SWEEP_DIR=runs/sweep4      root for the per-variant run dirs
-#   NET_WIDTH=128              must match the fork checkpoints' hidden width
+#   NET_WIDTH=128              hidden width of b1 and all forks
 #   NUM_ENVS=8                 parallel envs per variant (keep equal across variants)
 #   THREADS=3                  torch/OMP threads per variant (8 x 3 = 24 of 28 cores)
 #   COMPARE_GAMES=200  COMPARE_SEED=12345
 #   COMPARE_DETERMINISTIC=1    rank with argmax instead of sampling. Training is
 #                              stochastic, so the sampled numbers remain primary.
 #   NICE=10  STAGGER=15  DRY_RUN=1
-#
+
 set -euo pipefail
 
 cd "$(dirname "$0")/.."          # python/
 
 PY=${PY:-.venv/bin/python}
 SWEEP_DIR=${SWEEP_DIR:-runs/sweep4}
-# OBS-624 MIGRATION WAVE (like wave 9). The observation grew 600 -> 624 (section
-# 23, per-actual-slot market decision features), so a 600-wide sb3 .zip cannot be
-# --resume-from'd under the 624 env. Every arm is therefore a FRESH clone
-# (--init-policy-from) of a MIGRATED policy .bin (fresh value head, step 0), the
-# proven append-only path: migrate_policy_obs.py zero-pads the champion's l1 rows
-# so the migrated net plays a3 bit-for-bit, then training learns to use the 24
-# new inputs.
-CHAMPION_CKPT=${CHAMPION_CKPT:-$SWEEP_DIR/a3-nsteps4096/best_model}   # 600-wide source (migrated in --prepare)
-CHAMPION_BIN=${CHAMPION_BIN:-$SWEEP_DIR/wave17-champion.bin}          # migrated a3 @624: warm start for b1-b6 AND the eval opponent
-FORK_FROM=${FORK_FROM:-$CHAMPION_CKPT}   # generic fork source for the launch loop; UNUSED this wave (every arm is a clone)
+# NOT a migration wave: the observation stays 624, so fork arms --resume-from
+# the wave-17 winner's own 624 checkpoint directly. FORK_FROM is b1's best_model;
+# CHAMPION_BIN is b1 exported to a PGRLPOL6 .bin (the frozen --eval opponent),
+# built in --prepare via export_policy.py.
+FORK_FROM=${FORK_FROM:-$SWEEP_DIR/b1-champ-cont/best_model}   # wave-17 winner (624 ckpt); d1-d6/e2 fork it
+CHAMPION_BIN=${CHAMPION_BIN:-$SWEEP_DIR/wave18-champion.bin}  # b1 exported to .bin: the frozen --eval opponent
 EVAL_OPPONENT=${EVAL_OPPONENT:-$CHAMPION_BIN}
-                             # Frozen champion at 624 = the migrated a3 (plays a3
-                             # exactly). Selects best_model; par ~ -0.50.
-WAVE_STEPS=${WAVE_STEPS:-250000000}   # every arm is a fresh clone from step 0, so all share this per-wave budget
-TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-$WAVE_STEPS}   # unused this wave (no fork/resume arms); kept for the generic launch loop
-EXTRAP=${EXTRAP:-$SWEEP_DIR/extrap-x5a3.bin}   # extrapolation -0.5*x5 + 1.5*a3 @624 (c1 warm start), built in prepare
-SOUP16=${SOUP16:-$SWEEP_DIR/soup-a1a3a6.bin}   # wave-16 SWA soup mean(a1,a3,a6) @624 (c2 warm start), built in prepare
+                             # Frozen champion b1 @624. Selects best_model; par ~ -0.50.
+WAVE_STEPS=${WAVE_STEPS:-300000000}          # from-scratch arm e1 budget (from step 0)
+TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS:-550000000}   # fork-arm cumulative target = b1 @250M + 300M
 NET_WIDTH=${NET_WIDTH:-128}
 NUM_ENVS=${NUM_ENVS:-8}
 THREADS=${THREADS:-3}
@@ -202,14 +185,11 @@ NICE=${NICE:-10}
 STAGGER=${STAGGER:-15}
 DRY_RUN=${DRY_RUN:-0}
 
-# The frozen --h2h opponent: the champion a3-nsteps4096, MIGRATED to obs-624.
-# a3's own best_model.zip is 600-wide and cannot play under the 624 env, so
-# --prepare rebuilds it as a 624 checkpoint (wave17-baseline/best_model, via
-# migrate_policy_obs.py --bin-to-ckpt — policy loaded, value head fresh, which is
-# irrelevant to --h2h/--compare since only the policy logits pick actions). It
-# plays a3 bit-for-bit and never trains, so this yardstick never moves. It is the
-# embedded Expert (also migrated to 624).
-BASELINE=${BASELINE:-wave17-baseline}
+# The frozen --h2h opponent: the wave-17 winner b1-champ-cont. Its own
+# best_model.zip is already 624-format and runnable, and no wave-18 arm writes to
+# its dir (the continuation control is d1-champ-cont), so this yardstick never
+# moves. It is the new embedded Expert (pending the user's in-game test).
+BASELINE=${BASELINE:-b1-champ-cont}
 
 # Shared across all variants — held constant so the comparison is clean.
 # A variant's own flags come after these on the command line, so repeating a
@@ -233,12 +213,13 @@ COMMON=(
 #
 # `init` is "resume" (own dir; hard-error if it has no checkpoint), "fork"
 # (first launch --resume-from $FORK_FROM into a fresh dir), "fork=<stem>"
-# (first launch --resume-from that checkpoint stem instead), or "clone" (first
-# launch is a FRESH run warm-started from a policy .bin via --init-policy-from
-# — the crazy model-soup arms z6/z8, whose --init-policy-from lives in their
-# extra flags and is ignored by the trainer on any later --resume-from; the
-# soups are 128-wide so --net-width comes from COMMON). After the first launch
-# every arm resumes its OWN checkpoints (so z6 continues its wave-15 190M dir).
+# (first launch --resume-from that checkpoint stem instead), "clone" (first
+# launch is a FRESH run warm-started from a policy .bin via --init-policy-from in
+# the arm's extra flags), or "scratch" (a FRESH run from a randomly-initialised
+# net — no --resume-from, no --init-policy-from; --net-width comes from COMMON or
+# an extra override). clone/scratch arms start at step 0 and get WAVE_STEPS; fork
+# arms aim at TOTAL_TIMESTEPS. After the first launch every arm resumes its OWN
+# checkpoints.
 #
 # `pop` is "peers" (the launch loop appends --league-peers with every OTHER
 # variant's league dir) or "solo" (no peers).
@@ -246,14 +227,14 @@ COMMON=(
 # League mix order is LATEST,PAST,BOTS; the trainer default is 0.5,0.3,0.2.
 # The 0.20 bot share is load-bearing (wave-7 q6 faceplant) — do not cut it.
 VARIANTS=(
-"b1-champ-cont|1701|clone|peers|CONTROL / anchor: re-establish the champion a3 under obs-624. A FRESH clone (--init-policy-from the migrated champion bin -> plays a3 bit-for-bit, fresh value head) at the champion recipe: lr decay 1e-4 -> 0 + gamma 0.999 + ent 0.03 + n-steps/batch 4096. The incumbent-in-the-field baseline every other arm is read against on the same peers/seeds; also the reference for how much the 24 new market features buy once the value head refits. Collapse guard: entropy diving toward ~0.1 nats = kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $CHAMPION_BIN --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"b2-nsteps8192|1702|clone|peers|ROLLOUT CURVE (upper): b1 but n-steps 8192 / batch 8192 (2x the champion's 4096). n-steps 1024->2048 flickered (z3), 1024->4096 WON (a3); push the winning lever one more notch. Longer rollouts cut GAE truncation bias at the gamma-0.999 horizon but raise gradient variance and halve the update count per budget — the direct test of whether 4096 is the peak or a waypoint. Clone of the migrated champion, gamma 0.999.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $CHAMPION_BIN --n-steps 8192 --batch-size 8192 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"b3-nsteps2048|1703|clone|peers|ROLLOUT CURVE (lower): b1 but n-steps 2048 / batch 2048 (0.5x). Bracket the rollout-length peak from BELOW on the same peers/seeds as b1 (4096) and b2 (8192), so 2048/4096/8192 map one clean curve. z3's 2048 lost its decider off x5; re-measure it here off the new champion a3 to place the curve's left shoulder. Clone of the migrated champion, gamma 0.999.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $CHAMPION_BIN --n-steps 2048 --batch-size 2048 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"b4-gae98|1704|clone|peers|LEVER STACK (advantage horizon): b1 but gae-lambda 0.98 (default 0.95). Wave 16's a6-gae98 edged x5 (h2h 26.0; decider a6 24.5 > x5 23.5) — the same long-horizon idea from the advantage side. Stack it onto the n-steps-4096 champion: at gamma 0.999 lambda 0.95 still discounts advantages on a ~20-step scale, so lifting to 0.98 lengthens advantage estimation toward the discount horizon. Do the two horizon levers (rollout length + GAE lambda) add? Clone of the migrated champion, gamma 0.999, n-steps 4096.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --gae-lambda 0.98 --init-policy-from $CHAMPION_BIN --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"b5-low-ent|1705|clone|peers|LEVER (entropy sharpen): b1 but ent-coef 0.015 (half the 0.03 default). Validated as a champion-line lever in wave 11 (u4-sharp beat plain-decay both directions); re-arm it on the new n-steps-4096 champion to sharpen the converged policy. Watch entropy: a dive toward ~0.1 nats = kill. Clone of the migrated champion, gamma 0.999, n-steps 4096.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --gamma 0.999 --init-policy-from $CHAMPION_BIN --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"b6-gentle|1706|clone|peers|MIGRATION GUARD (fresh-value-head control): b1 but GENTLE lr 3e-5 -> 0 (the wave-9 recipe that won the last format-reset). Every arm this wave has a fresh value head over a warm (migrated) policy, so early updates ride on meaningless advantages that can wreck the clone; a gentler peak lr protects it while the value head refits. b6 vs b1 answers whether the standard lr 1e-4 clones are healthy (b6 ~ b1) or the fresh value head is damaging them (b6 > b1) -> then the whole wave should go gentle. Clone of the migrated champion, gamma 0.999, n-steps 4096.|--learning-rate 3e-5 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $CHAMPION_BIN --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"c1-extrapolate|1707|clone|peers|CRAZY #1 — weight-space EXTRAPOLATION past the champion. A FRESH clone warm-started (--init-policy-from) from extrap-x5a3.bin = merge(-0.5*x5-champ-g999 + 1.5*a3-nsteps4096), i.e. step 1.5x from the old champion x5 along the DEMONSTRATED x5->a3 improvement direction (a3 forks x5 @894M so the two share a coordinate system and the delta is meaningful). Interpolating soups sit at par (z6/z8); extrapolation OVERSHOOTS along the improvement vector to weights BEYOND a3 that forking+annealing cannot reach (task arithmetic, Ilharco et al.). GENTLE lr 3e-5 -> 0 + gamma 0.999 pulls it back into a good basin if the overshoot degrades it. If it collapses, alpha=1.5 is too aggressive; next wave retries a smaller step. n-steps 4096. WAVE_STEPS (250M) from 0. scripts/make_merge.py builds extrap-x5a3.bin in --prepare.|--learning-rate 3e-5 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $EXTRAP --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
-"c2-swa-wave16|1708|clone|peers|CRAZY #2 — the wave-16 survivors SWA soup. A FRESH clone warm-started from soup-a1a3a6.bin, the UNIFORM WEIGHT-SPACE AVERAGE of the three best-behaved wave-16 forks a1-champ-cont / a3-nsteps4096 (champion) / a6-gae98 — all fork x5 @894M so they share ONE loss basin and are a valid soup (Wortsman et al.). Replaces the retired stale-basin z8. Stochastic-weight-averaging bet: does averaging this wave's survivors land in a flatter/better minimum than the champion a3 alone? GENTLE lr 3e-5 -> 0 + gamma 0.999 + n-steps 4096. WAVE_STEPS (250M) from 0. scripts/make_soup.py builds soup-a1a3a6.bin in --prepare.|--learning-rate 3e-5 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --init-policy-from $SOUP16 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"d1-champ-cont|1801|fork|peers|CONTROL / anchor: fork the wave-17 winner b1 @250M and continue the champion recipe unchanged for +300M (a second full lr 1e-4 -> 0 anneal cycle — 'the finisher' re-armed on the converged champion). Tests whether the champion line keeps climbing past 250M; the reference every other arm is read against on the same peers/seeds. Collapse guard: entropy diving toward ~0.1 nats = kill the arm.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"d2-low-ent|1802|fork|peers|WARM lever re-test (entropy sharpen): d1 but ent-coef 0.015 (half the 0.03 default). Validated as a champion-line lever in wave 11; b5 tested it in wave 17 as a COLD clone (value head refitting) and it landed a hair back (h2h 24.0). Re-test on the WARM, converged champion where sharpening should actually bite. Watch entropy: a dive toward ~0.1 nats = kill.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --gamma 0.999 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"d3-gae98|1803|fork|peers|WARM lever re-test (advantage horizon): d1 but gae-lambda 0.98 (from 0.95). b4 TIED b1 on h2h in wave 17 (25.0) as a cold clone; re-test warm to see if the advantage-horizon lever separates once the value head is converged rather than refitting. At gamma 0.999, lambda 0.95 still discounts advantages on a ~20-step scale, so 0.98 lengthens advantage estimation toward the discount horizon.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --gae-lambda 0.98 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"d4-sharp-gae|1804|fork|peers|LEVER STACK: d1 + ent-coef 0.015 + gae-lambda 0.98 — the two arms that tied/near-tied b1 in wave 17 (b4 gae, b5 ent), combined on the warm champion. Do the two independent near-ties ADD to a real edge over d1, or does the field just sit at the same converged strength (the plateau signature)?|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.015 --gamma 0.999 --gae-lambda 0.98 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"d5-vf-emphasis|1805|fork|peers|FRESH AXIS (critic weight): d1 but vf-coef 1.0 (from 0.5). The value head was just refit over the 24 new section-23 market inputs, so a stronger critic term may exploit them better and sharpen advantage estimates. Value-emphasis lost in wave 15, but on a long-converged critic; here the critic is freshly informative, a genuinely different context.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --vf-coef 1.0 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"d6-epochs6|1806|fork|peers|FRESH AXIS (optimization passes): d1 but n-epochs 6 (from 4) — more reuse of each big 4096 rollout per collection. a5's n-epochs 8 lost in wave 16, but ONLY paired with target-kl (the dead part); this is a milder plain increase with no kl cap. More passes can improve sample efficiency but raise per-update policy drift — watch approx_kl.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-epochs 6 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
+"e1-scratch|1807|scratch|solo|CRAZY #1 — FROM SCRATCH. No warm start: a randomly-initialised 128-wide net at the champion recipe, but a bot-heavy league mix 0.30,0.10,0.60 so macro-space self-play can bootstrap off the heuristic instead of random-vs-random. SOLO (its weak early snapshots stay out of the progress arms' PAST pool, and it stays a clean 'no lineage' test). 300M from step 0. The one foundational assumption 17 waves never tested: can macro-space RL reach the warm-start lineage champion FROM ZERO? A win reframes the whole grind; a loss definitively shows the lineage is load-bearing.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --n-steps 4096 --batch-size 4096 --league-mix 0.30,0.10,0.60 --league-past-k 8"
+"e2-wide-clip|1808|fork|peers|CRAZY #2 — basin escape via a wide trust region. Fork b1 + clip-range 0.3 (from 0.2), champion recipe otherwise, +300M. lr-restart (wave 16 a2) failed to leave the x5 basin because its steps stayed clip-capped at 0.2; a wider clip is the untested way to take LARGE policy steps and reach weights a normal anneal cannot. lr still decays to 0 so it re-settles. If it just reconverges to d1, the basin is clip-robust too; if it lands somewhere new, follow it next wave. Watch approx_kl / entropy for instability.|--learning-rate 1e-4 --lr-final 0 --ent-coef 0.03 --gamma 0.999 --clip-range 0.3 --n-steps 4096 --batch-size 4096 --league-mix 0.40,0.40,0.20 --league-past-k 8"
 )
 
 
@@ -261,12 +242,13 @@ variant_field() { echo "${VARIANTS[$1]}" | cut -d'|' -f"$2"; }
 
 # Comma-separated league dirs of every variant EXCEPT $1 (by name) — the
 # --league-peers value for a "peers" arm. Dirs may not exist yet; the trainer
-# tolerates that (empty pool slice until the peer launches). Only wave-17 arms
-# (the b* progress arms + the two crazy clones c1/c2) are peered — never
-# an inert wave-9-through-16 dir (the x*/y*/z*/a* arms, kept for reference
+# tolerates that (empty pool slice until the peer launches). Only wave-18 arms
+# (the d* progress arms + the crazy fork e2-wide-clip) are peered — never an
+# inert wave-9-through-17 dir (the x*/y*/z*/a*/b*/c* arms, kept for reference
 # only), and never a 582-format runs/sweep3. SOLO arms are excluded BOTH ways:
-# no one peers a solo arm (none this wave — every arm is 128-wide, so no width
-# mismatch can leak into a 128-wide arm's PAST pool).
+# no one peers a solo arm, and a solo arm peers no one — this wave that is
+# e1-scratch, kept out of the progress arms' PAST pool so its weak early
+# from-scratch snapshots don't dilute their opponent mix.
 peer_league_dirs() {
     local self=$1 i name out=""
     for i in "${!VARIANTS[@]}"; do
@@ -352,72 +334,31 @@ assert n == 624, f"native obs is {n}-wide, expected 624 (stale powergrid_py buil
 EOF
 }
 
-# All pre-launch setup for the obs-624 MIGRATION wave. Idempotent (every step
-# skips if its output exists); exposed as --prepare so it can be staged on a dev
-# box and synced to the training machine. Builds, all at obs-624:
-#   * CHAMPION_BIN            migrated a3 (--from-ckpt zero-pads l1 -> plays a3)
-#   * wave17-baseline ckpt    the same weights as a runnable sb3 ckpt (--h2h)
-#   * EXTRAP / SOUP16         the two crazy-arm merges, rebuilt from migrated 624
-#                             source .bins (the 600-wide .zip checkpoints can no
-#                             longer be re-serialized under 624 constants)
+# All pre-launch setup for wave 18. Idempotent (skips if its output exists);
+# exposed as --prepare so it can be staged on a dev box and synced to the
+# training machine. NOT a migration wave — obs stays 624, so the only build is:
+#   * CHAMPION_BIN   b1's best_model exported to a PGRLPOL6 .bin (the frozen
+#                    --eval opponent). The fork source (FORK_FROM) and the --h2h
+#                    yardstick ($BASELINE) are b1's own 624 checkpoint directly,
+#                    so nothing else needs building.
 prepare() {
     check_format
     mkdir -p "$SWEEP_DIR"
 
-    # Migrate the champion checkpoint (600) to a 624 policy .bin: the warm start
-    # for b1-b6 AND the frozen eval opponent. Zero-padded l1 rows -> plays a3
-    # bit-for-bit; training then learns the 24 new market inputs.
+    # Export the wave-17 winner b1 -> a PGRLPOL6 .bin for --eval-opponent. b1's
+    # best_model.zip is already 624-format, so this is a plain export (no migrate).
     if [[ ! -f $CHAMPION_BIN ]]; then
-        if [[ ! -f ${CHAMPION_CKPT}.zip ]]; then
-            echo "cannot migrate champion: no checkpoint at ${CHAMPION_CKPT}.zip" >&2
-            echo "(set CHAMPION_CKPT/CHAMPION_BIN, or sync the champion's run dir)" >&2
+        if [[ ! -f ${FORK_FROM}.zip ]]; then
+            echo "cannot export eval opponent: no checkpoint at ${FORK_FROM}.zip" >&2
+            echo "(set FORK_FROM/CHAMPION_BIN, or sync the b1-champ-cont run dir)" >&2
             exit 1
         fi
-        echo "migrating champion -> $CHAMPION_BIN (obs 600 -> 624)"
-        "$PY" scripts/migrate_policy_obs.py --from-ckpt "$CHAMPION_CKPT" --out "$CHAMPION_BIN"
-    fi
-
-    # The --h2h yardstick: the migrated champion as a runnable 624 sb3 ckpt
-    # (policy loaded, value head fresh — irrelevant to h2h/compare, which use
-    # only the policy logits). Lives in a synthetic run dir named by $BASELINE.
-    local base_ckpt="$SWEEP_DIR/$BASELINE/best_model"
-    if [[ ! -f ${base_ckpt}.zip ]]; then
-        echo "building --h2h baseline ckpt: $CHAMPION_BIN -> ${base_ckpt}.zip"
-        mkdir -p "$SWEEP_DIR/$BASELINE"
-        "$PY" scripts/migrate_policy_obs.py --bin-to-ckpt "$CHAMPION_BIN" --out "$base_ckpt"
-    fi
-
-    # The two crazy-arm warm starts — weight-space merges of fine-tunes of a
-    # shared checkpoint (x5 @894M), so the inputs sit in one loss basin and a
-    # merge is meaningful (Wortsman et al. for the average; Ilharco et al. for the
-    # extrapolation). Built from the migrated 624 source .bins (make_merge /
-    # make_soup accept a PGRLPOL6 .bin, so the merge happens at 624 directly).
-    #   EXTRAP (c1): -0.5*x5 + 1.5*a3 — step 1.5x past a3 along the x5->a3
-    #                improvement direction (coeffs sum to 1 -> activation scale
-    #                preserved). SOUP16 (c2): mean(a1,a3,a6), the wave-16 SWA soup.
-    # A build is skipped (with a warning) if a source is missing — its arm then
-    # hard-errors at launch on the absent --init-policy-from path.
-    migrate_src() {  # run-dir name -> $SWEEP_DIR/<name>-624.bin (echoed), or empty
-        local name=$1 out="$SWEEP_DIR/$name-624.bin"
-        if [[ -f $out ]]; then echo "$out"; return 0; fi
-        [[ -f $SWEEP_DIR/$name/best_model.zip ]] || return 1
-        "$PY" scripts/migrate_policy_obs.py --from-ckpt "$SWEEP_DIR/$name/best_model" \
-            --out "$out" >&2
-        echo "$out"
-    }
-    if [[ ! -f $EXTRAP ]]; then
-        local x5b; x5b=$(migrate_src x5-champ-g999) \
-            && echo "building weight-space extrapolation -> $EXTRAP" \
-            && "$PY" scripts/make_merge.py --out "$EXTRAP" \
-                 --model "$x5b" --coeff -0.5 --model "$CHAMPION_BIN" --coeff 1.5 \
-            || echo "skipping extrap build (missing x5 source); c1 will error at launch" >&2
-    fi
-    if [[ ! -f $SOUP16 ]]; then
-        local a1b a6b; a1b=$(migrate_src a1-champ-cont) && a6b=$(migrate_src a6-gae98) \
-            && echo "building model soup: mean(a1,a3,a6) -> $SOUP16" \
-            && "$PY" scripts/make_soup.py --out "$SOUP16" \
-                 --model "$a1b" --model "$CHAMPION_BIN" --model "$a6b" \
-            || echo "skipping soup build (missing a1/a6 source); c2 will error at launch" >&2
+        echo "exporting eval opponent (b1) -> $CHAMPION_BIN"
+        # Pin --golden next to the .bin: export_policy.py defaults --golden to
+        # assets/policies/expert.golden.json, which would clobber the embedded
+        # expert's golden. The eval opponent only needs the .bin.
+        "$PY" scripts/export_policy.py --model "$FORK_FROM" --out "$CHAMPION_BIN" \
+            --golden "${CHAMPION_BIN%.bin}.golden.json"
     fi
 }
 
@@ -434,7 +375,7 @@ list_variants() {
 }
 
 status() {
-    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (a3-nsteps4096);
+    # NOTE: best= is eval/mean_reward vs 3x the frozen champion (b1-champ-cont);
     # win_rate = (best+1)/2, par ~ -0.50. Negative values are normal.
     for i in "${!VARIANTS[@]}"; do
         local name dir pid state ckpt best when
@@ -486,7 +427,7 @@ compare() {
 }
 
 # RELATIVE ranking: each variant in seat 0 against three copies of the frozen
-# champion (a3-nsteps4096 best_model) — the primary ranking. Above-par here ==
+# champion (b1-champ-cont best_model) — the primary ranking. Above-par here ==
 # genuinely past the champion. Measure the mirror par (the self-baseline row)
 # before reading small edges; expect ~25 +/- 2%. At wave end, run the FULL
 # tiebreak: direct matches between the leaders + a fresh-seed 800-game h2h
@@ -530,7 +471,7 @@ case "${1:-}" in
     --stop)    stop_all;      exit 0 ;;
     --compare) compare;       exit 0 ;;
     --h2h)     h2h;           exit 0 ;;
-    --prepare) prepare; echo "wave-16 eval opponent + soups ready in $SWEEP_DIR"; exit 0 ;;
+    --prepare) prepare; echo "wave-18 eval opponent ready in $SWEEP_DIR"; exit 0 ;;
 esac
 
 # Which variants to launch (1-based indices; default all).
@@ -544,12 +485,10 @@ fi
 
 [[ $DRY_RUN == 1 ]] || prepare
 
-echo "champion (624) : $CHAMPION_BIN (b1-b6 warm start = migrated a3)"
-echo "extrapolation  : $EXTRAP (c1-extrapolate warm start)"
-echo "wave-16 SWA soup: $SOUP16 (c2-swa-wave16 warm start)"
-echo "eval opponent  : $EVAL_OPPONENT (frozen; selects best_model)"
-echo "h2h baseline   : $SWEEP_DIR/$BASELINE/best_model (migrated a3 @624)"
-echo "target         : $WAVE_STEPS timesteps per variant (all fresh clones from 0)"
+echo "fork source    : $FORK_FROM (wave-17 winner b1 @250M; d1-d6/e2 --resume-from it)"
+echo "eval opponent  : $EVAL_OPPONENT (b1 exported; frozen; selects best_model)"
+echo "h2h baseline   : $SWEEP_DIR/$BASELINE/best_model (frozen b1 @624)"
+echo "fork target    : $TOTAL_TIMESTEPS cumulative (b1 @250M + 300M); scratch budget: $WAVE_STEPS"
 echo "sweep dir      : $SWEEP_DIR"
 echo "launching      : ${SELECTED[*]}"
 echo
@@ -584,20 +523,18 @@ for n in "${SELECTED[@]}"; do
         continue
     fi
 
-    # No eval-metric migration this wave: wave 16 REUSES the wave-15 frozen eval
-    # opponent (the x5 export) because x5 survived wave 15's decider unbeaten, so
-    # every continuing arm's stored best bar (z6-soup's -0.35) was earned against
-    # the exact same opponent and stays comparable. (The wave-15 migration block
-    # that reset bars on an eval-opponent change lived here; it is unneeded when
-    # the opponent is unchanged and was removed.)
+    # No eval-metric migration needed: the eval opponent changed (wave-17 frozen
+    # a3 -> the new champion b1), but every wave-18 arm is a fresh dir (d*/e*)
+    # with no stored best bar, so nothing carries a bar earned against the old
+    # opponent. All arms' best bars are earned against b1 from their first eval.
 
     # Per-arm cumulative target. Fork/resume arms aim at TOTAL_TIMESTEPS (the
-    # wave's cumulative budget). A fresh "clone" arm starts at 0 steps, so its
-    # target is a single per-wave budget (WAVE_STEPS) — otherwise it would run
-    # ~4x longer than the forks and gate the whole sweep. Using a target (not a
-    # hardcoded TOTAL_TIMESTEPS) keeps idempotent relaunch correct: a
-    # half-trained clone arm resumes to WAVE_STEPS, not to 600M.
-    if [[ $init == clone ]]; then target=$WAVE_STEPS; else target=$TOTAL_TIMESTEPS; fi
+    # wave's cumulative budget). A fresh "clone" or "scratch" arm starts at 0
+    # steps, so its target is a single per-wave budget (WAVE_STEPS) — otherwise
+    # it would run longer than the forks' increment and gate the whole sweep.
+    # Using a target (not a hardcoded TOTAL_TIMESTEPS) keeps idempotent relaunch
+    # correct: a half-trained clone/scratch arm resumes to WAVE_STEPS.
+    if [[ $init == clone || $init == scratch ]]; then target=$WAVE_STEPS; else target=$TOTAL_TIMESTEPS; fi
 
     # Auto-resume: continue from the arm's own furthest readable checkpoint.
     # Only a fork/clone arm's very first launch uses its fork source; a
@@ -647,6 +584,14 @@ for n in "${SELECTED[@]}"; do
         steps=$target   # WAVE_STEPS; fresh from 0
         start_args=()   # fresh run
         echo "clone-init $name (fresh) from $clone_path (+$steps)"
+    elif [[ $init == scratch ]]; then
+        # From-scratch run: a randomly-initialised net (no --resume-from, no
+        # --init-policy-from). The trainer builds a fresh model at --net-width
+        # (COMMON's, or an arm override) and resets the step counter. Gets the
+        # per-wave budget (WAVE_STEPS) like a clone arm.
+        steps=$target   # WAVE_STEPS; fresh from 0
+        start_args=()   # fresh run, random init
+        echo "scratch-init $name (random init, fresh) (+$steps)"
     else
         echo "refusing to start $name: it continues an earlier run but $dir has no" >&2
         echo "readable checkpoint. Sync the earlier run dir (or fix SWEEP_DIR)." >&2
