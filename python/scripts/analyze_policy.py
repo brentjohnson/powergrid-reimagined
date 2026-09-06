@@ -89,6 +89,7 @@ ENDGAME_FEATS = [
     "self last powered", "powered margin", "can finish now", "money after finish",
 ]
 NC = len(CITY_IDS)  # 49
+MARKET_SLOT_FEATS = ["affordable", "min-bid", "powering gain", "is-upgrade"]
 
 _SECTIONS = [
     ("Self money", 1, lambda i: "money"),
@@ -109,6 +110,7 @@ _SECTIONS = [
     ("Opponent fuel demand", 4, lambda i: RESOURCE_NAMES[i]),
     ("Opponent plants", 5 * 3 * 5, lambda i: f"opp {i // 15}: slot {(i % 15) // 5}: {PLANT_FEATS[i % 5]}"),
     ("End-game race", 18, lambda i: ENDGAME_FEATS[i]),
+    ("Market slot decisions", 6 * 4, lambda i: f"slot {i // 4}: {MARKET_SLOT_FEATS[i % 4]}"),
 ]
 
 
